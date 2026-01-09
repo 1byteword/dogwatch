@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>dogwatch - eBPF Observability</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3-flame-graph@4.1.3/dist/d3-flamegraph.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/d3-flame-graph@4.1.3/dist/d3-flamegraph.css">
     <style>
         * {
             margin: 0;
@@ -293,6 +295,25 @@
         }
 
         .footer a { color: #1d9bf0; text-decoration: none; }
+
+        /* Buttons */
+        .btn {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.875rem;
+            background: #1d9bf0;
+            color: white;
+            margin-left: 0.5rem;
+        }
+        .btn:hover { background: #1a8cd8; }
+        .btn-secondary { background: #2f3336; }
+        .btn-secondary:hover { background: #3f4346; }
+
+        /* Flame graph overrides */
+        #flamegraph .d3-flame-graph rect { stroke: #0f1419; }
+        #flamegraph .d3-flame-graph-label { fill: #e7e9ea !important; font-size: 11px; }
     </style>
 </head>
 <body>
@@ -407,6 +428,16 @@
 
         <!-- Profiler Tab -->
         <div id="profiler" class="tab-content">
+            <div class="section" style="margin-bottom: 1rem;">
+                <div class="section-header" style="display: flex; justify-content: space-between; align-items: center;">
+                    <span>CPU Flame Graph</span>
+                    <div>
+                        <button id="refresh-flame" class="btn">Refresh</button>
+                        <button id="clear-flame" class="btn btn-secondary">Clear & Reset</button>
+                    </div>
+                </div>
+                <div id="flamegraph" style="min-height: 400px; background: #1a1f2e;"></div>
+            </div>
             <div class="section">
                 <div class="section-header">Top Processes by CPU</div>
                 <table>
@@ -811,6 +842,71 @@
             renderServiceMap('service-map-mini', 370);
             if (document.getElementById('services').classList.contains('active')) {
                 renderServiceMap('service-map', 600);
+            }
+        });
+
+        // Flame graph
+        let flameChart = null;
+
+        function updateFlameGraph() {
+            fetch('/api/flamegraph')
+                .then(res => {
+                    if (!res.ok) throw new Error('Profiler not available');
+                    return res.json();
+                })
+                .then(data => {
+                    if (!data || !data.children || data.children.length === 0) {
+                        document.getElementById('flamegraph').innerHTML =
+                            '<div class="empty-state">Collecting samples... wait a few seconds and refresh</div>';
+                        return;
+                    }
+
+                    const container = document.getElementById('flamegraph');
+                    container.innerHTML = '';
+
+                    flameChart = flamegraph()
+                        .width(container.clientWidth)
+                        .cellHeight(20)
+                        .transitionDuration(500)
+                        .minFrameSize(5)
+                        .selfValue(false)
+                        .setColorMapper(function(d, originalColor) {
+                            // Color by stack type
+                            if (d.data.name.startsWith('0x')) {
+                                return '#f4212e';  // Addresses (unresolved) - red
+                            }
+                            return '#1d9bf0';  // Process names - blue
+                        });
+
+                    d3.select('#flamegraph')
+                        .datum(data)
+                        .call(flameChart);
+                })
+                .catch(err => {
+                    document.getElementById('flamegraph').innerHTML =
+                        '<div class="empty-state">Profiler not available: ' + err.message + '</div>';
+                });
+        }
+
+        function clearFlameGraph() {
+            fetch('/api/flamegraph/clear', { method: 'POST' })
+                .then(res => res.json())
+                .then(() => {
+                    document.getElementById('flamegraph').innerHTML =
+                        '<div class="empty-state">Samples cleared. Collecting new data...</div>';
+                })
+                .catch(err => console.error('Failed to clear:', err));
+        }
+
+        document.getElementById('refresh-flame').addEventListener('click', updateFlameGraph);
+        document.getElementById('clear-flame').addEventListener('click', clearFlameGraph);
+
+        // Load flame graph when switching to profiler tab
+        document.querySelectorAll('.tab').forEach(tab => {
+            if (tab.dataset.tab === 'profiler') {
+                tab.addEventListener('click', () => {
+                    setTimeout(updateFlameGraph, 100);
+                });
             }
         });
     </script>

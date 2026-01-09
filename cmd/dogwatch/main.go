@@ -55,6 +55,17 @@ func main() {
 	var sslProbe *probe.SSLProbe = nil
 	fmt.Println("HTTPS/SSL probe: disabled for MVP (uprobe compatibility issue)")
 
+	// Start CPU profiler for flame graph
+	fmt.Println("Starting CPU profiler...")
+	profileProbe, err := probe.NewProfileProbe()
+	if err != nil {
+		log.Printf("Warning: CPU profiler failed to start: %v", err)
+		profileProbe = nil
+	} else {
+		defer profileProbe.Close()
+		fmt.Println("  CPU profiler running at 49Hz sampling")
+	}
+
 	// Create aggregator
 	agg := aggregator.New()
 
@@ -62,6 +73,9 @@ func main() {
 	var webServer *web.Server
 	if !*noWeb {
 		webServer = web.New(agg, *webPort)
+		if profileProbe != nil {
+			webServer.SetProfiler(profileProbe)
+		}
 		go func() {
 			fmt.Printf("Web UI available at http://localhost:%d\n", *webPort)
 			if err := webServer.Start(); err != nil && err != http.ErrServerClosed {

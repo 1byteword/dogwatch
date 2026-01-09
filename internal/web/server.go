@@ -22,12 +22,19 @@ import (
 //go:embed static/*
 var staticFiles embed.FS
 
+// FlameGraphProvider interface for getting flame graph data
+type FlameGraphProvider interface {
+	GetFlameGraph() (interface{}, error)
+	ClearSamples() error
+}
+
 // Server serves the web dashboard
 type Server struct {
-	agg     *aggregator.Aggregator
-	metrics *metrics.Collector
-	server  *http.Server
-	mu      sync.RWMutex
+	agg      *aggregator.Aggregator
+	metrics  *metrics.Collector
+	profiler FlameGraphProvider
+	server   *http.Server
+	mu       sync.RWMutex
 }
 
 // New creates a new web server
@@ -50,6 +57,8 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	mux.HandleFunc("/api/system", s.handleSystem)
 	mux.HandleFunc("/api/servicemap", s.handleServiceMap)
 	mux.HandleFunc("/api/processes", s.handleProcesses)
+	mux.HandleFunc("/api/flamegraph", s.handleFlameGraph)
+	mux.HandleFunc("/api/flamegraph/clear", s.handleFlameGraphClear)
 
 	s.server = &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
@@ -57,6 +66,11 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	}
 
 	return s
+}
+
+// SetProfiler sets the flame graph profiler
+func (s *Server) SetProfiler(p FlameGraphProvider) {
+	s.profiler = p
 }
 
 // Start begins serving HTTP
@@ -380,4 +394,40 @@ func readProcessInfo(pid int, clkTck float64) ProcessInfo {
 	}
 
 	return proc
+}
+
+func (s *Server) handleFlameGraph(w http.ResponseWriter, r *http.Request) {
+	if s.profiler == nil {
+		http.Error(w, "Profiler not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	data, err := s.profiler.GetFlameGraph()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data)
+}
+
+func (s *Server) handleFlameGraphClear(w http.ResponseWriter, r *http.Request) {
+	if s.profiler == nil {
+		http.Error(w, "Profiler not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err := s.profiler.ClearSamples(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "cleared"})
 }
