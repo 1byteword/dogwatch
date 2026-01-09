@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>dogwatch - eBPF Observability</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #0f1419;
+            color: #e7e9ea;
+            min-height: 100vh;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1a1f2e 0%, #0f1419 100%);
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid #2f3336;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logo-icon {
+            font-size: 2rem;
+        }
+
+        .logo h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .logo span {
+            color: #71767b;
+            font-size: 0.875rem;
+            margin-left: 0.5rem;
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: #71767b;
+            font-size: 0.875rem;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: #00ba7c;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: #16181c;
+            border: 1px solid #2f3336;
+            border-radius: 12px;
+            padding: 1.5rem;
+        }
+
+        .stat-label {
+            color: #71767b;
+            font-size: 0.875rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #e7e9ea;
+        }
+
+        .stat-value.error {
+            color: #f4212e;
+        }
+
+        .section {
+            background: #16181c;
+            border: 1px solid #2f3336;
+            border-radius: 12px;
+            margin-bottom: 2rem;
+            overflow: hidden;
+        }
+
+        .section-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid #2f3336;
+            font-weight: 600;
+            font-size: 1.125rem;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th {
+            text-align: left;
+            padding: 0.75rem 1rem;
+            color: #71767b;
+            font-weight: 500;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            border-bottom: 1px solid #2f3336;
+        }
+
+        td {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid #2f3336;
+            font-size: 0.875rem;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        tr:hover {
+            background: #1d1f23;
+        }
+
+        .method {
+            display: inline-block;
+            padding: 0.125rem 0.5rem;
+            border-radius: 4px;
+            font-weight: 600;
+            font-size: 0.75rem;
+        }
+
+        .method.GET { background: #1d4ed8; color: #93c5fd; }
+        .method.POST { background: #059669; color: #6ee7b7; }
+        .method.PUT { background: #d97706; color: #fcd34d; }
+        .method.DELETE { background: #dc2626; color: #fca5a5; }
+        .method.PATCH { background: #7c3aed; color: #c4b5fd; }
+
+        .path {
+            font-family: 'SF Mono', Monaco, monospace;
+            color: #1d9bf0;
+        }
+
+        .latency {
+            font-family: 'SF Mono', Monaco, monospace;
+        }
+
+        .latency.good { color: #00ba7c; }
+        .latency.warn { color: #ffd400; }
+        .latency.bad { color: #f4212e; }
+
+        .error-rate {
+            font-weight: 600;
+        }
+
+        .error-rate.good { color: #00ba7c; }
+        .error-rate.bad { color: #f4212e; }
+
+        .empty-state {
+            padding: 3rem;
+            text-align: center;
+            color: #71767b;
+        }
+
+        .empty-state p {
+            margin-bottom: 0.5rem;
+        }
+
+        .process {
+            font-weight: 500;
+        }
+
+        .pid {
+            color: #71767b;
+            font-size: 0.75rem;
+        }
+
+        .remote {
+            font-family: 'SF Mono', Monaco, monospace;
+            color: #71767b;
+        }
+
+        .count {
+            font-family: 'SF Mono', Monaco, monospace;
+            font-weight: 600;
+        }
+
+        .footer {
+            text-align: center;
+            padding: 2rem;
+            color: #71767b;
+            font-size: 0.875rem;
+        }
+
+        .footer a {
+            color: #1d9bf0;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo">
+            <span class="logo-icon">&#128021;</span>
+            <h1>dogwatch<span>eBPF Observability</span></h1>
+        </div>
+        <div class="status">
+            <div class="status-dot"></div>
+            <span id="last-update">Connecting...</span>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">Total Connections</div>
+                <div class="stat-value" id="total-connections">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Total Requests</div>
+                <div class="stat-value" id="total-requests">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Error Count</div>
+                <div class="stat-value error" id="total-errors">-</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-header">HTTP Endpoints</div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Method</th>
+                        <th>Path</th>
+                        <th>Requests</th>
+                        <th>Error Rate</th>
+                        <th>P50</th>
+                        <th>P99</th>
+                        <th>Avg</th>
+                    </tr>
+                </thead>
+                <tbody id="endpoints-body">
+                    <tr>
+                        <td colspan="7" class="empty-state">
+                            <p>No HTTP endpoints recorded yet</p>
+                            <p>Make some HTTP requests to see them here</p>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <div class="section-header">TCP Connections</div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Process</th>
+                        <th>PID</th>
+                        <th>Remote</th>
+                        <th>Count</th>
+                    </tr>
+                </thead>
+                <tbody id="connections-body">
+                    <tr>
+                        <td colspan="4" class="empty-state">
+                            <p>No connections recorded yet</p>
+                            <p>Connections will appear as processes make network calls</p>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="footer">
+        dogwatch - eBPF-powered observability | <a href="https://github.com/anthropics/dogwatch">GitHub</a>
+    </div>
+
+    <script>
+        function formatLatency(ms) {
+            if (ms === 0 || ms === undefined) return '-';
+            if (ms < 1) return '<1ms';
+            if (ms < 1000) return Math.round(ms) + 'ms';
+            return (ms / 1000).toFixed(1) + 's';
+        }
+
+        function getLatencyClass(ms) {
+            if (ms === 0 || ms === undefined) return '';
+            if (ms < 100) return 'good';
+            if (ms < 500) return 'warn';
+            return 'bad';
+        }
+
+        function formatNumber(n) {
+            if (n === undefined || n === null) return '-';
+            return n.toLocaleString();
+        }
+
+        function updateStats() {
+            fetch('/api/stats')
+                .then(res => res.json())
+                .then(data => {
+                    // Update totals
+                    document.getElementById('total-connections').textContent = formatNumber(data.total_connections);
+                    document.getElementById('total-requests').textContent = formatNumber(data.total_requests);
+                    document.getElementById('total-errors').textContent = formatNumber(data.total_errors);
+
+                    // Update last update time
+                    const now = new Date();
+                    document.getElementById('last-update').textContent = 'Updated ' + now.toLocaleTimeString();
+
+                    // Update endpoints table
+                    const endpointsBody = document.getElementById('endpoints-body');
+                    if (data.endpoints && data.endpoints.length > 0) {
+                        endpointsBody.innerHTML = data.endpoints.map(ep => `
+                            <tr>
+                                <td><span class="method ${ep.method}">${ep.method}</span></td>
+                                <td class="path">${escapeHtml(ep.path)}</td>
+                                <td>${formatNumber(ep.request_count)}</td>
+                                <td class="error-rate ${ep.error_rate > 5 ? 'bad' : 'good'}">${ep.error_rate.toFixed(1)}%</td>
+                                <td class="latency ${getLatencyClass(ep.p50_ms)}">${formatLatency(ep.p50_ms)}</td>
+                                <td class="latency ${getLatencyClass(ep.p99_ms)}">${formatLatency(ep.p99_ms)}</td>
+                                <td class="latency ${getLatencyClass(ep.avg_ms)}">${formatLatency(ep.avg_ms)}</td>
+                            </tr>
+                        `).join('');
+                    } else {
+                        endpointsBody.innerHTML = `
+                            <tr>
+                                <td colspan="7" class="empty-state">
+                                    <p>No HTTP endpoints recorded yet</p>
+                                    <p>Make some HTTP requests to see them here</p>
+                                </td>
+                            </tr>
+                        `;
+                    }
+
+                    // Update connections table
+                    const connectionsBody = document.getElementById('connections-body');
+                    if (data.connections && data.connections.length > 0) {
+                        connectionsBody.innerHTML = data.connections.map(conn => `
+                            <tr>
+                                <td class="process">${escapeHtml(conn.process)}</td>
+                                <td class="pid">${conn.pid}</td>
+                                <td class="remote">${escapeHtml(conn.remote)}:${conn.port}</td>
+                                <td class="count">${formatNumber(conn.count)}</td>
+                            </tr>
+                        `).join('');
+                    } else {
+                        connectionsBody.innerHTML = `
+                            <tr>
+                                <td colspan="4" class="empty-state">
+                                    <p>No connections recorded yet</p>
+                                    <p>Connections will appear as processes make network calls</p>
+                                </td>
+                            </tr>
+                        `;
+                    }
+                })
+                .catch(err => {
+                    console.error('Failed to fetch stats:', err);
+                    document.getElementById('last-update').textContent = 'Connection error';
+                });
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Initial fetch
+        updateStats();
+
+        // Refresh every 2 seconds
+        setInterval(updateStats, 2000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+# Binary (root level only)
+/dogwatch
+
+# Generated BPF objects
+internal/probe/*_bpf*.go
+internal/probe/*_bpf*.o
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
