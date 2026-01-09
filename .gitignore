@@ -1,9 +1,8 @@
 # Binary (root level only)
 /dogwatch
 
-# Generated BPF objects
-internal/probe/*_bpf*.go
-internal/probe/*_bpf*.o
+# Generated BPF object files (but keep .go bindings)
+internal/probe/*.o
 
 # IDE
 .idea/

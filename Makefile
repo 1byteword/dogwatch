@@ -1,7 +1,7 @@
 .PHONY: all generate build clean
 
 CLANG ?= clang
-GO ?= go
+GO ?= $(shell which go || echo /usr/local/go/bin/go)
 
 all: generate build
 
