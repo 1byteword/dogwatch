@@ -5,6 +5,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -16,7 +17,20 @@ import (
 	"time"
 
 	"dogwatch/internal/aggregator"
+	"dogwatch/internal/containers"
+	"dogwatch/internal/custommetrics"
+	"dogwatch/internal/deploys"
+	"dogwatch/internal/dashboard"
+	"dogwatch/internal/incidents"
+	"dogwatch/internal/logs"
 	"dogwatch/internal/metrics"
+	"dogwatch/internal/slo"
+	"dogwatch/internal/storage"
+	"dogwatch/internal/synthetics"
+	"dogwatch/internal/trace"
+	"dogwatch/internal/watch"
+
+	"github.com/google/uuid"
 )
 
 //go:embed static/*
@@ -30,11 +44,28 @@ type FlameGraphProvider interface {
 
 // Server serves the web dashboard
 type Server struct {
-	agg      *aggregator.Aggregator
-	metrics  *metrics.Collector
-	profiler FlameGraphProvider
-	server   *http.Server
-	mu       sync.RWMutex
+	agg                 *aggregator.Aggregator
+	metrics             *metrics.Collector
+	store               *storage.Store
+	traceStore          *trace.Store
+	otlpReceiver        *trace.OTLPReceiver
+	watchStore          *watch.Store
+	watchEngine         *watch.Engine
+	dashboardStore      *dashboard.Store
+	logStore            *logs.Store
+	customMetricsStore  *custommetrics.Store
+	otlpMetricsReceiver *custommetrics.OTLPMetricsReceiver
+	syntheticsStore     *synthetics.Store
+	syntheticsRunner    *synthetics.Runner
+	sloStore            *slo.Store
+	sloCalculator       *slo.Calculator
+	containerCollector  *containers.Collector
+	deployStore         *deploys.Store
+	incidentStore       *incidents.Store
+	pager               *incidents.Pager
+	profiler            FlameGraphProvider
+	server              *http.Server
+	mu                  sync.RWMutex
 }
 
 // New creates a new web server
@@ -59,6 +90,75 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	mux.HandleFunc("/api/processes", s.handleProcesses)
 	mux.HandleFunc("/api/flamegraph", s.handleFlameGraph)
 	mux.HandleFunc("/api/flamegraph/clear", s.handleFlameGraphClear)
+	mux.HandleFunc("/api/history/system", s.handleHistorySystem)
+	mux.HandleFunc("/api/history/connections", s.handleHistoryConnections)
+	mux.HandleFunc("/api/history/info", s.handleHistoryInfo)
+
+	// Trace endpoints
+	mux.HandleFunc("/v1/traces", s.handleOTLPTraces)
+	mux.HandleFunc("/v1/trace", s.handleSimpleTrace)
+	mux.HandleFunc("/api/traces", s.handleListTraces)
+	mux.HandleFunc("/api/traces/", s.handleGetTrace)
+	mux.HandleFunc("/api/trace/services", s.handleTraceServices)
+	mux.HandleFunc("/api/trace/dependencies", s.handleTraceDependencies)
+
+	// Watch endpoints
+	mux.HandleFunc("/api/watches", s.handleWatches)
+	mux.HandleFunc("/api/watches/", s.handleWatch)
+	mux.HandleFunc("/api/watch/channels", s.handleChannels)
+	mux.HandleFunc("/api/watch/channels/", s.handleChannel)
+	mux.HandleFunc("/api/watch/events", s.handleWatchEvents)
+	mux.HandleFunc("/api/watch/metrics", s.handleWatchMetrics)
+
+	// Dashboard endpoints
+	mux.HandleFunc("/api/dashboards", s.handleDashboards)
+	mux.HandleFunc("/api/dashboards/", s.handleDashboard)
+	mux.HandleFunc("/api/dashboards/default", s.handleDefaultDashboard)
+
+	// Log endpoints
+	mux.HandleFunc("/api/logs", s.handleLogs)
+	mux.HandleFunc("/api/logs/ingest", s.handleLogIngest)
+	mux.HandleFunc("/api/logs/services", s.handleLogServices)
+	mux.HandleFunc("/api/logs/stats", s.handleLogStats)
+	mux.HandleFunc("/api/logs/patterns", s.handleLogPatterns)
+	mux.HandleFunc("/api/logs/patterns/", s.handleLogPattern)
+
+	// Custom metrics endpoints
+	mux.HandleFunc("/v1/metrics", s.handleOTLPMetrics)
+	mux.HandleFunc("/api/metrics/push", s.handleMetricsPush)
+	mux.HandleFunc("/api/metrics/query", s.handleMetricsQuery)
+	mux.HandleFunc("/api/metrics/list", s.handleMetricsList)
+
+	// Synthetics endpoints
+	mux.HandleFunc("/api/synthetics/checks", s.handleSyntheticsChecks)
+	mux.HandleFunc("/api/synthetics/checks/", s.handleSyntheticsCheck)
+	mux.HandleFunc("/api/synthetics/results/", s.handleSyntheticsResults)
+	mux.HandleFunc("/api/synthetics/uptime/", s.handleSyntheticsUptime)
+
+	// SLO endpoints
+	mux.HandleFunc("/api/slos", s.handleSLOs)
+	mux.HandleFunc("/api/slos/", s.handleSLO)
+
+	// Container endpoints
+	mux.HandleFunc("/api/containers", s.handleContainers)
+	mux.HandleFunc("/api/containers/", s.handleContainer)
+	mux.HandleFunc("/api/containers/summary", s.handleContainerSummary)
+
+	// Deployment endpoints
+	mux.HandleFunc("/api/deploys", s.handleDeploys)
+	mux.HandleFunc("/api/deploys/", s.handleDeploy)
+	mux.HandleFunc("/api/deploys/stats", s.handleDeployStats)
+	mux.HandleFunc("/api/deploys/services", s.handleDeployServices)
+
+	// Incidents / Paging
+	mux.HandleFunc("/api/incidents", s.handleIncidents)
+	mux.HandleFunc("/api/incidents/", s.handleIncident)
+	mux.HandleFunc("/api/incidents/stats", s.handleIncidentStats)
+	mux.HandleFunc("/api/oncall", s.handleOnCallSchedules)
+	mux.HandleFunc("/api/oncall/", s.handleOnCallSchedule)
+	mux.HandleFunc("/api/oncall/current", s.handleCurrentOnCall)
+	mux.HandleFunc("/api/escalation", s.handleEscalationPolicies)
+	mux.HandleFunc("/api/escalation/", s.handleEscalationPolicy)
 
 	s.server = &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
@@ -71,6 +171,140 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 // SetProfiler sets the flame graph profiler
 func (s *Server) SetProfiler(p FlameGraphProvider) {
 	s.profiler = p
+}
+
+// SetStore sets the storage backend
+func (s *Server) SetStore(st *storage.Store) {
+	s.store = st
+}
+
+// SetTraceStore sets the trace storage backend
+func (s *Server) SetTraceStore(ts *trace.Store) {
+	s.traceStore = ts
+	s.otlpReceiver = trace.NewOTLPReceiver(ts)
+}
+
+// SetWatchStore sets the watch storage and starts the engine
+func (s *Server) SetWatchStore(ws *watch.Store) {
+	s.watchStore = ws
+	adapter := watch.NewMetricsAdapter(s.metrics, s.agg)
+	notifier := watch.NewNotifier()
+	s.watchEngine = watch.NewEngine(ws, adapter, notifier)
+
+	// Connect pager if already set up
+	if s.pager != nil {
+		s.watchEngine.SetPager(s.pager)
+	}
+
+	s.watchEngine.Start()
+}
+
+// StopWatchEngine stops the watch evaluation engine
+func (s *Server) StopWatchEngine() {
+	if s.watchEngine != nil {
+		s.watchEngine.Stop()
+	}
+}
+
+// SetDashboardStore sets the dashboard storage backend
+func (s *Server) SetDashboardStore(ds *dashboard.Store) {
+	s.dashboardStore = ds
+}
+
+// SetLogStore sets the log storage backend
+func (s *Server) SetLogStore(ls *logs.Store) {
+	s.logStore = ls
+}
+
+// SetCustomMetricsStore sets the custom metrics storage backend
+func (s *Server) SetCustomMetricsStore(cms *custommetrics.Store) {
+	s.customMetricsStore = cms
+	s.otlpMetricsReceiver = custommetrics.NewOTLPMetricsReceiver(cms)
+}
+
+// SetSyntheticsStore sets the synthetics storage and starts the runner
+func (s *Server) SetSyntheticsStore(ss *synthetics.Store, notifier *watch.Notifier) {
+	s.syntheticsStore = ss
+	s.syntheticsRunner = synthetics.NewRunner(ss, notifier)
+	s.syntheticsRunner.Start()
+}
+
+// StopSyntheticsRunner stops the synthetics runner
+func (s *Server) StopSyntheticsRunner() {
+	if s.syntheticsRunner != nil {
+		s.syntheticsRunner.Stop()
+	}
+}
+
+// SetSLOStore sets the SLO storage and starts the calculator
+func (s *Server) SetSLOStore(ss *slo.Store) {
+	s.sloStore = ss
+	s.sloCalculator = slo.NewCalculator(ss, s.syntheticsStore)
+
+	// Connect pager if already set up
+	if s.pager != nil {
+		s.sloCalculator.SetPager(s.pager)
+	}
+
+	s.sloCalculator.Start()
+}
+
+// StopSLOCalculator stops the SLO calculator
+func (s *Server) StopSLOCalculator() {
+	if s.sloCalculator != nil {
+		s.sloCalculator.Stop()
+	}
+}
+
+// SetContainerCollector sets the container metrics collector
+func (s *Server) SetContainerCollector(cc *containers.Collector) {
+	s.containerCollector = cc
+}
+
+// StopContainerCollector stops the container collector
+func (s *Server) StopContainerCollector() {
+	if s.containerCollector != nil {
+		s.containerCollector.Stop()
+	}
+}
+
+// SetDeployStore sets the deployment store
+func (s *Server) SetDeployStore(ds *deploys.Store) {
+	s.deployStore = ds
+}
+
+// SetIncidentStore sets the incident store and starts the pager
+func (s *Server) SetIncidentStore(is *incidents.Store) {
+	s.incidentStore = is
+	s.pager = incidents.NewPager(is)
+	s.pager.Start()
+
+	// Connect pager to watch engine if already set up
+	if s.watchEngine != nil {
+		s.watchEngine.SetPager(s.pager)
+	}
+
+	// Connect pager to SLO calculator if already set up
+	if s.sloCalculator != nil {
+		s.sloCalculator.SetPager(s.pager)
+	}
+}
+
+// GetPager returns the pager for external triggering
+func (s *Server) GetPager() *incidents.Pager {
+	return s.pager
+}
+
+// StopPager stops the incident pager
+func (s *Server) StopPager() {
+	if s.pager != nil {
+		s.pager.Stop()
+	}
+}
+
+// GetMetricsCollector returns the metrics collector for external recording
+func (s *Server) GetMetricsCollector() *metrics.Collector {
+	return s.metrics
 }
 
 // Start begins serving HTTP
@@ -244,8 +478,9 @@ func (s *Server) handleServiceMap(w http.ResponseWriter, r *http.Request) {
 	stats := s.agg.GetStats()
 
 	nodeMap := make(map[string]ServiceMapNode)
-	var links []ServiceMapLink
+	linkMap := make(map[string]ServiceMapLink) // Use map to dedupe/merge links
 
+	// Add nodes and links from TCP connections (eBPF data)
 	for _, conn := range stats.Connections {
 		// Source node (process)
 		sourceID := conn.Comm
@@ -267,16 +502,59 @@ func (s *Server) handleServiceMap(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		links = append(links, ServiceMapLink{
+		linkKey := sourceID + "->" + targetID
+		linkMap[linkKey] = ServiceMapLink{
 			Source: sourceID,
 			Target: targetID,
 			Count:  conn.Count,
-		})
+		}
+	}
+
+	// Add nodes and links from distributed traces (if available)
+	if s.traceStore != nil {
+		deps, err := s.traceStore.GetServiceDependencies()
+		if err == nil {
+			for _, dep := range deps {
+				// Add service nodes
+				if _, exists := nodeMap[dep.Parent]; !exists {
+					nodeMap[dep.Parent] = ServiceMapNode{
+						ID:   dep.Parent,
+						Name: dep.Parent,
+						Type: "service",
+					}
+				}
+				if _, exists := nodeMap[dep.Child]; !exists {
+					nodeMap[dep.Child] = ServiceMapNode{
+						ID:   dep.Child,
+						Name: dep.Child,
+						Type: "service",
+					}
+				}
+
+				// Add/merge link
+				linkKey := dep.Parent + "->" + dep.Child
+				if existing, exists := linkMap[linkKey]; exists {
+					existing.Count += dep.CallCount
+					linkMap[linkKey] = existing
+				} else {
+					linkMap[linkKey] = ServiceMapLink{
+						Source: dep.Parent,
+						Target: dep.Child,
+						Count:  dep.CallCount,
+					}
+				}
+			}
+		}
 	}
 
 	nodes := make([]ServiceMapNode, 0, len(nodeMap))
 	for _, node := range nodeMap {
 		nodes = append(nodes, node)
+	}
+
+	links := make([]ServiceMapLink, 0, len(linkMap))
+	for _, link := range linkMap {
+		links = append(links, link)
 	}
 
 	resp := ServiceMapResponse{
@@ -430,4 +708,2247 @@ func (s *Server) handleFlameGraphClear(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "cleared"})
+}
+
+func (s *Server) handleHistorySystem(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		http.Error(w, "Storage not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Parse duration from query param (default 1 hour)
+	durationStr := r.URL.Query().Get("duration")
+	duration := time.Hour
+	if durationStr != "" {
+		if d, err := time.ParseDuration(durationStr); err == nil {
+			duration = d
+		}
+	}
+
+	// Cap at 24 hours
+	if duration > 24*time.Hour {
+		duration = 24 * time.Hour
+	}
+
+	data, err := s.store.GetSystemMetrics(duration)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Downsample for performance - target ~100 points max
+	data = downsampleSystemMetrics(data, 100)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data)
+}
+
+// downsampleSystemMetrics reduces data points by averaging groups
+func downsampleSystemMetrics(data []storage.SystemMetricPoint, maxPoints int) []storage.SystemMetricPoint {
+	if len(data) <= maxPoints {
+		return data
+	}
+
+	step := len(data) / maxPoints
+	if step < 1 {
+		step = 1
+	}
+
+	result := make([]storage.SystemMetricPoint, 0, maxPoints)
+	for i := 0; i < len(data); i += step {
+		end := i + step
+		if end > len(data) {
+			end = len(data)
+		}
+
+		// Average the group
+		var p storage.SystemMetricPoint
+		p.Timestamp = data[i].Timestamp // Use first timestamp
+		count := float64(end - i)
+		for j := i; j < end; j++ {
+			p.CPUPercent += data[j].CPUPercent
+			p.MemPercent += data[j].MemPercent
+			p.DiskReadPS += data[j].DiskReadPS
+			p.DiskWritePS += data[j].DiskWritePS
+			p.NetRxPS += data[j].NetRxPS
+			p.NetTxPS += data[j].NetTxPS
+			p.Load1 += data[j].Load1
+		}
+		p.CPUPercent /= count
+		p.MemPercent /= count
+		p.DiskReadPS /= count
+		p.DiskWritePS /= count
+		p.NetRxPS /= count
+		p.NetTxPS /= count
+		p.Load1 /= count
+
+		result = append(result, p)
+	}
+	return result
+}
+
+func (s *Server) handleHistoryConnections(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		http.Error(w, "Storage not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	durationStr := r.URL.Query().Get("duration")
+	duration := time.Hour
+	if durationStr != "" {
+		if d, err := time.ParseDuration(durationStr); err == nil {
+			duration = d
+		}
+	}
+
+	if duration > 24*time.Hour {
+		duration = 24 * time.Hour
+	}
+
+	data, err := s.store.GetConnectionMetrics(duration)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Downsample for performance
+	data = downsampleConnectionMetrics(data, 100)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data)
+}
+
+// downsampleConnectionMetrics reduces connection data points
+func downsampleConnectionMetrics(data []storage.ConnectionMetricPoint, maxPoints int) []storage.ConnectionMetricPoint {
+	if len(data) <= maxPoints {
+		return data
+	}
+
+	step := len(data) / maxPoints
+	if step < 1 {
+		step = 1
+	}
+
+	result := make([]storage.ConnectionMetricPoint, 0, maxPoints)
+	for i := 0; i < len(data); i += step {
+		end := i + step
+		if end > len(data) {
+			end = len(data)
+		}
+
+		// Use last values in the group (cumulative metrics)
+		result = append(result, data[end-1])
+	}
+	return result
+}
+
+func (s *Server) handleHistoryInfo(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		http.Error(w, "Storage not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Get the oldest data point to show when collection started
+	data, err := s.store.GetSystemMetrics(24 * time.Hour)
+	if err != nil || len(data) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"collecting": false,
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"collecting":  true,
+		"since":       data[0].Timestamp,
+		"data_points": len(data),
+	})
+}
+
+// Trace handlers
+
+func (s *Server) handleOTLPTraces(w http.ResponseWriter, r *http.Request) {
+	if s.otlpReceiver == nil {
+		http.Error(w, "Tracing not enabled", http.StatusServiceUnavailable)
+		return
+	}
+	s.otlpReceiver.HandleTraces(w, r)
+}
+
+func (s *Server) handleSimpleTrace(w http.ResponseWriter, r *http.Request) {
+	if s.otlpReceiver == nil {
+		http.Error(w, "Tracing not enabled", http.StatusServiceUnavailable)
+		return
+	}
+	s.otlpReceiver.HandleSimpleTrace(w, r)
+}
+
+func (s *Server) handleListTraces(w http.ResponseWriter, r *http.Request) {
+	if s.traceStore == nil {
+		http.Error(w, "Tracing not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Parse query params
+	limit := 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	service := r.URL.Query().Get("service")
+
+	since := time.Hour
+	if d := r.URL.Query().Get("duration"); d != "" {
+		if parsed, err := time.ParseDuration(d); err == nil {
+			since = parsed
+		}
+	}
+
+	traces, err := s.traceStore.ListTraces(limit, service, since)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(traces)
+}
+
+func (s *Server) handleGetTrace(w http.ResponseWriter, r *http.Request) {
+	if s.traceStore == nil {
+		http.Error(w, "Tracing not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Extract trace ID from path /api/traces/{traceID}
+	traceID := strings.TrimPrefix(r.URL.Path, "/api/traces/")
+	if traceID == "" {
+		http.Error(w, "Trace ID required", http.StatusBadRequest)
+		return
+	}
+
+	trace, err := s.traceStore.GetTrace(traceID)
+	if err != nil {
+		http.Error(w, "Trace not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(trace)
+}
+
+func (s *Server) handleTraceServices(w http.ResponseWriter, r *http.Request) {
+	if s.traceStore == nil {
+		http.Error(w, "Tracing not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	services, err := s.traceStore.GetServices()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(services)
+}
+
+func (s *Server) handleTraceDependencies(w http.ResponseWriter, r *http.Request) {
+	if s.traceStore == nil {
+		http.Error(w, "Tracing not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	deps, err := s.traceStore.GetServiceDependencies()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(deps)
+}
+
+// Watch handlers
+
+func (s *Server) handleWatches(w http.ResponseWriter, r *http.Request) {
+	if s.watchStore == nil {
+		http.Error(w, "Watches not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		watches, err := s.watchStore.ListWatches()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(watches)
+
+	case http.MethodPost:
+		var req watch.Watch
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.ID == "" {
+			req.ID = uuid.New().String()
+		}
+		if req.State == "" {
+			req.State = watch.StateNoData
+		}
+		if err := s.watchStore.SaveWatch(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Trigger immediate check
+		if s.watchEngine != nil {
+			s.watchEngine.ForceCheck()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(req)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
+	if s.watchStore == nil {
+		http.Error(w, "Watches not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	id := strings.TrimPrefix(r.URL.Path, "/api/watches/")
+	if id == "" {
+		http.Error(w, "Watch ID required", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		watch, err := s.watchStore.GetWatch(id)
+		if err != nil {
+			http.Error(w, "Watch not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(watch)
+
+	case http.MethodPut:
+		var req watch.Watch
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		req.ID = id
+		if err := s.watchStore.SaveWatch(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if s.watchEngine != nil {
+			s.watchEngine.ForceCheck()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(req)
+
+	case http.MethodDelete:
+		if err := s.watchStore.DeleteWatch(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleChannels(w http.ResponseWriter, r *http.Request) {
+	if s.watchStore == nil {
+		http.Error(w, "Watches not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		channels, err := s.watchStore.ListChannels()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(channels)
+
+	case http.MethodPost:
+		body, _ := io.ReadAll(r.Body)
+		var req watch.Channel
+		if err := json.Unmarshal(body, &req); err != nil {
+			http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.ID == "" {
+			req.ID = uuid.New().String()
+		}
+		if err := s.watchStore.SaveChannel(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(req)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleChannel(w http.ResponseWriter, r *http.Request) {
+	if s.watchStore == nil {
+		http.Error(w, "Watches not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	id := strings.TrimPrefix(r.URL.Path, "/api/watch/channels/")
+
+	// Handle test endpoint
+	if strings.HasSuffix(id, "/test") {
+		id = strings.TrimSuffix(id, "/test")
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		channel, err := s.watchStore.GetChannel(id)
+		if err != nil {
+			http.Error(w, "Channel not found", http.StatusNotFound)
+			return
+		}
+		notifier := watch.NewNotifier()
+		if err := notifier.TestChannel(channel); err != nil {
+			http.Error(w, "Test failed: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		return
+	}
+
+	if id == "" {
+		http.Error(w, "Channel ID required", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		channel, err := s.watchStore.GetChannel(id)
+		if err != nil {
+			http.Error(w, "Channel not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(channel)
+
+	case http.MethodDelete:
+		if err := s.watchStore.DeleteChannel(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleWatchEvents(w http.ResponseWriter, r *http.Request) {
+	if s.watchStore == nil {
+		http.Error(w, "Watches not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	limit := 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	watchID := r.URL.Query().Get("watch_id")
+
+	events, err := s.watchStore.GetEvents(limit, watchID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(events)
+}
+
+func (s *Server) handleWatchMetrics(w http.ResponseWriter, r *http.Request) {
+	// Return list of available metrics for watches
+	metrics := []map[string]string{
+		{"id": "cpu_percent", "name": "CPU Usage", "unit": "%"},
+		{"id": "mem_percent", "name": "Memory Usage", "unit": "%"},
+		{"id": "disk_read_ps", "name": "Disk Read", "unit": "B/s"},
+		{"id": "disk_write_ps", "name": "Disk Write", "unit": "B/s"},
+		{"id": "net_rx_ps", "name": "Network RX", "unit": "B/s"},
+		{"id": "net_tx_ps", "name": "Network TX", "unit": "B/s"},
+		{"id": "load_1", "name": "Load Average (1m)", "unit": ""},
+		{"id": "connections", "name": "Total Connections", "unit": ""},
+		{"id": "requests", "name": "Total Requests", "unit": ""},
+		{"id": "errors", "name": "Total Errors", "unit": ""},
+		{"id": "error_rate", "name": "Error Rate", "unit": "%"},
+		{"id": "latency_p50", "name": "Latency P50", "unit": "ms"},
+		{"id": "latency_p99", "name": "Latency P99", "unit": "ms"},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(metrics)
+}
+
+// Dashboard handlers
+
+func (s *Server) handleDashboards(w http.ResponseWriter, r *http.Request) {
+	if s.dashboardStore == nil {
+		http.Error(w, "Dashboard storage not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		dashboards, err := s.dashboardStore.List()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(dashboards)
+
+	case http.MethodPost:
+		var req struct {
+			Name      string                     `json:"name"`
+			Layout    []dashboard.WidgetPosition `json:"layout"`
+			IsDefault bool                       `json:"is_default"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Name == "" {
+			http.Error(w, "Name is required", http.StatusBadRequest)
+			return
+		}
+		dash, err := s.dashboardStore.Create(req.Name, req.Layout, req.IsDefault)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(dash)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	if s.dashboardStore == nil {
+		http.Error(w, "Dashboard storage not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	id := strings.TrimPrefix(r.URL.Path, "/api/dashboards/")
+
+	// Handle set-default endpoint
+	if strings.HasSuffix(id, "/default") {
+		id = strings.TrimSuffix(id, "/default")
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if err := s.dashboardStore.SetDefault(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		return
+	}
+
+	if id == "" {
+		http.Error(w, "Dashboard ID required", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		dash, err := s.dashboardStore.Get(id)
+		if err != nil || dash == nil {
+			http.Error(w, "Dashboard not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(dash)
+
+	case http.MethodPut:
+		var req struct {
+			Name   string                     `json:"name"`
+			Layout []dashboard.WidgetPosition `json:"layout"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := s.dashboardStore.Update(id, req.Name, req.Layout); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		dash, _ := s.dashboardStore.Get(id)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(dash)
+
+	case http.MethodDelete:
+		if err := s.dashboardStore.Delete(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleDefaultDashboard(w http.ResponseWriter, r *http.Request) {
+	if s.dashboardStore == nil {
+		http.Error(w, "Dashboard storage not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	dash, err := s.dashboardStore.GetDefault()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if dash == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(nil)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(dash)
+}
+
+// Log handlers
+
+func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
+	if s.logStore == nil {
+		http.Error(w, "Log storage not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse query parameters
+	q := logs.SearchQuery{
+		Query:   r.URL.Query().Get("q"),
+		Service: r.URL.Query().Get("service"),
+		TraceID: r.URL.Query().Get("trace_id"),
+		Limit:   100,
+	}
+
+	if level := r.URL.Query().Get("level"); level != "" {
+		q.Level = logs.LogLevel(level)
+	}
+
+	if limit := r.URL.Query().Get("limit"); limit != "" {
+		if l, err := strconv.Atoi(limit); err == nil && l > 0 {
+			q.Limit = l
+		}
+	}
+
+	if offset := r.URL.Query().Get("offset"); offset != "" {
+		if o, err := strconv.Atoi(offset); err == nil && o >= 0 {
+			q.Offset = o
+		}
+	}
+
+	// Time range - default to last hour
+	if since := r.URL.Query().Get("since"); since != "" {
+		if d, err := time.ParseDuration(since); err == nil {
+			q.StartTime = time.Now().Add(-d)
+		}
+	} else {
+		q.StartTime = time.Now().Add(-time.Hour)
+	}
+
+	if until := r.URL.Query().Get("until"); until != "" {
+		if t, err := time.Parse(time.RFC3339, until); err == nil {
+			q.EndTime = t
+		}
+	}
+
+	result, err := s.logStore.Search(q)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+func (s *Server) handleLogIngest(w http.ResponseWriter, r *http.Request) {
+	if s.logStore == nil {
+		http.Error(w, "Log storage not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	contentType := r.Header.Get("Content-Type")
+
+	// Handle batch ingestion (array of logs)
+	if strings.Contains(contentType, "application/json") {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Failed to read body", http.StatusBadRequest)
+			return
+		}
+
+		// Try to parse as array first
+		var entries []logs.LogEntry
+		if err := json.Unmarshal(body, &entries); err == nil && len(entries) > 0 {
+			if err := s.logStore.InsertBatch(entries); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]int{"ingested": len(entries)})
+			return
+		}
+
+		// Try single entry
+		var entry logs.LogEntry
+		if err := json.Unmarshal(body, &entry); err != nil {
+			http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if err := s.logStore.Insert(&entry); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]int{"ingested": 1})
+		return
+	}
+
+	// Handle plain text (syslog-style)
+	if strings.Contains(contentType, "text/plain") {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Failed to read body", http.StatusBadRequest)
+			return
+		}
+
+		lines := strings.Split(string(body), "\n")
+		var entries []logs.LogEntry
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+
+			entry := logs.LogEntry{
+				Message: line,
+				Level:   logs.LevelInfo,
+				Service: r.URL.Query().Get("service"),
+				Host:    r.URL.Query().Get("host"),
+			}
+
+			// Try to detect log level from message
+			lowerLine := strings.ToLower(line)
+			if strings.Contains(lowerLine, "error") || strings.Contains(lowerLine, "err]") {
+				entry.Level = logs.LevelError
+			} else if strings.Contains(lowerLine, "warn") {
+				entry.Level = logs.LevelWarn
+			} else if strings.Contains(lowerLine, "debug") {
+				entry.Level = logs.LevelDebug
+			}
+
+			entries = append(entries, entry)
+		}
+
+		if len(entries) > 0 {
+			if err := s.logStore.InsertBatch(entries); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]int{"ingested": len(entries)})
+		return
+	}
+
+	http.Error(w, "Unsupported content type", http.StatusBadRequest)
+}
+
+func (s *Server) handleLogServices(w http.ResponseWriter, r *http.Request) {
+	if s.logStore == nil {
+		http.Error(w, "Log storage not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	services, err := s.logStore.GetServices()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(services)
+}
+
+func (s *Server) handleLogStats(w http.ResponseWriter, r *http.Request) {
+	if s.logStore == nil {
+		http.Error(w, "Log storage not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	since := time.Hour
+	if d := r.URL.Query().Get("since"); d != "" {
+		if parsed, err := time.ParseDuration(d); err == nil {
+			since = parsed
+		}
+	}
+
+	stats, err := s.logStore.GetStats(since)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
+}
+
+func (s *Server) handleLogPatterns(w http.ResponseWriter, r *http.Request) {
+	if s.logStore == nil {
+		http.Error(w, "Log storage not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Query parameters
+	filter := r.URL.Query().Get("filter") // "all", "new", "increasing"
+	limitStr := r.URL.Query().Get("limit")
+	limit := 50
+	if limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	var patterns []*logs.Pattern
+
+	switch filter {
+	case "new":
+		since := 24 * time.Hour
+		if d := r.URL.Query().Get("since"); d != "" {
+			if parsed, err := time.ParseDuration(d); err == nil {
+				since = parsed
+			}
+		}
+		patterns = s.logStore.GetNewPatterns(since)
+	case "increasing":
+		patterns = s.logStore.GetIncreasingPatterns()
+	default:
+		patterns = s.logStore.GetTopPatterns(limit)
+	}
+
+	// Get stats too
+	stats := s.logStore.GetPatternStats()
+
+	response := map[string]interface{}{
+		"patterns": patterns,
+		"stats":    stats,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) handleLogPattern(w http.ResponseWriter, r *http.Request) {
+	if s.logStore == nil {
+		http.Error(w, "Log storage not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Extract pattern ID from path
+	patternID := strings.TrimPrefix(r.URL.Path, "/api/logs/patterns/")
+	if patternID == "" {
+		http.Error(w, "Pattern ID required", http.StatusBadRequest)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	pattern := s.logStore.GetPattern(patternID)
+	if pattern == nil {
+		http.Error(w, "Pattern not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(pattern)
+}
+
+// Container handlers
+
+func (s *Server) handleContainers(w http.ResponseWriter, r *http.Request) {
+	if s.containerCollector == nil {
+		http.Error(w, "Container monitoring not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	containerList := s.containerCollector.GetContainers()
+	stats := s.containerCollector.GetStats()
+
+	// Combine containers with their stats
+	type ContainerWithStats struct {
+		Container *containers.Container      `json:"container"`
+		Stats     *containers.ContainerStats `json:"stats"`
+	}
+
+	result := make([]ContainerWithStats, 0, len(containerList))
+	for _, c := range containerList {
+		result = append(result, ContainerWithStats{
+			Container: c,
+			Stats:     stats[c.ID],
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+func (s *Server) handleContainer(w http.ResponseWriter, r *http.Request) {
+	if s.containerCollector == nil {
+		http.Error(w, "Container monitoring not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Extract container ID from path
+	containerID := strings.TrimPrefix(r.URL.Path, "/api/containers/")
+	if containerID == "" || containerID == "summary" {
+		// Let summary handler handle /api/containers/summary
+		if containerID == "summary" {
+			s.handleContainerSummary(w, r)
+			return
+		}
+		http.Error(w, "Container ID required", http.StatusBadRequest)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	container := s.containerCollector.GetContainer(containerID)
+	if container == nil {
+		http.Error(w, "Container not found", http.StatusNotFound)
+		return
+	}
+
+	stats := s.containerCollector.GetContainerStats(containerID)
+
+	// Get history if requested
+	var history []containers.ContainerStats
+	if historyParam := r.URL.Query().Get("history"); historyParam != "" {
+		if duration, err := time.ParseDuration(historyParam); err == nil {
+			history = s.containerCollector.GetHistory(containerID, duration)
+		}
+	}
+
+	result := map[string]interface{}{
+		"container": container,
+		"stats":     stats,
+	}
+	if len(history) > 0 {
+		result["history"] = history
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+func (s *Server) handleContainerSummary(w http.ResponseWriter, r *http.Request) {
+	if s.containerCollector == nil {
+		http.Error(w, "Container monitoring not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	summary := s.containerCollector.GetSummary()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(summary)
+}
+
+// Deployment handlers
+
+func (s *Server) handleDeploys(w http.ResponseWriter, r *http.Request) {
+	if s.deployStore == nil {
+		http.Error(w, "Deployment tracking not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		// List deployments
+		limitStr := r.URL.Query().Get("limit")
+		limit := 50
+		if limitStr != "" {
+			if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+				limit = l
+			}
+		}
+
+		service := r.URL.Query().Get("service")
+		var deployments []deploys.Deployment
+		var err error
+
+		if service != "" {
+			deployments, err = s.deployStore.ListByService(service, limit)
+		} else {
+			deployments, err = s.deployStore.List(limit)
+		}
+
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(deployments)
+
+	case http.MethodPost:
+		// Record new deployment
+		var deploy deploys.Deployment
+		if err := json.NewDecoder(r.Body).Decode(&deploy); err != nil {
+			http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if deploy.Service == "" {
+			http.Error(w, "Service name is required", http.StatusBadRequest)
+			return
+		}
+		if deploy.Version == "" {
+			http.Error(w, "Version is required", http.StatusBadRequest)
+			return
+		}
+
+		if err := s.deployStore.Record(&deploy); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(deploy)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
+	if s.deployStore == nil {
+		http.Error(w, "Deployment tracking not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Extract deploy ID from path
+	deployID := strings.TrimPrefix(r.URL.Path, "/api/deploys/")
+	if deployID == "" || deployID == "stats" || deployID == "services" {
+		if deployID == "stats" {
+			s.handleDeployStats(w, r)
+			return
+		}
+		if deployID == "services" {
+			s.handleDeployServices(w, r)
+			return
+		}
+		http.Error(w, "Deploy ID required", http.StatusBadRequest)
+		return
+	}
+
+	// Check for impact endpoint: /api/deploys/{id}/impact
+	if strings.HasSuffix(deployID, "/impact") {
+		deployID = strings.TrimSuffix(deployID, "/impact")
+		s.handleDeployImpact(w, r, deployID)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		deploy, err := s.deployStore.Get(deployID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if deploy == nil {
+			http.Error(w, "Deployment not found", http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(deploy)
+
+	case http.MethodPatch:
+		// Update status
+		var update struct {
+			Status string `json:"status"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if err := s.deployStore.UpdateStatus(deployID, update.Status); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+
+	case http.MethodDelete:
+		if err := s.deployStore.Delete(deployID); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleDeployStats(w http.ResponseWriter, r *http.Request) {
+	if s.deployStore == nil {
+		http.Error(w, "Deployment tracking not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	stats, err := s.deployStore.GetStats()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
+}
+
+func (s *Server) handleDeployServices(w http.ResponseWriter, r *http.Request) {
+	if s.deployStore == nil {
+		http.Error(w, "Deployment tracking not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	services, err := s.deployStore.GetServices()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(services)
+}
+
+// handleDeployImpact calculates the metric impact of a deployment
+func (s *Server) handleDeployImpact(w http.ResponseWriter, r *http.Request, deployID string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get the deployment
+	deploy, err := s.deployStore.Get(deployID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if deploy == nil {
+		http.Error(w, "Deployment not found", http.StatusNotFound)
+		return
+	}
+
+	// Get window duration from query params (default 30 minutes)
+	windowStr := r.URL.Query().Get("window")
+	window := 30 * time.Minute
+	if windowStr != "" {
+		if d, err := time.ParseDuration(windowStr); err == nil {
+			window = d
+		}
+	}
+
+	// Calculate before/after time windows
+	beforeStart := deploy.Timestamp.Add(-window)
+	beforeEnd := deploy.Timestamp
+	afterStart := deploy.Timestamp
+	afterEnd := deploy.Timestamp.Add(window)
+
+	impact := deploys.DeploymentImpact{
+		DeploymentID: deployID,
+		Impact:       "neutral",
+	}
+
+	// Get connection metrics if storage is available
+	if s.store != nil {
+		// Before metrics
+		beforeMetrics, err := s.store.GetConnectionMetricsByTimeRange(beforeStart, beforeEnd)
+		if err == nil && len(beforeMetrics) > 0 {
+			// Sum up errors and requests for the before window
+			var totalErrors, totalRequests int64
+			for _, m := range beforeMetrics {
+				totalErrors += m.TotalErrors
+				totalRequests += m.TotalRequests
+			}
+			impact.ErrorsBefore = int(totalErrors)
+			impact.RequestsBefore = int(totalRequests)
+		}
+
+		// After metrics
+		afterMetrics, err := s.store.GetConnectionMetricsByTimeRange(afterStart, afterEnd)
+		if err == nil && len(afterMetrics) > 0 {
+			var totalErrors, totalRequests int64
+			for _, m := range afterMetrics {
+				totalErrors += m.TotalErrors
+				totalRequests += m.TotalRequests
+			}
+			impact.ErrorsAfter = int(totalErrors)
+			impact.RequestsAfter = int(totalRequests)
+		}
+
+		// Calculate error rate change
+		if impact.RequestsBefore > 0 && impact.RequestsAfter > 0 {
+			beforeRate := float64(impact.ErrorsBefore) / float64(impact.RequestsBefore) * 100
+			afterRate := float64(impact.ErrorsAfter) / float64(impact.RequestsAfter) * 100
+			if beforeRate > 0 {
+				impact.ErrorRateChange = ((afterRate - beforeRate) / beforeRate) * 100
+			} else if afterRate > 0 {
+				impact.ErrorRateChange = 100 // Went from 0 to some errors
+			}
+		}
+
+		// Get system metrics for latency-like info (using CPU as a proxy)
+		beforeSys, _ := s.store.GetSystemMetricsByTimeRange(beforeStart, beforeEnd)
+		afterSys, _ := s.store.GetSystemMetricsByTimeRange(afterStart, afterEnd)
+
+		if len(beforeSys) > 0 {
+			var sum float64
+			for _, m := range beforeSys {
+				sum += m.CPUPercent
+			}
+			impact.LatencyP50Before = sum / float64(len(beforeSys))
+		}
+		if len(afterSys) > 0 {
+			var sum float64
+			for _, m := range afterSys {
+				sum += m.CPUPercent
+			}
+			impact.LatencyP50After = sum / float64(len(afterSys))
+		}
+
+		if impact.LatencyP50Before > 0 {
+			impact.LatencyChange = ((impact.LatencyP50After - impact.LatencyP50Before) / impact.LatencyP50Before) * 100
+		}
+
+		// Determine overall impact
+		if impact.ErrorRateChange > 10 || impact.LatencyChange > 20 {
+			impact.Impact = "negative"
+		} else if impact.ErrorRateChange < -10 || impact.LatencyChange < -10 {
+			impact.Impact = "positive"
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(impact)
+}
+
+// Custom metrics handlers
+
+func (s *Server) handleOTLPMetrics(w http.ResponseWriter, r *http.Request) {
+	if s.otlpMetricsReceiver == nil {
+		http.Error(w, "Custom metrics not enabled", http.StatusServiceUnavailable)
+		return
+	}
+	s.otlpMetricsReceiver.HandleMetrics(w, r)
+}
+
+func (s *Server) handleMetricsPush(w http.ResponseWriter, r *http.Request) {
+	if s.customMetricsStore == nil {
+		http.Error(w, "Custom metrics not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read body", http.StatusBadRequest)
+		return
+	}
+
+	// Try array first
+	var points []custommetrics.DataPoint
+	if err := json.Unmarshal(body, &points); err == nil && len(points) > 0 {
+		if err := s.customMetricsStore.RecordBatch(points); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]int{"accepted": len(points)})
+		return
+	}
+
+	// Try single point
+	var point custommetrics.DataPoint
+	if err := json.Unmarshal(body, &point); err != nil {
+		http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if point.Name == "" {
+		http.Error(w, "Metric name is required", http.StatusBadRequest)
+		return
+	}
+
+	if point.Type == "" {
+		point.Type = custommetrics.Gauge
+	}
+
+	if err := s.customMetricsStore.Record(point); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]int{"accepted": 1})
+}
+
+func (s *Server) handleMetricsQuery(w http.ResponseWriter, r *http.Request) {
+	if s.customMetricsStore == nil {
+		http.Error(w, "Custom metrics not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		http.Error(w, "Metric name is required", http.StatusBadRequest)
+		return
+	}
+
+	since := time.Hour
+	if d := r.URL.Query().Get("since"); d != "" {
+		if parsed, err := time.ParseDuration(d); err == nil {
+			since = parsed
+		}
+	}
+
+	series, err := s.customMetricsStore.Query(name, nil, since)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(series)
+}
+
+func (s *Server) handleMetricsList(w http.ResponseWriter, r *http.Request) {
+	if s.customMetricsStore == nil {
+		http.Error(w, "Custom metrics not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	metrics, err := s.customMetricsStore.List()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(metrics)
+}
+
+// Synthetics handlers
+
+func (s *Server) handleSyntheticsChecks(w http.ResponseWriter, r *http.Request) {
+	if s.syntheticsStore == nil {
+		http.Error(w, "Synthetics not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		checks, err := s.syntheticsStore.ListChecks()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(checks)
+
+	case http.MethodPost:
+		var check synthetics.Check
+		if err := json.NewDecoder(r.Body).Decode(&check); err != nil {
+			http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if check.Name == "" {
+			http.Error(w, "Name is required", http.StatusBadRequest)
+			return
+		}
+		if check.URL == "" {
+			http.Error(w, "URL is required", http.StatusBadRequest)
+			return
+		}
+		if err := s.syntheticsStore.CreateCheck(&check); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(check)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleSyntheticsCheck(w http.ResponseWriter, r *http.Request) {
+	if s.syntheticsStore == nil {
+		http.Error(w, "Synthetics not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	id := strings.TrimPrefix(r.URL.Path, "/api/synthetics/checks/")
+
+	// Handle run endpoint
+	if strings.HasSuffix(id, "/run") {
+		id = strings.TrimSuffix(id, "/run")
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if s.syntheticsRunner == nil {
+			http.Error(w, "Synthetics runner not enabled", http.StatusServiceUnavailable)
+			return
+		}
+		result, err := s.syntheticsRunner.RunCheck(id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+		return
+	}
+
+	if id == "" {
+		http.Error(w, "Check ID required", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		check, err := s.syntheticsStore.GetCheck(id)
+		if err != nil || check == nil {
+			http.Error(w, "Check not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(check)
+
+	case http.MethodPut:
+		var check synthetics.Check
+		if err := json.NewDecoder(r.Body).Decode(&check); err != nil {
+			http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		check.ID = id
+		if err := s.syntheticsStore.UpdateCheck(&check); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(check)
+
+	case http.MethodDelete:
+		if err := s.syntheticsStore.DeleteCheck(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleSyntheticsResults(w http.ResponseWriter, r *http.Request) {
+	if s.syntheticsStore == nil {
+		http.Error(w, "Synthetics not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	checkID := strings.TrimPrefix(r.URL.Path, "/api/synthetics/results/")
+	if checkID == "" {
+		http.Error(w, "Check ID required", http.StatusBadRequest)
+		return
+	}
+
+	limit := 100
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	results, err := s.syntheticsStore.GetResults(checkID, limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
+}
+
+func (s *Server) handleSyntheticsUptime(w http.ResponseWriter, r *http.Request) {
+	if s.syntheticsStore == nil {
+		http.Error(w, "Synthetics not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	checkID := strings.TrimPrefix(r.URL.Path, "/api/synthetics/uptime/")
+	if checkID == "" {
+		http.Error(w, "Check ID required", http.StatusBadRequest)
+		return
+	}
+
+	since := 24 * time.Hour
+	if d := r.URL.Query().Get("since"); d != "" {
+		if parsed, err := time.ParseDuration(d); err == nil {
+			since = parsed
+		}
+	}
+
+	stats, err := s.syntheticsStore.GetUptime(checkID, since)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
+}
+
+// SLO handlers
+
+func (s *Server) handleSLOs(w http.ResponseWriter, r *http.Request) {
+	if s.sloStore == nil {
+		http.Error(w, "SLOs not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		// Return SLOs with their current states
+		if s.sloCalculator != nil {
+			slosWithState, err := s.sloCalculator.GetSLOsWithState()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(slosWithState)
+		} else {
+			slos, err := s.sloStore.ListSLOs()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(slos)
+		}
+
+	case http.MethodPost:
+		var req slo.SLO
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Name == "" {
+			http.Error(w, "Name is required", http.StatusBadRequest)
+			return
+		}
+		if req.Target <= 0 || req.Target > 100 {
+			http.Error(w, "Target must be between 0 and 100", http.StatusBadRequest)
+			return
+		}
+		if err := s.sloStore.CreateSLO(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Trigger immediate calculation
+		if s.sloCalculator != nil {
+			s.sloCalculator.ForceCalculate(req.ID)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(req)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleSLO(w http.ResponseWriter, r *http.Request) {
+	if s.sloStore == nil {
+		http.Error(w, "SLOs not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	id := strings.TrimPrefix(r.URL.Path, "/api/slos/")
+
+	// Handle state endpoint
+	if strings.HasSuffix(id, "/state") {
+		id = strings.TrimSuffix(id, "/state")
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if s.sloCalculator == nil {
+			http.Error(w, "SLO calculator not running", http.StatusServiceUnavailable)
+			return
+		}
+		state := s.sloCalculator.ForceCalculate(id)
+		if state == nil {
+			http.Error(w, "SLO not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(state)
+		return
+	}
+
+	// Handle history endpoint
+	if strings.HasSuffix(id, "/history") {
+		id = strings.TrimSuffix(id, "/history")
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		since := 24 * time.Hour
+		if d := r.URL.Query().Get("since"); d != "" {
+			if parsed, err := time.ParseDuration(d); err == nil {
+				since = parsed
+			}
+		}
+		limit := 100
+		if l := r.URL.Query().Get("limit"); l != "" {
+			if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+				limit = parsed
+			}
+		}
+		snapshots, err := s.sloStore.GetSnapshots(id, since, limit)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(snapshots)
+		return
+	}
+
+	if id == "" {
+		http.Error(w, "SLO ID required", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		sloObj, err := s.sloStore.GetSLO(id)
+		if err != nil || sloObj == nil {
+			http.Error(w, "SLO not found", http.StatusNotFound)
+			return
+		}
+		// Include current state if available
+		var state *slo.SLOState
+		if s.sloCalculator != nil {
+			state = s.sloCalculator.GetState(id)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"slo":   sloObj,
+			"state": state,
+		})
+
+	case http.MethodPut:
+		var req slo.SLO
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		req.ID = id
+		if err := s.sloStore.UpdateSLO(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Trigger recalculation
+		if s.sloCalculator != nil {
+			s.sloCalculator.ForceCalculate(id)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(req)
+
+	case http.MethodDelete:
+		if err := s.sloStore.DeleteSLO(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// Incident handlers
+
+func (s *Server) handleIncidents(w http.ResponseWriter, r *http.Request) {
+	if s.incidentStore == nil {
+		http.Error(w, "Incident management not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		status := r.URL.Query().Get("status")
+		limit := 50
+		if l := r.URL.Query().Get("limit"); l != "" {
+			if parsed, err := strconv.Atoi(l); err == nil {
+				limit = parsed
+			}
+		}
+
+		incs, err := s.incidentStore.ListIncidents(status, limit)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(incs)
+
+	case http.MethodPost:
+		var inc incidents.Incident
+		if err := json.NewDecoder(r.Body).Decode(&inc); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if inc.Title == "" {
+			http.Error(w, "Title is required", http.StatusBadRequest)
+			return
+		}
+
+		if s.pager != nil {
+			if err := s.pager.Trigger(&inc); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		} else {
+			if err := s.incidentStore.CreateIncident(&inc); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(inc)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleIncident(w http.ResponseWriter, r *http.Request) {
+	if s.incidentStore == nil {
+		http.Error(w, "Incident management not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/incidents/")
+	parts := strings.Split(path, "/")
+	if len(parts) == 0 || parts[0] == "" {
+		if parts[0] == "stats" {
+			s.handleIncidentStats(w, r)
+			return
+		}
+		http.Error(w, "Incident ID required", http.StatusBadRequest)
+		return
+	}
+
+	incidentID := parts[0]
+
+	// Handle sub-routes
+	if len(parts) > 1 {
+		switch parts[1] {
+		case "ack":
+			s.handleIncidentAck(w, r, incidentID)
+			return
+		case "resolve":
+			s.handleIncidentResolve(w, r, incidentID)
+			return
+		case "note":
+			s.handleIncidentNote(w, r, incidentID)
+			return
+		case "notifications":
+			s.handleIncidentNotifications(w, r, incidentID)
+			return
+		}
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		inc, err := s.incidentStore.GetIncident(incidentID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if inc == nil {
+			http.Error(w, "Incident not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(inc)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleIncidentAck(w http.ResponseWriter, r *http.Request, incidentID string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		User string `json:"user"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req.User = "api"
+	}
+	if req.User == "" {
+		req.User = "api"
+	}
+
+	if err := s.incidentStore.AcknowledgeIncident(incidentID, req.User); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if s.pager != nil {
+		s.pager.CancelEscalation(incidentID)
+	}
+
+	inc, _ := s.incidentStore.GetIncident(incidentID)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(inc)
+}
+
+func (s *Server) handleIncidentResolve(w http.ResponseWriter, r *http.Request, incidentID string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		User       string `json:"user"`
+		Resolution string `json:"resolution"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	if req.User == "" {
+		req.User = "api"
+	}
+
+	if err := s.incidentStore.ResolveIncident(incidentID, req.User, req.Resolution); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if s.pager != nil {
+		s.pager.CancelEscalation(incidentID)
+		inc, _ := s.incidentStore.GetIncident(incidentID)
+		if inc != nil {
+			s.pager.NotifyResolution(inc)
+		}
+	}
+
+	inc, _ := s.incidentStore.GetIncident(incidentID)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(inc)
+}
+
+func (s *Server) handleIncidentNote(w http.ResponseWriter, r *http.Request, incidentID string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		User string `json:"user"`
+		Note string `json:"note"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.Note == "" {
+		http.Error(w, "Note is required", http.StatusBadRequest)
+		return
+	}
+	if req.User == "" {
+		req.User = "api"
+	}
+
+	if err := s.incidentStore.AddNote(incidentID, req.User, req.Note); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	inc, _ := s.incidentStore.GetIncident(incidentID)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(inc)
+}
+
+func (s *Server) handleIncidentNotifications(w http.ResponseWriter, r *http.Request, incidentID string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	logs, err := s.incidentStore.GetNotificationLogs(incidentID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(logs)
+}
+
+func (s *Server) handleIncidentStats(w http.ResponseWriter, r *http.Request) {
+	if s.incidentStore == nil {
+		http.Error(w, "Incident management not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	stats, err := s.incidentStore.GetStats()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
+}
+
+// On-call schedule handlers
+
+func (s *Server) handleOnCallSchedules(w http.ResponseWriter, r *http.Request) {
+	if s.incidentStore == nil {
+		http.Error(w, "Incident management not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		schedules, err := s.incidentStore.ListSchedules()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(schedules)
+
+	case http.MethodPost:
+		var sched incidents.OnCallSchedule
+		if err := json.NewDecoder(r.Body).Decode(&sched); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+		if sched.Name == "" {
+			http.Error(w, "Name is required", http.StatusBadRequest)
+			return
+		}
+
+		if err := s.incidentStore.CreateSchedule(&sched); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(sched)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleOnCallSchedule(w http.ResponseWriter, r *http.Request) {
+	if s.incidentStore == nil {
+		http.Error(w, "Incident management not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	schedID := strings.TrimPrefix(r.URL.Path, "/api/oncall/")
+	if schedID == "" || schedID == "current" {
+		s.handleCurrentOnCall(w, r)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		sched, err := s.incidentStore.GetSchedule(schedID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if sched == nil {
+			http.Error(w, "Schedule not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(sched)
+
+	case http.MethodDelete:
+		if err := s.incidentStore.DeleteSchedule(schedID); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleCurrentOnCall(w http.ResponseWriter, r *http.Request) {
+	if s.incidentStore == nil {
+		http.Error(w, "Incident management not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	scheduleID := r.URL.Query().Get("schedule")
+	if scheduleID == "" {
+		// Return all schedules with current on-call
+		schedules, err := s.incidentStore.ListSchedules()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		result := make(map[string]string)
+		for _, sched := range schedules {
+			user, _ := s.incidentStore.GetCurrentOnCall(sched.ID)
+			result[sched.Name] = user
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+		return
+	}
+
+	user, err := s.incidentStore.GetCurrentOnCall(scheduleID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"user": user, "schedule_id": scheduleID})
+}
+
+// Escalation policy handlers
+
+func (s *Server) handleEscalationPolicies(w http.ResponseWriter, r *http.Request) {
+	if s.incidentStore == nil {
+		http.Error(w, "Incident management not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		policies, err := s.incidentStore.ListPolicies()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(policies)
+
+	case http.MethodPost:
+		var policy incidents.EscalationPolicy
+		if err := json.NewDecoder(r.Body).Decode(&policy); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+		if policy.Name == "" {
+			http.Error(w, "Name is required", http.StatusBadRequest)
+			return
+		}
+
+		if err := s.incidentStore.CreatePolicy(&policy); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(policy)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleEscalationPolicy(w http.ResponseWriter, r *http.Request) {
+	if s.incidentStore == nil {
+		http.Error(w, "Incident management not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	policyID := strings.TrimPrefix(r.URL.Path, "/api/escalation/")
+	if policyID == "" {
+		http.Error(w, "Policy ID required", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		policy, err := s.incidentStore.GetPolicy(policyID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if policy == nil {
+			http.Error(w, "Policy not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(policy)
+
+	case http.MethodDelete:
+		if err := s.incidentStore.DeletePolicy(policyID); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }

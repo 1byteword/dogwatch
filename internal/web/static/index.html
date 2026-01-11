@@ -6,521 +6,2421 @@
     <title>dogwatch - eBPF Observability</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/d3-flame-graph@4.1.3/dist/d3-flamegraph.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/gridstack@10.0.1/dist/gridstack-all.min.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/d3-flame-graph@4.1.3/dist/d3-flamegraph.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@10.0.1/dist/gridstack.min.css">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #0f1419;
             color: #e7e9ea;
             min-height: 100vh;
         }
-
         .header {
             background: linear-gradient(135deg, #1a1f2e 0%, #0f1419 100%);
-            padding: 1rem 2rem;
+            padding: 0.75rem 1.5rem;
             border-bottom: 1px solid #2f3336;
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
+        .logo { display: flex; align-items: center; gap: 0.5rem; }
+        .logo-icon { font-size: 1.5rem; }
+        .logo h1 { font-size: 1.1rem; font-weight: 600; }
+        .logo span { color: #71767b; font-size: 0.7rem; margin-left: 0.5rem; }
+        .header-controls { display: flex; align-items: center; gap: 1rem; }
+        .status { display: flex; align-items: center; gap: 0.5rem; color: #71767b; font-size: 0.8rem; }
+        .status-dot { width: 8px; height: 8px; background: #00ba7c; border-radius: 50%; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .btn { padding: 0.4rem 0.8rem; border: none; border-radius: 5px; cursor: pointer; font-size: 0.75rem; background: #2f3336; color: #e7e9ea; }
+        .btn:hover { background: #3f4346; }
+        .btn-primary { background: #1d9bf0; }
+        .btn-primary:hover { background: #1a8cd8; }
 
-        .logo {
+        /* GridStack customization */
+        .grid-stack { background: #0f1419; min-height: calc(100vh - 60px); padding: 6px; }
+        .grid-stack-item { padding: 0; }
+        .grid-stack-item-content {
+            inset: 0;
+            position: absolute;
             display: flex;
-            align-items: center;
-            gap: 0.75rem;
+            flex-direction: column;
         }
-
-        .logo-icon { font-size: 1.75rem; }
-        .logo h1 { font-size: 1.25rem; font-weight: 600; }
-        .logo span { color: #71767b; font-size: 0.75rem; margin-left: 0.5rem; }
-
-        .status {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            color: #71767b;
-            font-size: 0.875rem;
-        }
-
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            background: #00ba7c;
-            border-radius: 50%;
-            animation: pulse 2s infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-
-        .container {
-            max-width: 1600px;
-            margin: 0 auto;
-            padding: 1.5rem;
-        }
-
-        .tabs {
-            display: flex;
-            gap: 0.5rem;
-            margin-bottom: 1.5rem;
-            border-bottom: 1px solid #2f3336;
-            padding-bottom: 0.5rem;
-        }
-
-        .tab {
-            padding: 0.5rem 1rem;
-            background: transparent;
-            border: none;
-            color: #71767b;
-            cursor: pointer;
-            font-size: 0.875rem;
-            border-radius: 6px;
-            transition: all 0.2s;
-        }
-
-        .tab:hover { background: #1d1f23; color: #e7e9ea; }
-        .tab.active { background: #1d9bf0; color: white; }
-
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-
-        /* System Metrics */
-        .metrics-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 1rem;
-            margin-bottom: 1.5rem;
-        }
-
-        .metric-card {
+        .gs-item-content {
             background: #16181c;
             border: 1px solid #2f3336;
-            border-radius: 12px;
-            padding: 1.25rem;
+            border-radius: 10px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            width: 100%;
         }
-
-        .metric-header {
+        .widget-header {
+            padding: 0.6rem 0.8rem;
+            background: #1a1f2e;
+            border-bottom: 1px solid #2f3336;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 1rem;
+            cursor: move;
+            flex-shrink: 0;
+            min-height: 36px;
         }
+        .widget-title { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: #71767b; font-weight: 600; }
+        .widget-body { padding: 0.8rem; flex: 1; overflow: auto; position: relative; min-height: 0; }
+        .widget-body.no-pad { padding: 0; }
 
-        .metric-title {
-            color: #71767b;
-            font-size: 0.75rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-
-        .metric-value {
-            font-size: 1.75rem;
-            font-weight: 700;
-        }
-
-        .metric-bar {
-            height: 8px;
-            background: #2f3336;
-            border-radius: 4px;
-            overflow: hidden;
-            margin-top: 0.75rem;
-        }
-
-        .metric-bar-fill {
-            height: 100%;
-            border-radius: 4px;
-            transition: width 0.5s ease;
-        }
-
+        /* Metric widgets */
+        .metric-big { font-size: 2rem; font-weight: 700; }
+        .metric-bar { height: 6px; background: #2f3336; border-radius: 3px; margin-top: 0.5rem; overflow: hidden; }
+        .metric-bar-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
         .metric-bar-fill.cpu { background: linear-gradient(90deg, #1d9bf0, #1d4ed8); }
         .metric-bar-fill.mem { background: linear-gradient(90deg, #00ba7c, #059669); }
         .metric-bar-fill.disk { background: linear-gradient(90deg, #f4212e, #dc2626); }
         .metric-bar-fill.net { background: linear-gradient(90deg, #7c3aed, #6d28d9); }
+        .metric-detail { font-size: 0.7rem; color: #71767b; margin-top: 0.4rem; display: flex; justify-content: space-between; }
 
-        .metric-details {
-            display: flex;
-            justify-content: space-between;
-            margin-top: 0.75rem;
-            font-size: 0.75rem;
-            color: #71767b;
-        }
+        /* Stats */
+        .stat-big { font-size: 1.8rem; font-weight: 700; }
+        .stat-big.error { color: #f4212e; }
 
-        /* Stats Cards */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 1rem;
-            margin-bottom: 1.5rem;
-        }
-
-        .stat-card {
-            background: #16181c;
-            border: 1px solid #2f3336;
-            border-radius: 12px;
-            padding: 1.25rem;
-        }
-
-        .stat-label {
-            color: #71767b;
-            font-size: 0.75rem;
-            margin-bottom: 0.25rem;
-        }
-
-        .stat-value {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: #e7e9ea;
-        }
-
-        .stat-value.error { color: #f4212e; }
-
-        /* Service Map */
-        .service-map-container {
-            background: #16181c;
-            border: 1px solid #2f3336;
-            border-radius: 12px;
-            padding: 1rem;
-            margin-bottom: 1.5rem;
-            height: 400px;
-            position: relative;
-        }
-
-        .service-map-container h3 {
-            position: absolute;
-            top: 1rem;
-            left: 1rem;
-            font-size: 0.875rem;
-            color: #71767b;
-            z-index: 10;
-        }
-
-        #service-map {
-            width: 100%;
-            height: 100%;
-        }
-
+        /* Service map */
         .node-process { fill: #1d9bf0; }
         .node-external { fill: #f4212e; }
-        .node-label { fill: #e7e9ea; font-size: 11px; }
+        .node-service { fill: #00ba7c; }
+        .node-label { fill: #e7e9ea; font-size: 10px; }
         .link { stroke: #2f3336; stroke-opacity: 0.8; }
+        .link.trace-link { stroke: #00ba7c; stroke-opacity: 0.6; }
 
         /* Tables */
-        .section {
-            background: #16181c;
-            border: 1px solid #2f3336;
-            border-radius: 12px;
-            margin-bottom: 1.5rem;
-            overflow: hidden;
-        }
-
-        .section-header {
-            padding: 1rem 1.25rem;
-            border-bottom: 1px solid #2f3336;
-            font-weight: 600;
-            font-size: 1rem;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        th {
-            text-align: left;
-            padding: 0.625rem 1rem;
-            color: #71767b;
-            font-weight: 500;
-            font-size: 0.7rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            border-bottom: 1px solid #2f3336;
-        }
-
-        td {
-            padding: 0.625rem 1rem;
-            border-bottom: 1px solid #2f3336;
-            font-size: 0.8125rem;
-        }
-
+        table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+        th { text-align: left; padding: 0.5rem; color: #71767b; font-weight: 500; font-size: 0.65rem; text-transform: uppercase; border-bottom: 1px solid #2f3336; }
+        td { padding: 0.5rem; border-bottom: 1px solid #2f3336; }
         tr:last-child td { border-bottom: none; }
         tr:hover { background: #1d1f23; }
-
-        .method {
-            display: inline-block;
-            padding: 0.125rem 0.5rem;
-            border-radius: 4px;
-            font-weight: 600;
-            font-size: 0.7rem;
-        }
-
+        .method { display: inline-block; padding: 0.1rem 0.4rem; border-radius: 3px; font-weight: 600; font-size: 0.6rem; }
         .method.GET { background: #1d4ed8; color: #93c5fd; }
         .method.POST { background: #059669; color: #6ee7b7; }
         .method.PUT { background: #d97706; color: #fcd34d; }
         .method.DELETE { background: #dc2626; color: #fca5a5; }
-        .method.PATCH { background: #7c3aed; color: #c4b5fd; }
-
-        .path { font-family: 'SF Mono', Monaco, monospace; color: #1d9bf0; font-size: 0.75rem; }
-        .latency { font-family: 'SF Mono', Monaco, monospace; }
+        .path { font-family: monospace; color: #1d9bf0; font-size: 0.7rem; }
+        .latency { font-family: monospace; }
         .latency.good { color: #00ba7c; }
         .latency.warn { color: #ffd400; }
         .latency.bad { color: #f4212e; }
-        .error-rate { font-weight: 600; }
-        .error-rate.good { color: #00ba7c; }
-        .error-rate.bad { color: #f4212e; }
+        .empty-state { padding: 1.5rem; text-align: center; color: #71767b; font-size: 0.8rem; }
 
-        .empty-state {
-            padding: 2rem;
-            text-align: center;
-            color: #71767b;
-        }
-
-        .process { font-weight: 500; }
-        .pid { color: #71767b; font-size: 0.7rem; }
-        .remote { font-family: 'SF Mono', Monaco, monospace; color: #71767b; font-size: 0.75rem; }
-        .count { font-family: 'SF Mono', Monaco, monospace; font-weight: 600; }
-
-        .footer {
-            text-align: center;
-            padding: 1.5rem;
-            color: #71767b;
-            font-size: 0.75rem;
-        }
-
-        .footer a { color: #1d9bf0; text-decoration: none; }
-
-        /* Buttons */
-        .btn {
-            padding: 0.5rem 1rem;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 0.875rem;
-            background: #1d9bf0;
-            color: white;
-            margin-left: 0.5rem;
-        }
-        .btn:hover { background: #1a8cd8; }
-        .btn-secondary { background: #2f3336; }
-        .btn-secondary:hover { background: #3f4346; }
-
-        /* Flame graph overrides */
+        /* Flame graph */
         #flamegraph .d3-flame-graph rect { stroke: #0f1419; }
-        #flamegraph .d3-flame-graph-label { fill: #e7e9ea !important; font-size: 11px; }
+        #flamegraph .d3-flame-graph-label { fill: #e7e9ea !important; font-size: 10px; }
+
+        /* Chart container */
+        .chart-wrap { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
+
+        /* Time selector */
+        .time-btns { display: flex; gap: 0.3rem; }
+        .time-btn { padding: 0.2rem 0.5rem; background: #2f3336; border: none; border-radius: 3px; color: #71767b; cursor: pointer; font-size: 0.65rem; }
+        .time-btn:hover { background: #3f4346; color: #e7e9ea; }
+        .time-btn.active { background: #1d9bf0; color: white; }
+
+        /* GridStack handles */
+        .gs-item > .ui-resizable-handle { background: transparent; }
+        .gs-item:hover > .ui-resizable-se { opacity: 1; }
+        .ui-resizable-se { opacity: 0; transition: opacity 0.2s; width: 15px; height: 15px; right: 3px; bottom: 3px; background: #1d9bf0; border-radius: 3px; }
+
+        /* Trace visualization */
+        .trace-controls { display: flex; gap: 0.5rem; align-items: center; }
+        .trace-select { background: #2f3336; border: 1px solid #3f4346; border-radius: 4px; color: #e7e9ea; padding: 0.2rem 0.5rem; font-size: 0.7rem; }
+        .trace-list { max-height: 200px; overflow-y: auto; border-bottom: 1px solid #2f3336; }
+        .trace-item { padding: 0.5rem 0.8rem; border-bottom: 1px solid #2f3336; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+        .trace-item:hover { background: #1d1f23; }
+        .trace-item.selected { background: #1d4ed8; }
+        .trace-item:last-child { border-bottom: none; }
+        .trace-name { font-weight: 500; font-size: 0.75rem; }
+        .trace-service { color: #71767b; font-size: 0.65rem; }
+        .trace-meta { text-align: right; }
+        .trace-duration { font-family: monospace; font-size: 0.7rem; }
+        .trace-time { color: #71767b; font-size: 0.6rem; }
+        .trace-status { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 0.4rem; }
+        .trace-status.ok { background: #00ba7c; }
+        .trace-status.error { background: #f4212e; }
+        .trace-status.unset { background: #71767b; }
+
+        /* Waterfall view */
+        .waterfall { padding: 0.5rem 0.8rem; overflow-x: auto; }
+        .waterfall-header { display: flex; justify-content: space-between; font-size: 0.65rem; color: #71767b; margin-bottom: 0.5rem; padding: 0 0.5rem; }
+        .span-row { display: flex; align-items: center; padding: 0.25rem 0; border-bottom: 1px solid #1d1f23; min-height: 28px; }
+        .span-row:hover { background: #1d1f23; }
+        .span-info { width: 180px; flex-shrink: 0; padding-right: 0.5rem; overflow: hidden; }
+        .span-name { font-size: 0.7rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .span-service { font-size: 0.6rem; color: #71767b; }
+        .span-timeline { flex: 1; position: relative; height: 18px; }
+        .span-bar { position: absolute; height: 14px; top: 2px; border-radius: 2px; min-width: 3px; }
+        .span-bar.server { background: linear-gradient(90deg, #1d9bf0, #3b82f6); }
+        .span-bar.client { background: linear-gradient(90deg, #7c3aed, #8b5cf6); }
+        .span-bar.internal { background: linear-gradient(90deg, #00ba7c, #10b981); }
+        .span-bar.error { background: linear-gradient(90deg, #f4212e, #ef4444); }
+        .span-duration { position: absolute; right: 0; top: 0; font-size: 0.6rem; font-family: monospace; color: #71767b; }
+        .timeline-grid { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; pointer-events: none; }
+        .timeline-grid-line { flex: 1; border-left: 1px dashed #2f3336; }
+        .no-trace-selected { padding: 2rem; text-align: center; color: #71767b; font-size: 0.8rem; }
+
+        /* Watches */
+        .watch-item { padding: 0.6rem 0.8rem; border-bottom: 1px solid #2f3336; display: flex; justify-content: space-between; align-items: center; }
+        .watch-item:hover { background: #1d1f23; }
+        .watch-item:last-child { border-bottom: none; }
+        .watch-info { flex: 1; }
+        .watch-name { font-weight: 500; font-size: 0.8rem; }
+        .watch-condition { color: #71767b; font-size: 0.65rem; font-family: monospace; }
+        .watch-state { padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.65rem; font-weight: 600; text-transform: uppercase; }
+        .watch-state.ok { background: #0d4429; color: #00ba7c; }
+        .watch-state.alerting { background: #4a1919; color: #f4212e; animation: pulse-alert 1s infinite; }
+        .watch-state.pending { background: #4a3d19; color: #ffd400; }
+        .watch-state.no_data { background: #2f3336; color: #71767b; }
+        .watch-state.muted { background: #2f3336; color: #71767b; }
+        @keyframes pulse-alert { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+        .watch-value { font-family: monospace; font-size: 0.7rem; color: #71767b; margin-right: 0.5rem; }
+        .watch-actions { display: flex; gap: 0.3rem; }
+        .watch-actions button { padding: 0.2rem 0.4rem; font-size: 0.6rem; }
+
+        /* Logs */
+        .log-controls { display: flex; gap: 0.5rem; padding: 0.5rem 0.8rem; border-bottom: 1px solid #2f3336; flex-wrap: wrap; }
+        .log-controls input, .log-controls select { padding: 0.3rem 0.5rem; background: #2f3336; border: 1px solid #3f4346; border-radius: 4px; color: #e7e9ea; font-size: 0.7rem; }
+        .log-controls input { flex: 1; min-width: 150px; }
+        .log-controls select { min-width: 80px; }
+        .log-entry { padding: 0.4rem 0.8rem; border-bottom: 1px solid #1d1f23; font-family: monospace; font-size: 0.7rem; display: flex; gap: 0.5rem; }
+        .log-entry:hover { background: #1d1f23; }
+        .log-time { color: #71767b; white-space: nowrap; flex-shrink: 0; }
+        .log-level { padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.6rem; font-weight: 600; text-transform: uppercase; flex-shrink: 0; }
+        .log-level.debug { background: #2f3336; color: #71767b; }
+        .log-level.info { background: #1a3a4a; color: #1d9bf0; }
+        .log-level.warn { background: #4a3d19; color: #ffd400; }
+        .log-level.error { background: #4a1919; color: #f4212e; }
+        .log-level.fatal { background: #7a1919; color: #ff6b6b; }
+        .log-service { color: #00ba7c; flex-shrink: 0; }
+        .log-message { color: #e7e9ea; word-break: break-all; flex: 1; }
+        .log-trace-link { color: #7c3aed; cursor: pointer; text-decoration: underline; flex-shrink: 0; }
+
+        /* Synthetics */
+        .synth-item { padding: 0.6rem 0.8rem; border-bottom: 1px solid #2f3336; display: flex; justify-content: space-between; align-items: center; }
+        .synth-item:hover { background: #1d1f23; }
+        .synth-item:last-child { border-bottom: none; }
+        .synth-info { flex: 1; }
+        .synth-name { font-weight: 500; font-size: 0.8rem; }
+        .synth-url { color: #71767b; font-size: 0.65rem; font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
+        .synth-status { padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.65rem; font-weight: 600; text-transform: uppercase; }
+        .synth-status.up { background: #0d4429; color: #00ba7c; }
+        .synth-status.down { background: #4a1919; color: #f4212e; }
+        .synth-status.degraded { background: #4a3d19; color: #ffd400; }
+        .synth-status.unknown { background: #2f3336; color: #71767b; }
+        .synth-latency { font-family: monospace; font-size: 0.7rem; color: #71767b; margin-right: 0.5rem; }
+        .synth-uptime { font-size: 0.65rem; color: #00ba7c; margin-left: 0.5rem; }
+        .synth-actions { display: flex; gap: 0.3rem; }
+        .synth-actions button { padding: 0.2rem 0.4rem; font-size: 0.6rem; }
+
+        /* SLOs */
+        .slo-item { padding: 0.8rem; border-bottom: 1px solid #2f3336; }
+        .slo-item:hover { background: #1d1f23; }
+        .slo-item:last-child { border-bottom: none; }
+        .slo-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+        .slo-name { font-weight: 500; font-size: 0.85rem; }
+        .slo-status { padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.65rem; font-weight: 600; text-transform: uppercase; }
+        .slo-status.met { background: #0d4429; color: #00ba7c; }
+        .slo-status.at_risk { background: #4a3d19; color: #ffd400; }
+        .slo-status.breached { background: #4a1919; color: #f4212e; }
+        .slo-status.no_data { background: #2f3336; color: #71767b; }
+        .slo-metrics { display: flex; gap: 1rem; margin-bottom: 0.5rem; }
+        .slo-metric { text-align: center; }
+        .slo-metric-value { font-size: 1.2rem; font-weight: 700; }
+        .slo-metric-value.good { color: #00ba7c; }
+        .slo-metric-value.warn { color: #ffd400; }
+        .slo-metric-value.bad { color: #f4212e; }
+        .slo-metric-label { font-size: 0.6rem; color: #71767b; text-transform: uppercase; }
+        .slo-budget { margin-top: 0.4rem; }
+        .slo-budget-bar { height: 6px; background: #2f3336; border-radius: 3px; overflow: hidden; }
+        .slo-budget-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+        .slo-budget-fill.healthy { background: linear-gradient(90deg, #00ba7c, #059669); }
+        .slo-budget-fill.warning { background: linear-gradient(90deg, #ffd400, #f59e0b); }
+        .slo-budget-fill.critical { background: linear-gradient(90deg, #f4212e, #dc2626); }
+        .slo-budget-text { display: flex; justify-content: space-between; font-size: 0.65rem; color: #71767b; margin-top: 0.2rem; }
+        .slo-actions { display: flex; gap: 0.3rem; }
+        .slo-actions button { padding: 0.2rem 0.4rem; font-size: 0.6rem; }
+
+        /* Patterns */
+        .pattern-stats { display: flex; gap: 1rem; padding: 0.5rem 0.8rem; border-bottom: 1px solid #2f3336; font-size: 0.7rem; }
+        .pattern-stat { display: flex; flex-direction: column; }
+        .pattern-stat-value { font-size: 1rem; font-weight: 700; color: #e7e9ea; }
+        .pattern-stat-label { color: #71767b; font-size: 0.6rem; text-transform: uppercase; }
+        .pattern-item { padding: 0.6rem 0.8rem; border-bottom: 1px solid #2f3336; }
+        .pattern-item:hover { background: rgba(255,255,255,0.02); }
+        .pattern-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.3rem; }
+        .pattern-trend { padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.6rem; font-weight: 600; text-transform: uppercase; }
+        .pattern-trend.increasing { background: #4a1919; color: #f4212e; }
+        .pattern-trend.decreasing { background: #0d4429; color: #00ba7c; }
+        .pattern-trend.stable { background: #2f3336; color: #71767b; }
+        .pattern-trend.new { background: #1d3a5f; color: #1d9bf0; }
+        .pattern-count { font-weight: 700; color: #e7e9ea; }
+        .pattern-signature { font-family: 'SF Mono', Monaco, monospace; font-size: 0.7rem; color: #8b949e; background: #0d1117; padding: 0.4rem 0.5rem; border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .pattern-meta { display: flex; gap: 1rem; font-size: 0.65rem; color: #71767b; margin-top: 0.3rem; }
+        .pattern-examples { margin-top: 0.4rem; font-size: 0.65rem; }
+        .pattern-example { color: #8b949e; background: #0d1117; padding: 0.3rem 0.5rem; border-radius: 3px; margin-top: 0.2rem; font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+        /* Containers */
+        .container-summary { display: flex; gap: 1rem; padding: 0.5rem 0.8rem; border-bottom: 1px solid #2f3336; font-size: 0.7rem; }
+        .container-stat { display: flex; flex-direction: column; }
+        .container-stat-value { font-size: 1rem; font-weight: 700; color: #e7e9ea; }
+        .container-stat-label { color: #71767b; font-size: 0.6rem; text-transform: uppercase; }
+        .container-item { padding: 0.6rem 0.8rem; border-bottom: 1px solid #2f3336; }
+        .container-item:hover { background: rgba(255,255,255,0.02); }
+        .container-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.3rem; }
+        .container-state { padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.6rem; font-weight: 600; text-transform: uppercase; }
+        .container-state.running { background: #0d4429; color: #00ba7c; }
+        .container-state.exited { background: #4a1919; color: #f4212e; }
+        .container-state.paused { background: #4a3d19; color: #ffd400; }
+        .container-state.created { background: #1d3a5f; color: #1d9bf0; }
+        .container-name { font-weight: 600; color: #e7e9ea; }
+        .container-image { font-size: 0.7rem; color: #71767b; font-family: monospace; }
+        .container-metrics { display: flex; gap: 1.5rem; margin-top: 0.4rem; font-size: 0.7rem; }
+        .container-metric { display: flex; flex-direction: column; }
+        .container-metric-value { font-weight: 600; color: #e7e9ea; }
+        .container-metric-label { color: #71767b; font-size: 0.6rem; }
+        .container-bar { height: 4px; background: #2f3336; border-radius: 2px; margin-top: 0.2rem; width: 60px; }
+        .container-bar-fill { height: 100%; border-radius: 2px; }
+        .container-bar-fill.cpu { background: #1d9bf0; }
+        .container-bar-fill.mem { background: #00ba7c; }
+
+        /* Deployments */
+        .deploy-summary { display: flex; gap: 1rem; padding: 0.5rem 0.8rem; border-bottom: 1px solid #2f3336; font-size: 0.7rem; }
+        .deploy-stat { display: flex; flex-direction: column; }
+        .deploy-stat-value { font-size: 1rem; font-weight: 700; color: #e7e9ea; }
+        .deploy-stat-label { color: #71767b; font-size: 0.6rem; text-transform: uppercase; }
+        .deploy-item { padding: 0.6rem 0.8rem; border-bottom: 1px solid #2f3336; display: flex; align-items: center; gap: 0.8rem; }
+        .deploy-item:hover { background: rgba(255,255,255,0.02); }
+        .deploy-marker { width: 3px; height: 40px; border-radius: 2px; flex-shrink: 0; }
+        .deploy-marker.success { background: #00ba7c; }
+        .deploy-marker.failed { background: #f4212e; }
+        .deploy-marker.rolled_back { background: #ffd400; }
+        .deploy-info { flex: 1; min-width: 0; }
+        .deploy-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.2rem; }
+        .deploy-service { font-weight: 600; color: #e7e9ea; }
+        .deploy-version { font-size: 0.7rem; color: #1d9bf0; font-family: monospace; }
+        .deploy-env { padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.6rem; font-weight: 600; text-transform: uppercase; }
+        .deploy-env.prod { background: #4a1919; color: #f4212e; }
+        .deploy-env.staging { background: #4a3d19; color: #ffd400; }
+        .deploy-env.dev { background: #1d3a5f; color: #1d9bf0; }
+        .deploy-meta { font-size: 0.7rem; color: #71767b; display: flex; gap: 0.8rem; }
+        .deploy-time { color: #8b949e; }
+        .deploy-user { color: #71767b; }
+        .deploy-commit { font-family: monospace; color: #8b949e; }
+        .deploy-commit:hover { color: #1d9bf0; text-decoration: underline; }
+        .deploy-actions { display: flex; gap: 0.3rem; }
+
+        /* Incidents / Paging */
+        .incident-summary { display: flex; gap: 1rem; padding: 0.5rem 0.8rem; border-bottom: 1px solid #2f3336; font-size: 0.7rem; align-items: center; }
+        .incident-stat { display: flex; flex-direction: column; }
+        .incident-stat-value { font-size: 1rem; font-weight: 700; color: #e7e9ea; }
+        .incident-stat-label { color: #71767b; font-size: 0.6rem; text-transform: uppercase; }
+        .incident-item { padding: 0.6rem 0.8rem; border-bottom: 1px solid #2f3336; display: flex; align-items: center; gap: 0.8rem; cursor: pointer; }
+        .incident-item:hover { background: rgba(255,255,255,0.02); }
+        .incident-severity { width: 4px; height: 40px; border-radius: 2px; flex-shrink: 0; }
+        .incident-severity.critical { background: #f4212e; animation: pulse-critical 1s infinite; }
+        .incident-severity.high { background: #ff6b35; }
+        .incident-severity.medium { background: #ffd400; }
+        .incident-severity.low { background: #1d9bf0; }
+        @keyframes pulse-critical { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .incident-info { flex: 1; min-width: 0; }
+        .incident-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.2rem; }
+        .incident-title { font-weight: 600; color: #e7e9ea; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .incident-status { padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.6rem; font-weight: 600; text-transform: uppercase; }
+        .incident-status.triggered { background: #4a1919; color: #f4212e; animation: pulse-status 1s infinite; }
+        .incident-status.acknowledged { background: #4a3d19; color: #ffd400; }
+        .incident-status.resolved { background: #1a3d2e; color: #00ba7c; }
+        @keyframes pulse-status { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+        .incident-meta { font-size: 0.7rem; color: #71767b; display: flex; gap: 0.8rem; }
+        .incident-time { color: #8b949e; }
+        .incident-source { color: #71767b; }
+        .incident-actions { display: flex; gap: 0.3rem; }
+        .oncall-badge { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.2rem 0.5rem; background: #1a3d2e; border-radius: 4px; font-size: 0.7rem; color: #00ba7c; }
+        .oncall-badge::before { content: "\\1F4DE"; font-size: 0.8rem; }
+
+        /* Modal */
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+        .modal { background: #16181c; border: 1px solid #2f3336; border-radius: 12px; width: 90%; max-width: 500px; max-height: 90vh; overflow: auto; }
+        .modal-header { padding: 1rem; border-bottom: 1px solid #2f3336; display: flex; justify-content: space-between; align-items: center; }
+        .modal-title { font-size: 1rem; font-weight: 600; }
+        .modal-close { background: none; border: none; color: #71767b; cursor: pointer; font-size: 1.2rem; }
+        .modal-body { padding: 1rem; }
+        .modal-footer { padding: 1rem; border-top: 1px solid #2f3336; display: flex; justify-content: flex-end; gap: 0.5rem; }
+        .form-group { margin-bottom: 1rem; }
+        .form-label { display: block; font-size: 0.75rem; color: #71767b; margin-bottom: 0.3rem; }
+        .form-input, .form-select { width: 100%; padding: 0.5rem; background: #2f3336; border: 1px solid #3f4346; border-radius: 6px; color: #e7e9ea; font-size: 0.85rem; }
+        .form-input:focus, .form-select:focus { outline: none; border-color: #1d9bf0; }
+        .form-row { display: flex; gap: 1rem; }
+        .form-row .form-group { flex: 1; }
     </style>
 </head>
 <body>
     <div class="header">
         <div class="logo">
             <span class="logo-icon">&#128021;</span>
-            <h1>dogwatch<span>eBPF Observability</span></h1>
+            <h1>dogwatch<span>eBPF Dashboard</span></h1>
         </div>
-        <div class="status">
-            <div class="status-dot"></div>
-            <span id="last-update">Connecting...</span>
-        </div>
-    </div>
-
-    <div class="container">
-        <div class="tabs">
-            <button class="tab active" data-tab="overview">Overview</button>
-            <button class="tab" data-tab="services">Service Map</button>
-            <button class="tab" data-tab="profiler">Profiler</button>
-            <button class="tab" data-tab="endpoints">Endpoints</button>
-            <button class="tab" data-tab="connections">Connections</button>
-        </div>
-
-        <!-- Overview Tab -->
-        <div id="overview" class="tab-content active">
-            <div class="metrics-grid">
-                <div class="metric-card">
-                    <div class="metric-header">
-                        <span class="metric-title">CPU Usage</span>
-                        <span class="metric-value" id="cpu-percent">--%</span>
-                    </div>
-                    <div class="metric-bar">
-                        <div class="metric-bar-fill cpu" id="cpu-bar" style="width: 0%"></div>
-                    </div>
-                    <div class="metric-details">
-                        <span>Load: <span id="load-avg">--</span></span>
-                        <span>IO Wait: <span id="cpu-iowait">--%</span></span>
-                    </div>
-                </div>
-
-                <div class="metric-card">
-                    <div class="metric-header">
-                        <span class="metric-title">Memory</span>
-                        <span class="metric-value" id="mem-percent">--%</span>
-                    </div>
-                    <div class="metric-bar">
-                        <div class="metric-bar-fill mem" id="mem-bar" style="width: 0%"></div>
-                    </div>
-                    <div class="metric-details">
-                        <span>Used: <span id="mem-used">--</span></span>
-                        <span>Total: <span id="mem-total">--</span></span>
-                    </div>
-                </div>
-
-                <div class="metric-card">
-                    <div class="metric-header">
-                        <span class="metric-title">Disk I/O</span>
-                        <span class="metric-value" id="disk-io">--</span>
-                    </div>
-                    <div class="metric-bar">
-                        <div class="metric-bar-fill disk" id="disk-bar" style="width: 0%"></div>
-                    </div>
-                    <div class="metric-details">
-                        <span>Read: <span id="disk-read">--/s</span></span>
-                        <span>Write: <span id="disk-write">--/s</span></span>
-                    </div>
-                </div>
-
-                <div class="metric-card">
-                    <div class="metric-header">
-                        <span class="metric-title">Network</span>
-                        <span class="metric-value" id="net-io">--</span>
-                    </div>
-                    <div class="metric-bar">
-                        <div class="metric-bar-fill net" id="net-bar" style="width: 0%"></div>
-                    </div>
-                    <div class="metric-details">
-                        <span>RX: <span id="net-rx">--/s</span></span>
-                        <span>TX: <span id="net-tx">--/s</span></span>
-                    </div>
-                </div>
+        <div class="header-controls">
+            <div class="status">
+                <div class="status-dot"></div>
+                <span id="last-update">Connecting...</span>
             </div>
-
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-label">Total Connections</div>
-                    <div class="stat-value" id="total-connections">-</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">Total Requests</div>
-                    <div class="stat-value" id="total-requests">-</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">Error Count</div>
-                    <div class="stat-value error" id="total-errors">-</div>
-                </div>
-            </div>
-
-            <div class="service-map-container">
-                <h3>Service Dependencies</h3>
-                <svg id="service-map-mini"></svg>
-            </div>
-        </div>
-
-        <!-- Service Map Tab -->
-        <div id="services" class="tab-content">
-            <div class="service-map-container" style="height: 600px;">
-                <h3>Service Map</h3>
-                <svg id="service-map"></svg>
-            </div>
-        </div>
-
-        <!-- Profiler Tab -->
-        <div id="profiler" class="tab-content">
-            <div class="section" style="margin-bottom: 1rem;">
-                <div class="section-header" style="display: flex; justify-content: space-between; align-items: center;">
-                    <span>CPU Flame Graph</span>
-                    <div>
-                        <button id="refresh-flame" class="btn">Refresh</button>
-                        <button id="clear-flame" class="btn btn-secondary">Clear & Reset</button>
-                    </div>
-                </div>
-                <div id="flamegraph" style="min-height: 400px; background: #1a1f2e;"></div>
-            </div>
-            <div class="section">
-                <div class="section-header">Top Processes by CPU</div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>PID</th>
-                            <th>Process</th>
-                            <th style="width: 40%">CPU %</th>
-                            <th>Memory</th>
-                            <th>State</th>
-                        </tr>
-                    </thead>
-                    <tbody id="processes-body">
-                        <tr><td colspan="5" class="empty-state">Loading...</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- Endpoints Tab -->
-        <div id="endpoints" class="tab-content">
-            <div class="section">
-                <div class="section-header">HTTP Endpoints</div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Method</th>
-                            <th>Path</th>
-                            <th>Requests</th>
-                            <th>Error Rate</th>
-                            <th>P50</th>
-                            <th>P99</th>
-                            <th>Avg</th>
-                        </tr>
-                    </thead>
-                    <tbody id="endpoints-body">
-                        <tr><td colspan="7" class="empty-state">No HTTP endpoints recorded yet</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- Connections Tab -->
-        <div id="connections" class="tab-content">
-            <div class="section">
-                <div class="section-header">TCP Connections</div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Process</th>
-                            <th>PID</th>
-                            <th>Remote</th>
-                            <th>Count</th>
-                        </tr>
-                    </thead>
-                    <tbody id="connections-body">
-                        <tr><td colspan="4" class="empty-state">No connections recorded yet</td></tr>
-                    </tbody>
-                </table>
-            </div>
+            <select id="dashboard-select" class="form-select" style="width: 150px; padding: 0.4rem; font-size: 0.75rem;" onchange="loadDashboard(this.value)">
+                <option value="">Default Layout</option>
+            </select>
+            <button class="btn" onclick="saveDashboard()">Save</button>
+            <button class="btn" onclick="showDashboardManager()">Dashboards</button>
+            <button class="btn" onclick="resetLayout()">Reset Layout</button>
+            <button class="btn btn-primary" onclick="grid.compact()">Compact</button>
         </div>
     </div>
 
-    <div class="footer">
-        dogwatch - eBPF-powered observability | <a href="https://github.com/1byteword/dogwatch">GitHub</a>
-    </div>
+    <div class="grid-stack"></div>
 
     <script>
-        // Tab switching
-        document.querySelectorAll('.tab').forEach(tab => {
-            tab.addEventListener('click', () => {
-                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-                tab.classList.add('active');
-                document.getElementById(tab.dataset.tab).classList.add('active');
+        // Widget definitions
+        const defaultLayout = [
+            // Row 0: System metrics
+            { id: 'cpu', x: 0, y: 0, w: 3, h: 2, minW: 2, minH: 2 },
+            { id: 'mem', x: 3, y: 0, w: 3, h: 2, minW: 2, minH: 2 },
+            { id: 'disk', x: 6, y: 0, w: 3, h: 2, minW: 2, minH: 2 },
+            { id: 'net', x: 9, y: 0, w: 3, h: 2, minW: 2, minH: 2 },
+            // Row 2: Stats + Service map
+            { id: 'conns', x: 0, y: 2, w: 2, h: 2, minW: 2, minH: 2 },
+            { id: 'reqs', x: 2, y: 2, w: 2, h: 2, minW: 2, minH: 2 },
+            { id: 'errs', x: 4, y: 2, w: 2, h: 2, minW: 2, minH: 2 },
+            { id: 'svcmap', x: 6, y: 2, w: 6, h: 4, minW: 4, minH: 3 },
+            // Row 4: Charts + Traces
+            { id: 'cpuchart', x: 0, y: 4, w: 6, h: 3, minW: 4, minH: 3 },
+            { id: 'memchart', x: 6, y: 6, w: 6, h: 3, minW: 4, minH: 3 },
+            { id: 'traces', x: 0, y: 7, w: 6, h: 5, minW: 4, minH: 4 },
+            { id: 'endpoints', x: 6, y: 9, w: 6, h: 4, minW: 4, minH: 3 },
+            // Row 11: More widgets
+            { id: 'watches', x: 6, y: 12, w: 6, h: 4, minW: 4, minH: 3 },
+            { id: 'flamegraph', x: 0, y: 12, w: 6, h: 4, minW: 4, minH: 3 },
+            { id: 'logs', x: 0, y: 16, w: 6, h: 5, minW: 6, minH: 4 },
+            { id: 'patterns', x: 6, y: 16, w: 6, h: 5, minW: 4, minH: 4 },
+            { id: 'slos', x: 0, y: 21, w: 6, h: 5, minW: 4, minH: 4 },
+            { id: 'synthetics', x: 6, y: 21, w: 6, h: 5, minW: 4, minH: 3 },
+            { id: 'procs', x: 0, y: 26, w: 6, h: 4, minW: 3, minH: 3 },
+            { id: 'connlist', x: 6, y: 26, w: 6, h: 3, minW: 3, minH: 3 },
+            { id: 'containers', x: 0, y: 30, w: 12, h: 4, minW: 6, minH: 3 },
+            { id: 'deployments', x: 0, y: 34, w: 6, h: 4, minW: 4, minH: 3 },
+            { id: 'incidents', x: 6, y: 34, w: 6, h: 4, minW: 4, minH: 3 },
+        ];
 
-                if (tab.dataset.tab === 'services') {
-                    // Force re-render for the full service map tab
-                    mapInitialized['service-map'] = false;
-                    setTimeout(() => renderServiceMap('service-map', 600), 100);
+        function widgetCPU() {
+            return `<div class="widget-header"><span class="widget-title">CPU</span></div>
+                <div class="widget-body">
+                    <div class="metric-big" id="cpu-percent">--%</div>
+                    <div class="metric-bar"><div class="metric-bar-fill cpu" id="cpu-bar" style="width:0%"></div></div>
+                    <div class="metric-detail"><span>Load: <span id="load-avg">--</span></span><span>IO: <span id="cpu-iowait">--%</span></span></div>
+                </div>`;
+        }
+        function widgetMem() {
+            return `<div class="widget-header"><span class="widget-title">Memory</span></div>
+                <div class="widget-body">
+                    <div class="metric-big" id="mem-percent">--%</div>
+                    <div class="metric-bar"><div class="metric-bar-fill mem" id="mem-bar" style="width:0%"></div></div>
+                    <div class="metric-detail"><span id="mem-used">--</span><span id="mem-total">--</span></div>
+                </div>`;
+        }
+        function widgetDisk() {
+            return `<div class="widget-header"><span class="widget-title">Disk I/O</span></div>
+                <div class="widget-body">
+                    <div class="metric-big" id="disk-io">--</div>
+                    <div class="metric-bar"><div class="metric-bar-fill disk" id="disk-bar" style="width:0%"></div></div>
+                    <div class="metric-detail"><span>R: <span id="disk-read">--</span></span><span>W: <span id="disk-write">--</span></span></div>
+                </div>`;
+        }
+        function widgetNet() {
+            return `<div class="widget-header"><span class="widget-title">Network</span></div>
+                <div class="widget-body">
+                    <div class="metric-big" id="net-io">--</div>
+                    <div class="metric-bar"><div class="metric-bar-fill net" id="net-bar" style="width:0%"></div></div>
+                    <div class="metric-detail"><span>RX: <span id="net-rx">--</span></span><span>TX: <span id="net-tx">--</span></span></div>
+                </div>`;
+        }
+        function widgetStat(title, id, isError) {
+            return `<div class="widget-header"><span class="widget-title">${title}</span></div>
+                <div class="widget-body" style="display:flex;align-items:center;justify-content:center;">
+                    <div class="stat-big ${isError ? 'error' : ''}" id="${id}">-</div>
+                </div>`;
+        }
+        function widgetServiceMap() {
+            return `<div class="widget-header"><span class="widget-title">Service Map</span></div>
+                <div class="widget-body no-pad" style="position:relative;"><svg id="service-map" style="position:absolute;inset:0;"></svg></div>`;
+        }
+        function widgetChart(title, id) {
+            return `<div class="widget-header">
+                    <span class="widget-title">${title}</span>
+                    <div class="time-btns">
+                        <button class="time-btn active" data-dur="15m">15m</button>
+                        <button class="time-btn" data-dur="1h">1h</button>
+                        <button class="time-btn" data-dur="6h">6h</button>
+                    </div>
+                </div>
+                <div class="widget-body" style="position:relative;"><div class="chart-wrap"><canvas id="${id}"></canvas></div></div>`;
+        }
+        function widgetEndpoints() {
+            return `<div class="widget-header"><span class="widget-title">HTTP Endpoints</span></div>
+                <div class="widget-body no-pad" style="overflow:auto;">
+                    <table><thead><tr><th>Method</th><th>Path</th><th>Count</th><th>Err%</th><th>P50</th><th>P99</th></tr></thead>
+                    <tbody id="endpoints-body"><tr><td colspan="6" class="empty-state">No data</td></tr></tbody></table>
+                </div>`;
+        }
+        function widgetConnections() {
+            return `<div class="widget-header"><span class="widget-title">Connections</span></div>
+                <div class="widget-body no-pad" style="overflow:auto;">
+                    <table><thead><tr><th>Process</th><th>Remote</th><th>Count</th></tr></thead>
+                    <tbody id="connections-body"><tr><td colspan="3" class="empty-state">No data</td></tr></tbody></table>
+                </div>`;
+        }
+        function widgetProcesses() {
+            return `<div class="widget-header"><span class="widget-title">Top Processes</span></div>
+                <div class="widget-body no-pad" style="overflow:auto;">
+                    <table><thead><tr><th>PID</th><th>Name</th><th>CPU%</th><th>Mem</th></tr></thead>
+                    <tbody id="processes-body"><tr><td colspan="4" class="empty-state">Loading...</td></tr></tbody></table>
+                </div>`;
+        }
+        function widgetFlameGraph() {
+            return `<div class="widget-header">
+                    <span class="widget-title">CPU Flame Graph</span>
+                    <div><button class="btn" onclick="updateFlameGraph()">Refresh</button></div>
+                </div>
+                <div class="widget-body no-pad" style="position:relative;"><div id="flamegraph" style="position:absolute;inset:0;background:#1a1f2e;overflow:auto;"></div></div>`;
+        }
+        function widgetTraces() {
+            return `<div class="widget-header">
+                    <span class="widget-title">Distributed Traces</span>
+                    <div class="trace-controls">
+                        <select id="trace-service-filter" class="trace-select" onchange="loadTraces()">
+                            <option value="">All Services</option>
+                        </select>
+                        <button class="btn" onclick="loadTraces()">Refresh</button>
+                    </div>
+                </div>
+                <div class="widget-body no-pad" style="display:flex;flex-direction:column;height:100%;">
+                    <div class="trace-list" id="trace-list">
+                        <div class="empty-state">No traces yet. Configure OTLP export to http://localhost:9999/v1/traces</div>
+                    </div>
+                    <div id="trace-detail" style="flex:1;overflow:auto;">
+                        <div class="no-trace-selected">Select a trace to view details</div>
+                    </div>
+                </div>`;
+        }
+        function widgetWatches() {
+            return `<div class="widget-header">
+                    <span class="widget-title">Watches</span>
+                    <div style="display:flex;gap:0.3rem;">
+                        <button class="btn" onclick="showChannels()">Channels</button>
+                        <button class="btn btn-primary" onclick="showCreateWatch()">+ New</button>
+                    </div>
+                </div>
+                <div class="widget-body no-pad" id="watches-list" style="overflow:auto;">
+                    <div class="empty-state">No watches configured</div>
+                </div>`;
+        }
+        function widgetLogs() {
+            return `<div class="widget-header">
+                    <span class="widget-title">Logs</span>
+                    <div style="display:flex;gap:0.3rem;">
+                        <button class="btn" onclick="refreshLogs()">Refresh</button>
+                    </div>
+                </div>
+                <div class="log-controls">
+                    <input type="text" id="log-search" placeholder="Search logs..." onkeyup="if(event.key==='Enter')searchLogs()">
+                    <select id="log-level" onchange="searchLogs()">
+                        <option value="">All Levels</option>
+                        <option value="debug">Debug</option>
+                        <option value="info">Info</option>
+                        <option value="warn">Warn</option>
+                        <option value="error">Error</option>
+                        <option value="fatal">Fatal</option>
+                    </select>
+                    <select id="log-service" onchange="searchLogs()">
+                        <option value="">All Services</option>
+                    </select>
+                    <select id="log-time" onchange="searchLogs()">
+                        <option value="1h">Last 1h</option>
+                        <option value="6h">Last 6h</option>
+                        <option value="24h">Last 24h</option>
+                        <option value="7d">Last 7d</option>
+                    </select>
+                </div>
+                <div class="widget-body no-pad" id="logs-list" style="overflow:auto;">
+                    <div class="empty-state">No logs yet</div>
+                </div>`;
+        }
+        function widgetSynthetics() {
+            return `<div class="widget-header">
+                    <span class="widget-title">Synthetic Checks</span>
+                    <div style="display:flex;gap:0.3rem;">
+                        <button class="btn btn-primary" onclick="showCreateSynthetic()">+ New</button>
+                    </div>
+                </div>
+                <div class="widget-body no-pad" id="synthetics-list" style="overflow:auto;">
+                    <div class="empty-state">No synthetic checks configured</div>
+                </div>`;
+        }
+        function widgetSLOs() {
+            return `<div class="widget-header">
+                    <span class="widget-title">Service Level Objectives</span>
+                    <div style="display:flex;gap:0.3rem;">
+                        <button class="btn btn-primary" onclick="showCreateSLO()">+ New</button>
+                    </div>
+                </div>
+                <div class="widget-body no-pad" id="slos-list" style="overflow:auto;">
+                    <div class="empty-state">No SLOs configured</div>
+                </div>`;
+        }
+        function widgetPatterns() {
+            return `<div class="widget-header">
+                    <span class="widget-title">Log Patterns</span>
+                    <div style="display:flex;gap:0.3rem;">
+                        <select id="pattern-filter" onchange="loadPatterns()">
+                            <option value="all">All Patterns</option>
+                            <option value="new">New (24h)</option>
+                            <option value="increasing">Increasing</option>
+                        </select>
+                        <button class="btn" onclick="loadPatterns()">Refresh</button>
+                    </div>
+                </div>
+                <div class="pattern-stats" id="pattern-stats"></div>
+                <div class="widget-body no-pad" id="patterns-list" style="overflow:auto;">
+                    <div class="empty-state">No patterns detected yet</div>
+                </div>`;
+        }
+        function widgetContainers() {
+            return `<div class="widget-header">
+                    <span class="widget-title">Containers</span>
+                    <div style="display:flex;gap:0.3rem;">
+                        <button class="btn" onclick="loadContainers()">Refresh</button>
+                    </div>
+                </div>
+                <div class="container-summary" id="container-summary"></div>
+                <div class="widget-body no-pad" id="containers-list" style="overflow:auto;">
+                    <div class="empty-state">No containers found</div>
+                </div>`;
+        }
+        function widgetDeployments() {
+            return `<div class="widget-header">
+                    <span class="widget-title">Deployments</span>
+                    <div style="display:flex;gap:0.3rem;">
+                        <button class="btn" onclick="showNewDeployModal()">+ Deploy</button>
+                        <button class="btn" onclick="loadDeployments()">Refresh</button>
+                    </div>
+                </div>
+                <div class="deploy-summary" id="deploy-summary"></div>
+                <div class="widget-body no-pad" id="deployments-list" style="overflow:auto;">
+                    <div class="empty-state">No deployments recorded</div>
+                </div>`;
+        }
+
+        function widgetIncidents() {
+            return `<div class="widget-header">
+                    <span class="widget-title">Incidents</span>
+                    <div style="display:flex;gap:0.3rem;">
+                        <button class="btn" onclick="showNewIncidentModal()">+ Incident</button>
+                        <button class="btn" onclick="loadIncidents()">Refresh</button>
+                    </div>
+                </div>
+                <div class="incident-summary" id="incident-summary">
+                    <div class="incident-stat">
+                        <span class="incident-stat-value" id="inc-active">0</span>
+                        <span class="incident-stat-label">Active</span>
+                    </div>
+                    <div class="incident-stat">
+                        <span class="incident-stat-value" id="inc-triggered" style="color:#f4212e">0</span>
+                        <span class="incident-stat-label">Triggered</span>
+                    </div>
+                    <div class="incident-stat">
+                        <span class="incident-stat-value" id="inc-acked" style="color:#ffd400">0</span>
+                        <span class="incident-stat-label">Acked</span>
+                    </div>
+                    <div id="oncall-display" style="margin-left:auto;"></div>
+                </div>
+                <div class="widget-body no-pad" id="incidents-list" style="overflow:auto;">
+                    <div class="empty-state">No active incidents</div>
+                </div>`;
+        }
+
+        // Initialize GridStack
+        const grid = GridStack.init({
+            column: 12,
+            cellHeight: 70,
+            margin: 8,
+            float: false,
+            animate: true,
+            draggable: { handle: '.widget-header' },
+            resizable: { handles: 'se,e,s' },
+            minRow: 1
+        });
+
+        // Load saved or default layout
+        function loadLayout() {
+            const saved = localStorage.getItem('dogwatch-layout');
+            let items = saved ? JSON.parse(saved) : defaultLayout;
+
+            // Merge with defaults to ensure minW/minH constraints are preserved
+            const defaultsById = {};
+            defaultLayout.forEach(d => defaultsById[d.id] = d);
+
+            items = items.map(item => {
+                const defaults = defaultsById[item.id] || {};
+                return {
+                    ...defaults,
+                    ...item,
+                    content: `<div class="gs-item-content">${getWidgetContent(item.id)}</div>`
+                };
+            });
+
+            grid.load(items);
+        }
+
+        function getWidgetContent(id) {
+            const map = {
+                cpu: widgetCPU, mem: widgetMem, disk: widgetDisk, net: widgetNet,
+                conns: () => widgetStat('Connections', 'total-connections'),
+                reqs: () => widgetStat('Requests', 'total-requests'),
+                errs: () => widgetStat('Errors', 'total-errors', true),
+                svcmap: widgetServiceMap,
+                traces: widgetTraces,
+                watches: widgetWatches,
+                logs: widgetLogs,
+                synthetics: widgetSynthetics,
+                slos: widgetSLOs,
+                patterns: widgetPatterns,
+                containers: widgetContainers,
+                deployments: widgetDeployments,
+                incidents: widgetIncidents,
+                cpuchart: () => widgetChart('CPU History', 'cpu-chart'),
+                memchart: () => widgetChart('Memory History', 'mem-chart'),
+                endpoints: widgetEndpoints,
+                connlist: widgetConnections,
+                procs: widgetProcesses,
+                flamegraph: widgetFlameGraph
+            };
+            return map[id] ? map[id]() : '';
+        }
+
+        function saveLayout() {
+            const items = grid.save(false);
+            localStorage.setItem('dogwatch-layout', JSON.stringify(items));
+        }
+
+        function resetLayout() {
+            localStorage.removeItem('dogwatch-layout');
+            currentDashboardId = null;
+            document.getElementById('dashboard-select').value = '';
+            grid.removeAll();
+            loadLayout();
+            setTimeout(initCharts, 100);
+        }
+
+        // Dashboard persistence
+        let currentDashboardId = null;
+        let dashboards = [];
+
+        async function loadDashboards() {
+            try {
+                const resp = await fetch('/api/dashboards');
+                dashboards = await resp.json() || [];
+                const select = document.getElementById('dashboard-select');
+                select.innerHTML = '<option value="">Default Layout</option>';
+                dashboards.forEach(d => {
+                    const opt = document.createElement('option');
+                    opt.value = d.id;
+                    opt.textContent = d.name + (d.is_default ? ' *' : '');
+                    select.appendChild(opt);
+                });
+                // Load default dashboard if exists
+                const defaultDash = dashboards.find(d => d.is_default);
+                if (defaultDash && !localStorage.getItem('dogwatch-layout')) {
+                    currentDashboardId = defaultDash.id;
+                    select.value = defaultDash.id;
+                    applyDashboardLayout(defaultDash.layout);
+                }
+            } catch (e) { console.error('Failed to load dashboards:', e); }
+        }
+
+        function applyDashboardLayout(layout) {
+            if (!layout || !layout.length) return;
+            grid.removeAll();
+            layout.forEach(pos => {
+                const widgetDef = defaultLayout.find(w => w.id === pos.id);
+                if (widgetDef) {
+                    const content = getWidgetContent(pos.id);
+                    grid.addWidget({
+                        id: pos.id,
+                        x: pos.x, y: pos.y, w: pos.w, h: pos.h,
+                        minW: widgetDef.minW, minH: widgetDef.minH,
+                        content: content
+                    });
                 }
             });
-        });
+            setTimeout(initCharts, 100);
+        }
+
+        async function loadDashboard(id) {
+            if (!id) {
+                currentDashboardId = null;
+                resetLayout();
+                return;
+            }
+            try {
+                const resp = await fetch(`/api/dashboards/${id}`);
+                const dash = await resp.json();
+                currentDashboardId = id;
+                applyDashboardLayout(dash.layout);
+            } catch (e) { alert('Failed to load dashboard'); }
+        }
+
+        async function saveDashboard() {
+            const layout = grid.save(false).map(item => ({
+                id: item.id, x: item.x, y: item.y, w: item.w, h: item.h
+            }));
+
+            if (currentDashboardId) {
+                // Update existing dashboard
+                const dash = dashboards.find(d => d.id === currentDashboardId);
+                const name = prompt('Dashboard name:', dash?.name || 'My Dashboard');
+                if (!name) return;
+                try {
+                    await fetch(`/api/dashboards/${currentDashboardId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name, layout })
+                    });
+                    loadDashboards();
+                } catch (e) { alert('Failed to save dashboard'); }
+            } else {
+                // Create new dashboard
+                const name = prompt('Dashboard name:', 'My Dashboard');
+                if (!name) return;
+                try {
+                    const resp = await fetch('/api/dashboards', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name, layout, is_default: false })
+                    });
+                    const dash = await resp.json();
+                    currentDashboardId = dash.id;
+                    loadDashboards();
+                    document.getElementById('dashboard-select').value = dash.id;
+                } catch (e) { alert('Failed to create dashboard'); }
+            }
+        }
+
+        function showDashboardManager() {
+            const modal = document.createElement('div');
+            modal.className = 'modal-overlay';
+            modal.innerHTML = `
+                <div class="modal">
+                    <div class="modal-header">
+                        <span class="modal-title">Manage Dashboards</span>
+                        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div id="dashboard-list" style="max-height: 300px; overflow-y: auto;"></div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Close</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            renderDashboardList();
+        }
+
+        function renderDashboardList() {
+            const list = document.getElementById('dashboard-list');
+            if (!dashboards.length) {
+                list.innerHTML = '<p style="color: #71767b; text-align: center; padding: 1rem;">No saved dashboards</p>';
+                return;
+            }
+            list.innerHTML = dashboards.map(d => `
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0; border-bottom: 1px solid #2f3336;">
+                    <div>
+                        <div style="font-weight: 500;">${escapeHtml(d.name)}</div>
+                        <div style="font-size: 0.7rem; color: #71767b;">${d.is_default ? 'Default' : ''}</div>
+                    </div>
+                    <div style="display: flex; gap: 0.3rem;">
+                        <button class="btn" onclick="setDefaultDashboard('${d.id}')" ${d.is_default ? 'disabled' : ''}>Set Default</button>
+                        <button class="btn" style="background: #4a1919; color: #f4212e;" onclick="deleteDashboard('${d.id}')">Delete</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function setDefaultDashboard(id) {
+            try {
+                await fetch(`/api/dashboards/${id}/default`, { method: 'POST' });
+                await loadDashboards();
+                renderDashboardList();
+            } catch (e) { alert('Failed to set default'); }
+        }
+
+        async function deleteDashboard(id) {
+            if (!confirm('Delete this dashboard?')) return;
+            try {
+                await fetch(`/api/dashboards/${id}`, { method: 'DELETE' });
+                if (currentDashboardId === id) {
+                    currentDashboardId = null;
+                    document.getElementById('dashboard-select').value = '';
+                }
+                await loadDashboards();
+                renderDashboardList();
+            } catch (e) { alert('Failed to delete dashboard'); }
+        }
+
+        grid.on('change', saveLayout);
+        loadLayout();
+        loadDashboards();
+
+        // Utility functions
+        function formatBytes(b) {
+            if (b === 0) return '0 B';
+            const k = 1024, s = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(b) / Math.log(k));
+            return (b / Math.pow(k, i)).toFixed(1) + ' ' + s[i];
+        }
+        function formatBPS(b) { return formatBytes(b) + '/s'; }
+        function formatLatency(ms) {
+            if (!ms) return '-';
+            return ms < 1 ? '<1ms' : ms < 1000 ? Math.round(ms) + 'ms' : (ms/1000).toFixed(1) + 's';
+        }
+        function getLatencyClass(ms) { return !ms ? '' : ms < 100 ? 'good' : ms < 500 ? 'warn' : 'bad'; }
+        function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+
+        // Data fetching
+        function updateSystemMetrics() {
+            fetch('/api/system').then(r => r.json()).then(d => {
+                const cpu = d.cpu_usage_percent || 0;
+                document.getElementById('cpu-percent').textContent = cpu.toFixed(1) + '%';
+                document.getElementById('cpu-bar').style.width = cpu + '%';
+                document.getElementById('cpu-iowait').textContent = (d.cpu_iowait || 0).toFixed(1) + '%';
+                document.getElementById('load-avg').textContent = (d.load_1 || 0).toFixed(2);
+
+                const mem = d.mem_usage_percent || 0;
+                document.getElementById('mem-percent').textContent = mem.toFixed(1) + '%';
+                document.getElementById('mem-bar').style.width = mem + '%';
+                document.getElementById('mem-used').textContent = formatBytes(d.mem_used_bytes || 0);
+                document.getElementById('mem-total').textContent = formatBytes(d.mem_total_bytes || 0);
+
+                const dr = d.disk_read_per_sec || 0, dw = d.disk_write_per_sec || 0;
+                document.getElementById('disk-io').textContent = formatBPS(dr + dw);
+                document.getElementById('disk-read').textContent = formatBPS(dr);
+                document.getElementById('disk-write').textContent = formatBPS(dw);
+                document.getElementById('disk-bar').style.width = Math.min((dr + dw) / 1e8 * 100, 100) + '%';
+
+                const nr = d.net_rx_per_sec || 0, nt = d.net_tx_per_sec || 0;
+                document.getElementById('net-io').textContent = formatBPS(nr + nt);
+                document.getElementById('net-rx').textContent = formatBPS(nr);
+                document.getElementById('net-tx').textContent = formatBPS(nt);
+                document.getElementById('net-bar').style.width = Math.min((nr + nt) / 1e7 * 100, 100) + '%';
+            }).catch(() => {});
+        }
+
+        function updateStats() {
+            fetch('/api/stats').then(r => r.json()).then(d => {
+                document.getElementById('total-connections').textContent = (d.total_connections || 0).toLocaleString();
+                document.getElementById('total-requests').textContent = (d.total_requests || 0).toLocaleString();
+                document.getElementById('total-errors').textContent = (d.total_errors || 0).toLocaleString();
+                document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+
+                const eb = document.getElementById('endpoints-body');
+                if (d.endpoints?.length) {
+                    eb.innerHTML = d.endpoints.slice(0, 10).map(e => `<tr>
+                        <td><span class="method ${e.method}">${e.method}</span></td>
+                        <td class="path">${escapeHtml(e.path)}</td>
+                        <td>${e.request_count}</td>
+                        <td>${e.error_rate.toFixed(1)}%</td>
+                        <td class="latency ${getLatencyClass(e.p50_ms)}">${formatLatency(e.p50_ms)}</td>
+                        <td class="latency ${getLatencyClass(e.p99_ms)}">${formatLatency(e.p99_ms)}</td>
+                    </tr>`).join('');
+                }
+
+                const cb = document.getElementById('connections-body');
+                if (d.connections?.length) {
+                    cb.innerHTML = d.connections.slice(0, 10).map(c => `<tr>
+                        <td>${escapeHtml(c.process)}</td>
+                        <td style="font-family:monospace;font-size:0.7rem">${escapeHtml(c.remote)}:${c.port}</td>
+                        <td>${c.count}</td>
+                    </tr>`).join('');
+                }
+            }).catch(() => {});
+        }
+
+        function updateProcesses() {
+            fetch('/api/processes').then(r => r.json()).then(d => {
+                const pb = document.getElementById('processes-body');
+                if (d?.length) {
+                    pb.innerHTML = d.slice(0, 10).map(p => `<tr>
+                        <td>${p.pid}</td>
+                        <td>${escapeHtml(p.name)}</td>
+                        <td>${p.cpu_pct.toFixed(1)}%</td>
+                        <td>${p.mem_mb.toFixed(0)}MB</td>
+                    </tr>`).join('');
+                }
+            }).catch(() => {});
+        }
+
+        // Service map
+        let svcMapData = { nodes: [], links: [] };
+        function updateServiceMap() {
+            fetch('/api/servicemap').then(r => r.json()).then(d => {
+                svcMapData = d;
+                renderServiceMap();
+            }).catch(() => {});
+        }
+
+        function renderServiceMap() {
+            const svg = d3.select('#service-map');
+            const rect = svg.node()?.getBoundingClientRect();
+            if (!rect || rect.width < 50) return;
+            const w = rect.width, h = rect.height;
+            svg.attr('viewBox', `0 0 ${w} ${h}`);
+
+            if (!svcMapData.nodes.length) {
+                svg.selectAll('*').remove();
+                svg.append('text').attr('x', w/2).attr('y', h/2).attr('text-anchor', 'middle').attr('fill', '#71767b').text('No connections');
+                return;
+            }
+
+            svg.selectAll('*').remove();
+            const nodes = svcMapData.nodes.map(n => ({...n}));
+            const links = svcMapData.links.map(l => ({...l}));
+
+            const sim = d3.forceSimulation(nodes)
+                .force('link', d3.forceLink(links).id(d => d.id).distance(80))
+                .force('charge', d3.forceManyBody().strength(-200))
+                .force('center', d3.forceCenter(w/2, h/2));
+
+            const link = svg.append('g').selectAll('line').data(links).enter().append('line').attr('class', 'link');
+            const node = svg.append('g').selectAll('g').data(nodes).enter().append('g');
+            node.append('circle').attr('r', 12).attr('class', d =>
+                d.type === 'service' ? 'node-service' : d.type === 'process' ? 'node-process' : 'node-external');
+            node.append('text').attr('class', 'node-label').attr('text-anchor', 'middle').attr('dy', 25)
+                .text(d => d.name.length > 12 ? d.name.slice(0,10) + '..' : d.name);
+
+            sim.on('tick', () => {
+                link.attr('x1', d => d.source.x).attr('y1', d => d.source.y).attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+                node.attr('transform', d => `translate(${d.x},${d.y})`);
+            });
+        }
+
+        // Charts
+        let cpuChart, memChart;
+        const chartOpts = {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { type: 'time', grid: { color: '#2f3336' }, ticks: { color: '#71767b', font: { size: 9 } } },
+                y: { grid: { color: '#2f3336' }, ticks: { color: '#71767b', font: { size: 9 } }, beginAtZero: true, max: 100 }
+            }
+        };
+
+        function initCharts() {
+            const cpuCanvas = document.getElementById('cpu-chart');
+            const memCanvas = document.getElementById('mem-chart');
+            if (cpuCanvas && !cpuChart) {
+                cpuChart = new Chart(cpuCanvas.getContext('2d'), {
+                    type: 'line',
+                    data: { datasets: [{ data: [], borderColor: '#1d9bf0', backgroundColor: 'rgba(29,155,240,0.1)', fill: true, tension: 0.3 }] },
+                    options: chartOpts
+                });
+            }
+            if (memCanvas && !memChart) {
+                memChart = new Chart(memCanvas.getContext('2d'), {
+                    type: 'line',
+                    data: { datasets: [{ data: [], borderColor: '#00ba7c', backgroundColor: 'rgba(0,186,124,0.1)', fill: true, tension: 0.3 }] },
+                    options: {...chartOpts}
+                });
+            }
+            // Time button handlers
+            document.querySelectorAll('.time-btn').forEach(btn => {
+                btn.onclick = function() {
+                    this.parentElement.querySelectorAll('.time-btn').forEach(b => b.classList.remove('active'));
+                    this.classList.add('active');
+                    loadChartData(this.dataset.dur);
+                };
+            });
+            loadChartData('15m');
+        }
+
+        function loadChartData(dur) {
+            fetch(`/api/history/system?duration=${dur}`).then(r => r.json()).then(data => {
+                if (!data?.length) return;
+                const now = Date.now();
+                const durMs = dur.includes('h') ? parseInt(dur)*3600000 : parseInt(dur)*60000;
+
+                if (cpuChart) {
+                    cpuChart.data.datasets[0].data = data.map(d => ({ x: new Date(d.timestamp), y: d.cpu_percent }));
+                    cpuChart.options.scales.x.min = now - durMs;
+                    cpuChart.options.scales.x.max = now;
+                    cpuChart.update('none');
+                }
+                if (memChart) {
+                    memChart.data.datasets[0].data = data.map(d => ({ x: new Date(d.timestamp), y: d.mem_percent }));
+                    memChart.options.scales.x.min = now - durMs;
+                    memChart.options.scales.x.max = now;
+                    memChart.update('none');
+                }
+            }).catch(() => {});
+        }
+
+        // Traces
+        let selectedTraceId = null;
+        let traceServices = [];
+
+        function loadTraceServices() {
+            fetch('/api/trace/services').then(r => r.json()).then(services => {
+                traceServices = services || [];
+                const select = document.getElementById('trace-service-filter');
+                if (select) {
+                    const current = select.value;
+                    select.innerHTML = '<option value="">All Services</option>' +
+                        traceServices.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+                    select.value = current;
+                }
+            }).catch(() => {});
+        }
+
+        function loadTraces() {
+            const service = document.getElementById('trace-service-filter')?.value || '';
+            const url = `/api/traces?limit=50&duration=1h${service ? '&service=' + encodeURIComponent(service) : ''}`;
+
+            fetch(url).then(r => r.json()).then(traces => {
+                const list = document.getElementById('trace-list');
+                if (!list) return;
+
+                if (!traces?.length) {
+                    list.innerHTML = '<div class="empty-state">No traces yet. Configure OTLP export to http://localhost:9999/v1/traces</div>';
+                    return;
+                }
+
+                list.innerHTML = traces.map(t => {
+                    const statusClass = (t.status || '').toLowerCase();
+                    const time = new Date(t.start_time).toLocaleTimeString();
+                    return `<div class="trace-item ${t.trace_id === selectedTraceId ? 'selected' : ''}" onclick="selectTrace('${t.trace_id}')">
+                        <div>
+                            <span class="trace-status ${statusClass}"></span>
+                            <span class="trace-name">${escapeHtml(t.name || 'unknown')}</span>
+                            <div class="trace-service">${escapeHtml(t.service_name || 'unknown')} (${t.span_count} spans)</div>
+                        </div>
+                        <div class="trace-meta">
+                            <div class="trace-duration">${formatTraceDuration(t.duration_ms)}</div>
+                            <div class="trace-time">${time}</div>
+                        </div>
+                    </div>`;
+                }).join('');
+            }).catch(() => {});
+        }
+
+        function selectTrace(traceId) {
+            selectedTraceId = traceId;
+            document.querySelectorAll('.trace-item').forEach(el => {
+                el.classList.toggle('selected', el.onclick.toString().includes(traceId));
+            });
+            loadTraceDetail(traceId);
+        }
+
+        function loadTraceDetail(traceId) {
+            const detail = document.getElementById('trace-detail');
+            if (!detail) return;
+
+            fetch(`/api/traces/${traceId}`).then(r => r.json()).then(trace => {
+                if (!trace?.spans?.length) {
+                    detail.innerHTML = '<div class="no-trace-selected">No spans found</div>';
+                    return;
+                }
+
+                // Build waterfall
+                const spans = trace.spans;
+                const minTime = Math.min(...spans.map(s => new Date(s.start_time).getTime()));
+                const maxTime = Math.max(...spans.map(s => new Date(s.end_time).getTime()));
+                const totalDuration = maxTime - minTime;
+
+                // Sort by start time and build tree structure
+                spans.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+
+                // Assign colors to services
+                const serviceColors = {};
+                const colors = ['#1d9bf0', '#00ba7c', '#7c3aed', '#f4212e', '#ffd400', '#ff7a00'];
+                let colorIdx = 0;
+                spans.forEach(s => {
+                    if (!serviceColors[s.service_name]) {
+                        serviceColors[s.service_name] = colors[colorIdx++ % colors.length];
+                    }
+                });
+
+                const timeMarkers = [0, 0.25, 0.5, 0.75, 1].map(p => formatTraceDuration(totalDuration * p));
+
+                detail.innerHTML = `
+                    <div class="waterfall">
+                        <div class="waterfall-header">
+                            <span style="width:180px">Operation</span>
+                            <div style="flex:1;display:flex;justify-content:space-between;">
+                                ${timeMarkers.map(m => `<span>${m}</span>`).join('')}
+                            </div>
+                        </div>
+                        ${spans.map(span => {
+                            const startOffset = new Date(span.start_time).getTime() - minTime;
+                            const left = totalDuration > 0 ? (startOffset / totalDuration * 100) : 0;
+                            const width = totalDuration > 0 ? (span.duration_ms / totalDuration * 100) : 100;
+                            const barClass = span.status === 'ERROR' ? 'error' :
+                                (span.kind || '').toLowerCase() === 'client' ? 'client' :
+                                (span.kind || '').toLowerCase() === 'internal' ? 'internal' : 'server';
+
+                            return `<div class="span-row">
+                                <div class="span-info">
+                                    <div class="span-name" title="${escapeHtml(span.name)}">${escapeHtml(span.name)}</div>
+                                    <div class="span-service" style="color:${serviceColors[span.service_name]}">${escapeHtml(span.service_name)}</div>
+                                </div>
+                                <div class="span-timeline">
+                                    <div class="timeline-grid">${'<div class="timeline-grid-line"></div>'.repeat(4)}</div>
+                                    <div class="span-bar ${barClass}" style="left:${left}%;width:${Math.max(width, 0.5)}%;background:${serviceColors[span.service_name]}"></div>
+                                    <span class="span-duration">${formatTraceDuration(span.duration_ms)}</span>
+                                </div>
+                            </div>`;
+                        }).join('')}
+                    </div>
+                `;
+            }).catch(() => {
+                detail.innerHTML = '<div class="no-trace-selected">Failed to load trace</div>';
+            });
+        }
+
+        function formatTraceDuration(ms) {
+            if (ms === undefined || ms === null) return '-';
+            if (ms < 1) return '<1ms';
+            if (ms < 1000) return Math.round(ms) + 'ms';
+            if (ms < 60000) return (ms / 1000).toFixed(2) + 's';
+            return (ms / 60000).toFixed(1) + 'm';
+        }
+
+        // Flame graph
+        function updateFlameGraph() {
+            fetch('/api/flamegraph').then(r => r.json()).then(data => {
+                const el = document.getElementById('flamegraph');
+                if (!el) return;
+                if (!data?.children?.length) {
+                    el.innerHTML = '<div class="empty-state">Collecting samples...</div>';
+                    return;
+                }
+                el.innerHTML = '';
+                const chart = flamegraph().width(el.clientWidth).cellHeight(18).transitionDuration(300)
+                    .setColorMapper((d) => d.data.name.startsWith('0x') ? '#f4212e' : '#1d9bf0');
+                d3.select('#flamegraph').datum(data).call(chart);
+            }).catch(() => {
+                const el = document.getElementById('flamegraph');
+                if (el) el.innerHTML = '<div class="empty-state">Profiler unavailable</div>';
+            });
+        }
+
+        // Watches
+        let watchMetrics = [];
+
+        function loadWatchMetrics() {
+            fetch('/api/watch/metrics').then(r => r.json()).then(data => {
+                watchMetrics = data || [];
+            }).catch(() => {});
+        }
+
+        function loadWatches() {
+            fetch('/api/watches').then(r => r.json()).then(watches => {
+                const list = document.getElementById('watches-list');
+                if (!list) return;
+
+                if (!watches?.length) {
+                    list.innerHTML = '<div class="empty-state">No watches configured. Click "+ New" to create one.</div>';
+                    return;
+                }
+
+                list.innerHTML = watches.map(w => {
+                    const stateClass = (w.state || 'no_data').toLowerCase();
+                    const metric = watchMetrics.find(m => m.id === w.metric) || { name: w.metric };
+                    return `<div class="watch-item">
+                        <div class="watch-info">
+                            <div class="watch-name">${escapeHtml(w.name)}</div>
+                            <div class="watch-condition">${metric.name} ${w.operator} ${w.threshold} for ${w.duration}</div>
+                        </div>
+                        <span class="watch-value">${w.last_value?.toFixed(1) || '-'}</span>
+                        <span class="watch-state ${stateClass}">${w.state || 'NO_DATA'}</span>
+                        <div class="watch-actions">
+                            <button class="btn" onclick="deleteWatch('${w.id}')" title="Delete">X</button>
+                        </div>
+                    </div>`;
+                }).join('');
+            }).catch(() => {});
+        }
+
+        function showCreateWatch() {
+            loadChannels();
+            setTimeout(() => {
+                const metricOptions = watchMetrics.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
+                const channelOptions = channels.length
+                    ? channels.map(c => `<label style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0;"><input type="checkbox" class="watch-channel" value="${c.id}"> ${escapeHtml(c.name)}</label>`).join('')
+                    : '<div style="color:#71767b;font-size:0.75rem;">No channels configured. <a href="#" onclick="showChannels();return false;" style="color:#1d9bf0;">Add one</a></div>';
+                const modal = document.createElement('div');
+                modal.className = 'modal-overlay';
+                modal.innerHTML = `
+                    <div class="modal">
+                        <div class="modal-header">
+                            <span class="modal-title">Create Watch</span>
+                            <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="form-group">
+                                <label class="form-label">Name</label>
+                                <input type="text" class="form-input" id="watch-name" placeholder="e.g., High CPU Alert">
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">Metric</label>
+                                    <select class="form-select" id="watch-metric">${metricOptions}</select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Operator</label>
+                                    <select class="form-select" id="watch-operator">
+                                        <option value=">">Greater than (&gt;)</option>
+                                        <option value=">=">Greater or equal (&ge;)</option>
+                                        <option value="<">Less than (&lt;)</option>
+                                        <option value="<=">Less or equal (&le;)</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">Threshold</label>
+                                    <input type="number" class="form-input" id="watch-threshold" placeholder="80" step="any">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Duration</label>
+                                    <select class="form-select" id="watch-duration">
+                                        <option value="0s">Instant</option>
+                                        <option value="1m">1 minute</option>
+                                        <option value="5m" selected>5 minutes</option>
+                                        <option value="15m">15 minutes</option>
+                                        <option value="30m">30 minutes</option>
+                                        <option value="1h">1 hour</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Notify via</label>
+                                <div id="watch-channels">${channelOptions}</div>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+                            <button class="btn btn-primary" onclick="createWatch()">Create Watch</button>
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+            }, 100);
+        }
+
+        function createWatch() {
+            const name = document.getElementById('watch-name').value;
+            const metric = document.getElementById('watch-metric').value;
+            const operator = document.getElementById('watch-operator').value;
+            const threshold = parseFloat(document.getElementById('watch-threshold').value);
+            const duration = document.getElementById('watch-duration').value;
+            const selectedChannels = Array.from(document.querySelectorAll('.watch-channel:checked')).map(cb => cb.value);
+
+            if (!name || !metric || isNaN(threshold)) {
+                alert('Please fill in all fields');
+                return;
+            }
+
+            fetch('/api/watches', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, metric, operator, threshold, duration, enabled: true, channels: selectedChannels })
+            }).then(r => {
+                if (!r.ok) throw new Error('Failed to create watch');
+                return r.json();
+            }).then(() => {
+                document.querySelector('.modal-overlay')?.remove();
+                loadWatches();
+            }).catch(err => alert(err.message));
+        }
+
+        function deleteWatch(id) {
+            if (!confirm('Delete this watch?')) return;
+            fetch(`/api/watches/${id}`, { method: 'DELETE' })
+                .then(() => loadWatches())
+                .catch(err => alert('Failed to delete: ' + err.message));
+        }
+
+        // Notification Channels
+        let channels = [];
+
+        function loadChannels() {
+            fetch('/api/watch/channels').then(r => r.json()).then(data => {
+                channels = data || [];
+            }).catch(() => { channels = []; });
+        }
+
+        function showChannels() {
+            loadChannels();
+            setTimeout(() => {
+                const channelList = channels.length ? channels.map(c => `
+                    <div class="watch-item">
+                        <div class="watch-info">
+                            <div class="watch-name">${escapeHtml(c.name)}</div>
+                            <div class="watch-condition">${c.type} - ${c.type === 'webhook' ? JSON.parse(c.config).url : 'Slack'}</div>
+                        </div>
+                        <div class="watch-actions">
+                            <button class="btn" onclick="testChannel('${c.id}')">Test</button>
+                            <button class="btn" onclick="deleteChannel('${c.id}')">X</button>
+                        </div>
+                    </div>
+                `).join('') : '<div class="empty-state">No channels configured</div>';
+
+                const modal = document.createElement('div');
+                modal.className = 'modal-overlay';
+                modal.innerHTML = `
+                    <div class="modal">
+                        <div class="modal-header">
+                            <span class="modal-title">Notification Channels</span>
+                            <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+                        </div>
+                        <div class="modal-body" style="padding:0;">
+                            ${channelList}
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn" onclick="showCreateChannel()">+ Add Channel</button>
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+            }, 100);
+        }
+
+        function showCreateChannel() {
+            document.querySelector('.modal-overlay')?.remove();
+            const modal = document.createElement('div');
+            modal.className = 'modal-overlay';
+            modal.innerHTML = `
+                <div class="modal">
+                    <div class="modal-header">
+                        <span class="modal-title">Add Notification Channel</span>
+                        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="form-group">
+                            <label class="form-label">Name</label>
+                            <input type="text" class="form-input" id="channel-name" placeholder="e.g., PagerDuty Prod">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Type</label>
+                            <select class="form-select" id="channel-type" onchange="updateChannelForm()">
+                                <option value="webhook">Webhook (PagerDuty, Opsgenie, etc.)</option>
+                                <option value="slack">Slack</option>
+                            </select>
+                        </div>
+                        <div id="channel-config">
+                            <div class="form-group">
+                                <label class="form-label">Webhook URL</label>
+                                <input type="url" class="form-input" id="channel-url" placeholder="https://events.pagerduty.com/v2/enqueue">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn" onclick="showChannels()">Back</button>
+                        <button class="btn btn-primary" onclick="createChannel()">Add Channel</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        function updateChannelForm() {
+            const type = document.getElementById('channel-type').value;
+            const configDiv = document.getElementById('channel-config');
+            if (type === 'slack') {
+                configDiv.innerHTML = `
+                    <div class="form-group">
+                        <label class="form-label">Slack Webhook URL</label>
+                        <input type="url" class="form-input" id="channel-url" placeholder="https://hooks.slack.com/services/...">
+                    </div>
+                `;
+            } else {
+                configDiv.innerHTML = `
+                    <div class="form-group">
+                        <label class="form-label">Webhook URL</label>
+                        <input type="url" class="form-input" id="channel-url" placeholder="https://events.pagerduty.com/v2/enqueue">
+                    </div>
+                `;
+            }
+        }
+
+        function createChannel() {
+            const name = document.getElementById('channel-name').value;
+            const type = document.getElementById('channel-type').value;
+            const url = document.getElementById('channel-url').value;
+
+            if (!name || !url) {
+                alert('Please fill in all fields');
+                return;
+            }
+
+            const config = type === 'slack'
+                ? { webhook_url: url }
+                : { url: url, method: 'POST' };
+
+            fetch('/api/watch/channels', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, type, config })
+            }).then(r => {
+                if (!r.ok) throw new Error('Failed to create channel');
+                return r.json();
+            }).then(() => {
+                loadChannels();
+                showChannels();
+            }).catch(err => alert(err.message));
+        }
+
+        function testChannel(id) {
+            fetch(`/api/watch/channels/${id}/test`, { method: 'POST' })
+                .then(r => {
+                    if (!r.ok) throw new Error('Test failed');
+                    alert('Test notification sent!');
+                })
+                .catch(err => alert('Test failed: ' + err.message));
+        }
+
+        function deleteChannel(id) {
+            if (!confirm('Delete this channel?')) return;
+            fetch(`/api/watch/channels/${id}`, { method: 'DELETE' })
+                .then(() => showChannels())
+                .catch(err => alert('Failed to delete: ' + err.message));
+        }
+
+        // Initialize
+        setTimeout(initCharts, 200);
+        updateSystemMetrics();
+        updateStats();
+        updateServiceMap();
+        updateProcesses();
+        loadTraceServices();
+        loadTraces();
+        loadWatchMetrics();
+        setTimeout(loadWatches, 200);
+        setTimeout(updateFlameGraph, 500);
+        setTimeout(loadLogServices, 300);
+        setTimeout(searchLogs, 400);
+
+        setInterval(updateSystemMetrics, 2000);
+        setInterval(updateStats, 2000);
+        setInterval(updateServiceMap, 10000);
+        setInterval(updateProcesses, 3000);
+        setInterval(loadTraceServices, 30000);
+        setInterval(loadTraces, 5000);
+        setInterval(loadWatches, 5000);
+        setInterval(searchLogs, 10000);
+        setInterval(() => loadChartData(document.querySelector('.time-btn.active')?.dataset.dur || '15m'), 10000);
+
+        window.addEventListener('resize', () => { renderServiceMap(); });
+
+        // Log functions
+        function loadLogServices() {
+            fetch('/api/logs/services')
+                .then(r => r.json())
+                .then(services => {
+                    const select = document.getElementById('log-service');
+                    if (!select) return;
+                    const current = select.value;
+                    select.innerHTML = '<option value="">All Services</option>';
+                    (services || []).forEach(svc => {
+                        const opt = document.createElement('option');
+                        opt.value = svc;
+                        opt.textContent = svc;
+                        select.appendChild(opt);
+                    });
+                    select.value = current;
+                })
+                .catch(() => {});
+        }
+
+        function searchLogs() {
+            const searchEl = document.getElementById('log-search');
+            const levelEl = document.getElementById('log-level');
+            const serviceEl = document.getElementById('log-service');
+            const timeEl = document.getElementById('log-time');
+            if (!searchEl) return;
+
+            const params = new URLSearchParams();
+            if (searchEl.value) params.set('q', searchEl.value);
+            if (levelEl?.value) params.set('level', levelEl.value);
+            if (serviceEl?.value) params.set('service', serviceEl.value);
+            if (timeEl?.value) params.set('since', timeEl.value);
+            params.set('limit', '100');
+
+            fetch('/api/logs?' + params.toString())
+                .then(r => r.json())
+                .then(result => {
+                    const list = document.getElementById('logs-list');
+                    if (!list) return;
+                    const entries = result?.entries || [];
+                    if (!entries.length) {
+                        list.innerHTML = '<div class="empty-state">No logs found</div>';
+                        return;
+                    }
+                    list.innerHTML = entries.map(log => {
+                        const time = new Date(log.timestamp).toLocaleTimeString();
+                        const traceLink = log.trace_id ?
+                            `<span class="log-trace-link" onclick="selectTrace('${log.trace_id}')">${log.trace_id.slice(0,8)}</span>` : '';
+                        return `<div class="log-entry">
+                            <span class="log-time">${time}</span>
+                            <span class="log-level ${log.level}">${log.level}</span>
+                            ${log.service ? `<span class="log-service">[${escapeHtml(log.service)}]</span>` : ''}
+                            <span class="log-message">${escapeHtml(log.message)}</span>
+                            ${traceLink}
+                        </div>`;
+                    }).join('');
+                })
+                .catch(() => {});
+        }
+
+        function refreshLogs() {
+            loadLogServices();
+            searchLogs();
+        }
+
+        // Synthetics functions
+        function loadSynthetics() {
+            fetch('/api/synthetics/checks')
+                .then(r => r.json())
+                .then(checks => {
+                    const list = document.getElementById('synthetics-list');
+                    if (!list) return;
+
+                    if (!checks?.length) {
+                        list.innerHTML = '<div class="empty-state">No synthetic checks configured. Click "+ New" to create one.</div>';
+                        return;
+                    }
+
+                    list.innerHTML = checks.map(c => {
+                        const statusClass = (c.status || 'unknown').toLowerCase();
+                        const latency = c.last_latency_ms ? formatLatency(c.last_latency_ms) : '-';
+                        return `<div class="synth-item">
+                            <div class="synth-info">
+                                <div class="synth-name">${escapeHtml(c.name)}</div>
+                                <div class="synth-url">${escapeHtml(c.url)}</div>
+                            </div>
+                            <span class="synth-latency">${latency}</span>
+                            <span class="synth-status ${statusClass}">${c.status || 'unknown'}</span>
+                            <div class="synth-actions">
+                                <button class="btn" onclick="runSynthetic('${c.id}')" title="Run Now">Run</button>
+                                <button class="btn" onclick="deleteSynthetic('${c.id}')" title="Delete">X</button>
+                            </div>
+                        </div>`;
+                    }).join('');
+                })
+                .catch(() => {});
+        }
+
+        function showCreateSynthetic() {
+            const modal = document.createElement('div');
+            modal.className = 'modal-overlay';
+            modal.innerHTML = `
+                <div class="modal">
+                    <div class="modal-header">
+                        <span class="modal-title">Create Synthetic Check</span>
+                        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="form-group">
+                            <label class="form-label">Name</label>
+                            <input type="text" class="form-input" id="synth-name" placeholder="e.g., Homepage Check">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">URL</label>
+                            <input type="url" class="form-input" id="synth-url" placeholder="https://example.com/health">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Method</label>
+                                <select class="form-select" id="synth-method">
+                                    <option value="GET">GET</option>
+                                    <option value="POST">POST</option>
+                                    <option value="PUT">PUT</option>
+                                    <option value="HEAD">HEAD</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Interval (seconds)</label>
+                                <input type="number" class="form-input" id="synth-interval" value="60" min="10" max="3600">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Timeout (seconds)</label>
+                                <input type="number" class="form-input" id="synth-timeout" value="10" min="1" max="60">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Expected Status</label>
+                                <input type="number" class="form-input" id="synth-status" value="200" placeholder="200">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+                        <button class="btn btn-primary" onclick="createSynthetic()">Create Check</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        function createSynthetic() {
+            const name = document.getElementById('synth-name').value;
+            const url = document.getElementById('synth-url').value;
+            const method = document.getElementById('synth-method').value;
+            const interval = parseInt(document.getElementById('synth-interval').value) || 60;
+            const timeout = parseInt(document.getElementById('synth-timeout').value) || 10;
+            const expectedStatus = document.getElementById('synth-status').value;
+
+            if (!name || !url) {
+                alert('Please fill in name and URL');
+                return;
+            }
+
+            const assertions = [];
+            if (expectedStatus) {
+                assertions.push({
+                    type: 'status_code',
+                    operator: 'equals',
+                    value: expectedStatus
+                });
+            }
+
+            fetch('/api/synthetics/checks', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name, url, method, interval, timeout,
+                    type: 'http',
+                    enabled: true,
+                    assertions
+                })
+            }).then(r => {
+                if (!r.ok) throw new Error('Failed to create check');
+                return r.json();
+            }).then(() => {
+                document.querySelector('.modal-overlay')?.remove();
+                loadSynthetics();
+            }).catch(err => alert(err.message));
+        }
+
+        function runSynthetic(id) {
+            fetch(`/api/synthetics/checks/${id}/run`, { method: 'POST' })
+                .then(r => r.json())
+                .then(result => {
+                    if (result.status === 'up') {
+                        alert(`Check passed! Latency: ${result.latency_ms}ms`);
+                    } else {
+                        alert(`Check failed: ${result.error || 'Unknown error'}`);
+                    }
+                    loadSynthetics();
+                })
+                .catch(err => alert('Failed to run check: ' + err.message));
+        }
+
+        function deleteSynthetic(id) {
+            if (!confirm('Delete this synthetic check?')) return;
+            fetch(`/api/synthetics/checks/${id}`, { method: 'DELETE' })
+                .then(() => loadSynthetics())
+                .catch(err => alert('Failed to delete: ' + err.message));
+        }
+
+        // Initialize synthetics
+        setTimeout(loadSynthetics, 500);
+        setInterval(loadSynthetics, 10000);
+
+        // SLO functions
+        let syntheticChecks = [];
+
+        function loadSyntheticChecksForSLO() {
+            return fetch('/api/synthetics/checks')
+                .then(r => r.json())
+                .then(checks => {
+                    syntheticChecks = checks || [];
+                    return checks;
+                })
+                .catch(() => { syntheticChecks = []; return []; });
+        }
+
+        function loadSLOs() {
+            fetch('/api/slos')
+                .then(r => r.json())
+                .then(slos => {
+                    const list = document.getElementById('slos-list');
+                    if (!list) return;
+
+                    if (!slos?.length) {
+                        list.innerHTML = '<div class="empty-state">No SLOs configured. Click "+ New" to create one.</div>';
+                        return;
+                    }
+
+                    list.innerHTML = slos.map(item => {
+                        const slo = item.slo;
+                        const state = item.state || {};
+                        const statusClass = (state.status || 'no_data').toLowerCase().replace(' ', '_');
+                        const currentValue = state.current_value?.toFixed(2) || '-';
+                        const target = slo.target?.toFixed(1) || '-';
+                        const budgetUsed = state.budget_used_pct || 0;
+                        const budgetRemaining = state.budget_remaining?.toFixed(1) || '-';
+
+                        const valueClass = state.current_value >= slo.target ? 'good' :
+                                          state.current_value >= slo.target - 1 ? 'warn' : 'bad';
+                        const budgetClass = budgetUsed < 50 ? 'healthy' : budgetUsed < 80 ? 'warning' : 'critical';
+
+                        return `<div class="slo-item">
+                            <div class="slo-header">
+                                <span class="slo-name">${escapeHtml(slo.name)}</span>
+                                <div style="display:flex;align-items:center;gap:0.5rem;">
+                                    <span class="slo-status ${statusClass}">${state.status || 'NO DATA'}</span>
+                                    <button class="btn" onclick="deleteSLO('${slo.id}')" style="padding:0.15rem 0.3rem;">X</button>
+                                </div>
+                            </div>
+                            <div class="slo-metrics">
+                                <div class="slo-metric">
+                                    <div class="slo-metric-value ${valueClass}">${currentValue}%</div>
+                                    <div class="slo-metric-label">Current</div>
+                                </div>
+                                <div class="slo-metric">
+                                    <div class="slo-metric-value">${target}%</div>
+                                    <div class="slo-metric-label">Target</div>
+                                </div>
+                                <div class="slo-metric">
+                                    <div class="slo-metric-value">${slo.window}</div>
+                                    <div class="slo-metric-label">Window</div>
+                                </div>
+                            </div>
+                            <div class="slo-budget">
+                                <div class="slo-budget-bar">
+                                    <div class="slo-budget-fill ${budgetClass}" style="width:${Math.min(budgetUsed, 100)}%"></div>
+                                </div>
+                                <div class="slo-budget-text">
+                                    <span>Error Budget: ${budgetRemaining} min remaining</span>
+                                    <span>${budgetUsed.toFixed(1)}% used</span>
+                                </div>
+                            </div>
+                        </div>`;
+                    }).join('');
+                })
+                .catch(() => {});
+        }
+
+        function showCreateSLO() {
+            loadSyntheticChecksForSLO().then(() => {
+                const checkOptions = syntheticChecks.length
+                    ? syntheticChecks.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')
+                    : '<option value="">No synthetic checks available</option>';
+
+                const modal = document.createElement('div');
+                modal.className = 'modal-overlay';
+                modal.innerHTML = `
+                    <div class="modal">
+                        <div class="modal-header">
+                            <span class="modal-title">Create SLO</span>
+                            <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="form-group">
+                                <label class="form-label">Name</label>
+                                <input type="text" class="form-input" id="slo-name" placeholder="e.g., API Availability">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Description</label>
+                                <input type="text" class="form-input" id="slo-desc" placeholder="e.g., Main API must be available 99.9%">
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">Type</label>
+                                    <select class="form-select" id="slo-type">
+                                        <option value="availability">Availability (%)</option>
+                                        <option value="latency">Latency (P95)</option>
+                                        <option value="error_rate">Error Rate</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Target (%)</label>
+                                    <input type="number" class="form-input" id="slo-target" value="99.9" step="0.1" min="0" max="100">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">Time Window</label>
+                                    <select class="form-select" id="slo-window">
+                                        <option value="7d">7 Days</option>
+                                        <option value="30d" selected>30 Days</option>
+                                        <option value="90d">90 Days</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Latency Threshold (ms)</label>
+                                    <input type="number" class="form-input" id="slo-threshold" value="200" placeholder="For latency SLOs">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Data Source (Synthetic Check)</label>
+                                <select class="form-select" id="slo-source">${checkOptions}</select>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+                            <button class="btn btn-primary" onclick="createSLO()">Create SLO</button>
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+            });
+        }
+
+        function createSLO() {
+            const name = document.getElementById('slo-name').value;
+            const description = document.getElementById('slo-desc').value;
+            const type = document.getElementById('slo-type').value;
+            const target = parseFloat(document.getElementById('slo-target').value);
+            const window = document.getElementById('slo-window').value;
+            const threshold = parseFloat(document.getElementById('slo-threshold').value) || 0;
+            const sourceId = document.getElementById('slo-source').value;
+
+            if (!name || !sourceId) {
+                alert('Please fill in name and select a data source');
+                return;
+            }
+
+            if (isNaN(target) || target <= 0 || target > 100) {
+                alert('Target must be between 0 and 100');
+                return;
+            }
+
+            fetch('/api/slos', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name,
+                    description,
+                    type,
+                    target,
+                    window,
+                    threshold,
+                    enabled: true,
+                    source: {
+                        type: 'synthetics',
+                        id: sourceId
+                    }
+                })
+            }).then(r => {
+                if (!r.ok) throw new Error('Failed to create SLO');
+                return r.json();
+            }).then(() => {
+                document.querySelector('.modal-overlay')?.remove();
+                loadSLOs();
+            }).catch(err => alert(err.message));
+        }
+
+        function deleteSLO(id) {
+            if (!confirm('Delete this SLO?')) return;
+            fetch(`/api/slos/${id}`, { method: 'DELETE' })
+                .then(() => loadSLOs())
+                .catch(err => alert('Failed to delete: ' + err.message));
+        }
+
+        // Log Patterns functions
+        function loadPatterns() {
+            const filter = document.getElementById('pattern-filter')?.value || 'all';
+            fetch(`/api/logs/patterns?filter=${filter}&limit=20`)
+                .then(r => r.json())
+                .then(data => {
+                    const stats = data.stats || {};
+                    const patterns = data.patterns || [];
+
+                    // Update stats
+                    const statsEl = document.getElementById('pattern-stats');
+                    if (statsEl) {
+                        statsEl.innerHTML = `
+                            <div class="pattern-stat">
+                                <span class="pattern-stat-value">${stats.total_patterns || 0}</span>
+                                <span class="pattern-stat-label">Patterns</span>
+                            </div>
+                            <div class="pattern-stat">
+                                <span class="pattern-stat-value">${stats.total_matches || 0}</span>
+                                <span class="pattern-stat-label">Total Logs</span>
+                            </div>
+                            <div class="pattern-stat">
+                                <span class="pattern-stat-value">${stats.matches_last_hour || 0}</span>
+                                <span class="pattern-stat-label">Last Hour</span>
+                            </div>
+                            <div class="pattern-stat">
+                                <span class="pattern-stat-value">${stats.new_patterns_today || 0}</span>
+                                <span class="pattern-stat-label">New Today</span>
+                            </div>
+                        `;
+                    }
+
+                    // Update patterns list
+                    const list = document.getElementById('patterns-list');
+                    if (!list) return;
+
+                    if (!patterns?.length) {
+                        list.innerHTML = '<div class="empty-state">No patterns detected yet. Send some logs to see patterns emerge.</div>';
+                        return;
+                    }
+
+                    list.innerHTML = patterns.map(p => {
+                        const trend = p.trend || 'stable';
+                        const trendLabel = trend === 'increasing' ? 'Increasing' :
+                                          trend === 'decreasing' ? 'Decreasing' :
+                                          trend === 'new' ? 'New' : 'Stable';
+                        const examples = (p.examples || []).slice(0, 2);
+                        const lastSeen = p.last_seen ? new Date(p.last_seen).toLocaleString() : '-';
+
+                        return `<div class="pattern-item">
+                            <div class="pattern-header">
+                                <span class="pattern-trend ${trend}">${trendLabel}</span>
+                                <span class="pattern-count">${p.count.toLocaleString()} occurrences</span>
+                                ${p.count_last_hr ? `<span style="color:#71767b;font-size:0.65rem;">(${p.count_last_hr} last hour)</span>` : ''}
+                            </div>
+                            <div class="pattern-signature" title="${escapeHtml(p.signature)}">${escapeHtml(p.signature)}</div>
+                            <div class="pattern-meta">
+                                <span>Level: ${p.level || '-'}</span>
+                                <span>Service: ${p.service || '-'}</span>
+                                <span>Last seen: ${lastSeen}</span>
+                            </div>
+                            ${examples.length ? `<div class="pattern-examples">
+                                <span style="color:#71767b">Examples:</span>
+                                ${examples.map(ex => `<div class="pattern-example" title="${escapeHtml(ex)}">${escapeHtml(ex)}</div>`).join('')}
+                            </div>` : ''}
+                        </div>`;
+                    }).join('');
+                })
+                .catch(() => {});
+        }
+
+        // Container functions
+        function loadContainers() {
+            fetch('/api/containers')
+                .then(r => r.json())
+                .then(data => {
+                    if (!Array.isArray(data)) data = [];
+
+                    // Update summary
+                    const running = data.filter(d => d.container?.state === 'running').length;
+                    const stopped = data.filter(d => d.container?.state !== 'running').length;
+                    let totalCpu = 0, totalMem = 0;
+                    data.forEach(d => {
+                        if (d.stats) {
+                            totalCpu += d.stats.cpu_percent || 0;
+                            totalMem += d.stats.memory_usage || 0;
+                        }
+                    });
+
+                    const summaryEl = document.getElementById('container-summary');
+                    if (summaryEl) {
+                        summaryEl.innerHTML = `
+                            <div class="container-stat">
+                                <span class="container-stat-value">${data.length}</span>
+                                <span class="container-stat-label">Total</span>
+                            </div>
+                            <div class="container-stat">
+                                <span class="container-stat-value" style="color:#00ba7c">${running}</span>
+                                <span class="container-stat-label">Running</span>
+                            </div>
+                            <div class="container-stat">
+                                <span class="container-stat-value" style="color:#71767b">${stopped}</span>
+                                <span class="container-stat-label">Stopped</span>
+                            </div>
+                            <div class="container-stat">
+                                <span class="container-stat-value">${totalCpu.toFixed(1)}%</span>
+                                <span class="container-stat-label">CPU</span>
+                            </div>
+                            <div class="container-stat">
+                                <span class="container-stat-value">${formatBytes(totalMem)}</span>
+                                <span class="container-stat-label">Memory</span>
+                            </div>
+                        `;
+                    }
+
+                    // Update list
+                    const list = document.getElementById('containers-list');
+                    if (!list) return;
+
+                    if (!data.length) {
+                        list.innerHTML = '<div class="empty-state">No containers found. Is Docker running?</div>';
+                        return;
+                    }
+
+                    list.innerHTML = data.map(d => {
+                        const c = d.container || {};
+                        const s = d.stats || {};
+                        const state = c.state || 'unknown';
+                        const cpuPct = (s.cpu_percent || 0).toFixed(1);
+                        const memPct = (s.memory_percent || 0).toFixed(1);
+                        const memUsed = formatBytes(s.memory_usage || 0);
+                        const netRx = formatBytes(s.network_rx_bytes || 0);
+                        const netTx = formatBytes(s.network_tx_bytes || 0);
+
+                        return `<div class="container-item">
+                            <div class="container-header">
+                                <span class="container-state ${state}">${state}</span>
+                                <span class="container-name">${escapeHtml(c.name || c.id)}</span>
+                            </div>
+                            <div class="container-image">${escapeHtml(c.image || '-')}</div>
+                            ${state === 'running' ? `
+                            <div class="container-metrics">
+                                <div class="container-metric">
+                                    <span class="container-metric-value">${cpuPct}%</span>
+                                    <span class="container-metric-label">CPU</span>
+                                    <div class="container-bar"><div class="container-bar-fill cpu" style="width:${Math.min(cpuPct, 100)}%"></div></div>
+                                </div>
+                                <div class="container-metric">
+                                    <span class="container-metric-value">${memUsed}</span>
+                                    <span class="container-metric-label">Memory (${memPct}%)</span>
+                                    <div class="container-bar"><div class="container-bar-fill mem" style="width:${Math.min(memPct, 100)}%"></div></div>
+                                </div>
+                                <div class="container-metric">
+                                    <span class="container-metric-value">${netRx} / ${netTx}</span>
+                                    <span class="container-metric-label">Net RX / TX</span>
+                                </div>
+                                <div class="container-metric">
+                                    <span class="container-metric-value">${s.pids || 0}</span>
+                                    <span class="container-metric-label">PIDs</span>
+                                </div>
+                            </div>
+                            ` : `<div style="font-size:0.7rem;color:#71767b;margin-top:0.3rem;">${escapeHtml(c.status || '')}</div>`}
+                        </div>`;
+                    }).join('');
+                })
+                .catch(() => {
+                    const list = document.getElementById('containers-list');
+                    if (list) list.innerHTML = '<div class="empty-state">Container monitoring not available</div>';
+                });
+        }
+
+        // Deployment functions
+        function loadDeployments() {
+            fetch('/api/deploys')
+                .then(r => r.json())
+                .then(data => {
+                    if (!Array.isArray(data)) data = [];
+
+                    // Load stats
+                    fetch('/api/deploys/stats')
+                        .then(r => r.json())
+                        .then(stats => {
+                            const summaryEl = document.getElementById('deploy-summary');
+                            if (summaryEl) {
+                                summaryEl.innerHTML = `
+                                    <div class="deploy-stat">
+                                        <span class="deploy-stat-value">${stats.total_deployments || 0}</span>
+                                        <span class="deploy-stat-label">Total</span>
+                                    </div>
+                                    <div class="deploy-stat">
+                                        <span class="deploy-stat-value">${stats.deploys_today || 0}</span>
+                                        <span class="deploy-stat-label">Today</span>
+                                    </div>
+                                    <div class="deploy-stat">
+                                        <span class="deploy-stat-value">${stats.deploys_this_week || 0}</span>
+                                        <span class="deploy-stat-label">This Week</span>
+                                    </div>
+                                    <div class="deploy-stat">
+                                        <span class="deploy-stat-value" style="color:#00ba7c">${(stats.success_rate || 0).toFixed(0)}%</span>
+                                        <span class="deploy-stat-label">Success Rate</span>
+                                    </div>
+                                    <div class="deploy-stat">
+                                        <span class="deploy-stat-value" style="color:${stats.recent_failures > 0 ? '#f4212e' : '#71767b'}">${stats.recent_failures || 0}</span>
+                                        <span class="deploy-stat-label">Recent Failures</span>
+                                    </div>
+                                `;
+                            }
+                        })
+                        .catch(() => {});
+
+                    // Update list
+                    const list = document.getElementById('deployments-list');
+                    if (!list) return;
+
+                    if (!data.length) {
+                        list.innerHTML = '<div class="empty-state">No deployments recorded. Click "+ Deploy" to record one.</div>';
+                        return;
+                    }
+
+                    list.innerHTML = data.slice(0, 20).map(d => {
+                        const time = new Date(d.timestamp).toLocaleString();
+                        const relTime = timeAgo(new Date(d.timestamp));
+                        const commitLink = d.commit_url ?
+                            `<a href="${escapeHtml(d.commit_url)}" target="_blank" class="deploy-commit">${escapeHtml(d.commit_sha?.substring(0, 7) || '')}</a>` :
+                            (d.commit_sha ? `<span class="deploy-commit">${escapeHtml(d.commit_sha.substring(0, 7))}</span>` : '');
+
+                        return `<div class="deploy-item" onclick="showDeployImpact('${d.id}')" style="cursor:pointer">
+                            <div class="deploy-marker ${d.status || 'success'}"></div>
+                            <div class="deploy-info">
+                                <div class="deploy-header">
+                                    <span class="deploy-service">${escapeHtml(d.service)}</span>
+                                    <span class="deploy-version">${escapeHtml(d.version)}</span>
+                                    <span class="deploy-env ${d.environment || 'prod'}">${d.environment || 'prod'}</span>
+                                </div>
+                                <div class="deploy-meta">
+                                    <span class="deploy-time" title="${time}">${relTime}</span>
+                                    ${d.user ? `<span class="deploy-user">by ${escapeHtml(d.user)}</span>` : ''}
+                                    ${commitLink}
+                                    ${d.duration_ms ? `<span>${d.duration_ms}ms</span>` : ''}
+                                </div>
+                            </div>
+                            <div class="deploy-actions" onclick="event.stopPropagation()">
+                                <button class="btn" onclick="showDeployImpact('${d.id}')" title="View impact">&#128200;</button>
+                                ${d.status === 'success' ? `<button class="btn" onclick="markDeployFailed('${d.id}')" title="Mark as failed">&#10006;</button>` : ''}
+                                ${d.status === 'failed' ? `<button class="btn" onclick="markDeployRolledBack('${d.id}')" title="Mark as rolled back">&#8634;</button>` : ''}
+                            </div>
+                        </div>`;
+                    }).join('');
+                })
+                .catch(() => {
+                    const list = document.getElementById('deployments-list');
+                    if (list) list.innerHTML = '<div class="empty-state">Deployments not available</div>';
+                });
+        }
+
+        function timeAgo(date) {
+            const seconds = Math.floor((new Date() - date) / 1000);
+            if (seconds < 60) return 'just now';
+            if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
+            if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ago';
+            return Math.floor(seconds / 86400) + 'd ago';
+        }
+
+        function showNewDeployModal() {
+            const overlay = document.createElement('div');
+            overlay.className = 'modal-overlay';
+            overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+            overlay.innerHTML = `
+                <div class="modal">
+                    <div class="modal-header">
+                        <span class="modal-title">Record Deployment</span>
+                        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Service *</label>
+                                <input type="text" id="deploy-service" class="form-input" placeholder="my-api">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Version *</label>
+                                <input type="text" id="deploy-version" class="form-input" placeholder="v1.2.3">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Environment</label>
+                                <select id="deploy-env" class="form-select">
+                                    <option value="prod">Production</option>
+                                    <option value="staging">Staging</option>
+                                    <option value="dev">Development</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Status</label>
+                                <select id="deploy-status" class="form-select">
+                                    <option value="success">Success</option>
+                                    <option value="failed">Failed</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Deployed By</label>
+                            <input type="text" id="deploy-user" class="form-input" placeholder="username">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Commit SHA</label>
+                                <input type="text" id="deploy-sha" class="form-input" placeholder="abc1234">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Commit URL</label>
+                                <input type="text" id="deploy-url" class="form-input" placeholder="https://github.com/...">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Description</label>
+                            <input type="text" id="deploy-desc" class="form-input" placeholder="Optional notes">
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+                        <button class="btn btn-primary" onclick="submitDeploy()">Record Deploy</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+        }
+
+        function submitDeploy() {
+            const service = document.getElementById('deploy-service').value.trim();
+            const version = document.getElementById('deploy-version').value.trim();
+            if (!service || !version) {
+                alert('Service and Version are required');
+                return;
+            }
+
+            const deploy = {
+                service: service,
+                version: version,
+                environment: document.getElementById('deploy-env').value,
+                status: document.getElementById('deploy-status').value,
+                user: document.getElementById('deploy-user').value.trim(),
+                commit_sha: document.getElementById('deploy-sha').value.trim(),
+                commit_url: document.getElementById('deploy-url').value.trim(),
+                description: document.getElementById('deploy-desc').value.trim()
+            };
+
+            fetch('/api/deploys', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(deploy)
+            })
+            .then(r => {
+                if (!r.ok) throw new Error('Failed to record deploy');
+                return r.json();
+            })
+            .then(() => {
+                document.querySelector('.modal-overlay').remove();
+                loadDeployments();
+            })
+            .catch(err => alert('Error: ' + err.message));
+        }
+
+        function markDeployFailed(id) {
+            if (!confirm('Mark this deployment as failed?')) return;
+            fetch(`/api/deploys/${id}/status`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'failed' })
+            })
+            .then(() => loadDeployments())
+            .catch(err => alert('Error: ' + err.message));
+        }
+
+        function markDeployRolledBack(id) {
+            if (!confirm('Mark this deployment as rolled back?')) return;
+            fetch(`/api/deploys/${id}/status`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'rolled_back' })
+            })
+            .then(() => loadDeployments())
+            .catch(err => alert('Error: ' + err.message));
+        }
+
+        function showDeployImpact(id) {
+            fetch(`/api/deploys/${id}/impact?window=30m`)
+                .then(r => r.json())
+                .then(impact => {
+                    fetch(`/api/deploys/${id}`)
+                        .then(r => r.json())
+                        .then(deploy => {
+                            const impactColor = impact.impact === 'positive' ? '#00ba7c' :
+                                              impact.impact === 'negative' ? '#f4212e' : '#71767b';
+                            const impactIcon = impact.impact === 'positive' ? '&#9650;' :
+                                             impact.impact === 'negative' ? '&#9660;' : '&#9679;';
+
+                            const errorChange = impact.error_rate_change || 0;
+                            const latencyChange = impact.latency_change || 0;
+                            const errorColor = errorChange > 0 ? '#f4212e' : errorChange < 0 ? '#00ba7c' : '#71767b';
+                            const latencyColor = latencyChange > 0 ? '#f4212e' : latencyChange < 0 ? '#00ba7c' : '#71767b';
+
+                            const modal = document.createElement('div');
+                            modal.className = 'modal-overlay';
+                            modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+                            modal.innerHTML = `
+                                <div class="modal" style="max-width:500px">
+                                    <div class="modal-header">
+                                        <span class="modal-title">Deployment Impact Analysis</span>
+                                        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+                                    </div>
+                                    <div style="padding:1rem">
+                                        <div style="display:flex;align-items:center;gap:0.8rem;margin-bottom:1rem;padding-bottom:1rem;border-bottom:1px solid #2f3336">
+                                            <div class="deploy-marker ${deploy.status}" style="height:50px"></div>
+                                            <div>
+                                                <div style="font-size:1.1rem;font-weight:600">${escapeHtml(deploy.service)} ${escapeHtml(deploy.version)}</div>
+                                                <div style="color:#71767b;font-size:0.8rem">${new Date(deploy.timestamp).toLocaleString()}</div>
+                                            </div>
+                                            <div style="margin-left:auto;text-align:center">
+                                                <div style="font-size:2rem;color:${impactColor}">${impactIcon}</div>
+                                                <div style="font-size:0.7rem;text-transform:uppercase;font-weight:600;color:${impactColor}">${impact.impact}</div>
+                                            </div>
+                                        </div>
+
+                                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+                                            <div class="stat-card" style="padding:0.8rem">
+                                                <div style="font-size:0.7rem;color:#71767b;text-transform:uppercase;margin-bottom:0.5rem">Error Rate Change</div>
+                                                <div style="font-size:1.5rem;font-weight:700;color:${errorColor}">
+                                                    ${errorChange > 0 ? '+' : ''}${errorChange.toFixed(1)}%
+                                                </div>
+                                                <div style="font-size:0.7rem;color:#71767b;margin-top:0.3rem">
+                                                    ${impact.errors_before || 0} &rarr; ${impact.errors_after || 0} errors
+                                                </div>
+                                            </div>
+                                            <div class="stat-card" style="padding:0.8rem">
+                                                <div style="font-size:0.7rem;color:#71767b;text-transform:uppercase;margin-bottom:0.5rem">CPU Change</div>
+                                                <div style="font-size:1.5rem;font-weight:700;color:${latencyColor}">
+                                                    ${latencyChange > 0 ? '+' : ''}${latencyChange.toFixed(1)}%
+                                                </div>
+                                                <div style="font-size:0.7rem;color:#71767b;margin-top:0.3rem">
+                                                    ${(impact.latency_p50_before || 0).toFixed(1)}% &rarr; ${(impact.latency_p50_after || 0).toFixed(1)}%
+                                                </div>
+                                            </div>
+                                            <div class="stat-card" style="padding:0.8rem">
+                                                <div style="font-size:0.7rem;color:#71767b;text-transform:uppercase;margin-bottom:0.5rem">Requests Before</div>
+                                                <div style="font-size:1.5rem;font-weight:700">${impact.requests_before || 0}</div>
+                                                <div style="font-size:0.7rem;color:#71767b;margin-top:0.3rem">30 min window</div>
+                                            </div>
+                                            <div class="stat-card" style="padding:0.8rem">
+                                                <div style="font-size:0.7rem;color:#71767b;text-transform:uppercase;margin-bottom:0.5rem">Requests After</div>
+                                                <div style="font-size:1.5rem;font-weight:700">${impact.requests_after || 0}</div>
+                                                <div style="font-size:0.7rem;color:#71767b;margin-top:0.3rem">30 min window</div>
+                                            </div>
+                                        </div>
+
+                                        ${deploy.description ? `
+                                        <div style="margin-top:1rem;padding:0.8rem;background:#1a1d21;border-radius:6px">
+                                            <div style="font-size:0.7rem;color:#71767b;margin-bottom:0.3rem">Notes</div>
+                                            <div style="font-size:0.85rem">${escapeHtml(deploy.description)}</div>
+                                        </div>` : ''}
+
+                                        ${deploy.commit_sha ? `
+                                        <div style="margin-top:0.8rem;font-size:0.8rem;color:#71767b">
+                                            Commit: ${deploy.commit_url ?
+                                                `<a href="${escapeHtml(deploy.commit_url)}" target="_blank" style="color:#1d9bf0">${deploy.commit_sha.substring(0,7)}</a>` :
+                                                `<code>${deploy.commit_sha.substring(0,7)}</code>`}
+                                            ${deploy.user ? ` by ${escapeHtml(deploy.user)}` : ''}
+                                        </div>` : ''}
+                                    </div>
+                                </div>`;
+                            document.body.appendChild(modal);
+                        });
+                })
+                .catch(err => alert('Error loading impact: ' + err.message));
+        }
 
         function formatBytes(bytes) {
             if (bytes === 0) return '0 B';
@@ -530,385 +2430,272 @@
             return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
         }
 
-        function formatBytesPerSec(bytes) {
-            return formatBytes(bytes) + '/s';
-        }
+        // Incident functions
+        function loadIncidents() {
+            fetch('/api/incidents?status=all&limit=20')
+                .then(r => r.json())
+                .then(incidents => {
+                    // Load stats
+                    fetch('/api/incidents/stats')
+                        .then(r => r.json())
+                        .then(stats => {
+                            document.getElementById('inc-active').textContent = stats.active_incidents || 0;
+                            document.getElementById('inc-triggered').textContent = stats.triggered_count || 0;
+                            document.getElementById('inc-acked').textContent = stats.acknowledged_count || 0;
+                        });
 
-        function formatLatency(ms) {
-            if (ms === 0 || ms === undefined) return '-';
-            if (ms < 1) return '<1ms';
-            if (ms < 1000) return Math.round(ms) + 'ms';
-            return (ms / 1000).toFixed(1) + 's';
-        }
+                    // Load on-call
+                    fetch('/api/oncall/current')
+                        .then(r => r.json())
+                        .then(oncall => {
+                            const display = document.getElementById('oncall-display');
+                            if (display) {
+                                const names = Object.values(oncall).filter(v => v);
+                                if (names.length > 0) {
+                                    display.innerHTML = `<span class="oncall-badge">${escapeHtml(names[0])}</span>`;
+                                }
+                            }
+                        });
 
-        function getLatencyClass(ms) {
-            if (ms === 0 || ms === undefined) return '';
-            if (ms < 100) return 'good';
-            if (ms < 500) return 'warn';
-            return 'bad';
-        }
+                    const list = document.getElementById('incidents-list');
+                    if (!list) return;
 
-        function formatNumber(n) {
-            if (n === undefined || n === null) return '-';
-            return n.toLocaleString();
-        }
-
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-
-        // Service Map rendering with D3 - persistent across updates
-        let serviceMapData = { nodes: [], links: [] };
-        let nodePositions = {};  // Persist node positions: { id: { x, y, fixed: bool } }
-        let mapInitialized = {};  // Track if map was initialized
-
-        function renderServiceMap(svgId, height) {
-            const svg = d3.select('#' + svgId);
-            const container = svg.node().parentElement;
-            const width = container.clientWidth - 32;
-            const actualHeight = height || 370;
-
-            svg.attr('width', width).attr('height', actualHeight);
-
-            if (serviceMapData.nodes.length === 0) {
-                svg.selectAll('*').remove();
-                svg.append('text')
-                    .attr('x', width / 2)
-                    .attr('y', actualHeight / 2)
-                    .attr('text-anchor', 'middle')
-                    .attr('fill', '#71767b')
-                    .text('No service connections yet');
-                return;
-            }
-
-            // Check if we have new nodes
-            const currentNodeIds = new Set(serviceMapData.nodes.map(n => n.id));
-            const savedNodeIds = new Set(Object.keys(nodePositions));
-            const hasNewNodes = [...currentNodeIds].some(id => !savedNodeIds.has(id));
-
-            // Skip re-render if no new nodes and map already exists
-            if (mapInitialized[svgId] && !hasNewNodes) {
-                return;
-            }
-
-            svg.selectAll('*').remove();
-
-            // Build nodes with saved or initial positions
-            const nodes = serviceMapData.nodes.map(n => {
-                const saved = nodePositions[n.id];
-                if (saved) {
-                    return {
-                        ...n,
-                        x: saved.x,
-                        y: saved.y,
-                        fx: saved.fixed ? saved.x : null,
-                        fy: saved.fixed ? saved.y : null
-                    };
-                }
-                return {
-                    ...n,
-                    x: width / 2 + (Math.random() - 0.5) * 200,
-                    y: actualHeight / 2 + (Math.random() - 0.5) * 200
-                };
-            });
-
-            const links = serviceMapData.links.map(l => ({ ...l }));
-
-            const simulation = d3.forceSimulation(nodes)
-                .force('link', d3.forceLink(links).id(d => d.id).distance(150))
-                .force('charge', d3.forceManyBody().strength(-400))
-                .force('center', d3.forceCenter(width / 2, actualHeight / 2))
-                .force('collision', d3.forceCollide().radius(50));
-
-            const link = svg.append('g')
-                .selectAll('line')
-                .data(links)
-                .enter().append('line')
-                .attr('class', 'link')
-                .attr('stroke-width', d => Math.min(Math.sqrt(d.count) + 1, 5));
-
-            const node = svg.append('g')
-                .selectAll('g')
-                .data(nodes)
-                .enter().append('g')
-                .style('cursor', 'grab')
-                .call(d3.drag()
-                    .on('start', dragstarted)
-                    .on('drag', dragged)
-                    .on('end', dragended));
-
-            node.append('circle')
-                .attr('r', 20)
-                .attr('class', d => d.type === 'process' ? 'node-process' : 'node-external');
-
-            node.append('text')
-                .attr('class', 'node-label')
-                .attr('text-anchor', 'middle')
-                .attr('dy', 35)
-                .text(d => d.name.length > 15 ? d.name.substring(0, 12) + '...' : d.name);
-
-            simulation.on('tick', () => {
-                link
-                    .attr('x1', d => d.source.x)
-                    .attr('y1', d => d.source.y)
-                    .attr('x2', d => d.target.x)
-                    .attr('y2', d => d.target.y);
-
-                node.attr('transform', d => `translate(${d.x},${d.y})`);
-            });
-
-            // Save positions when simulation settles
-            simulation.on('end', () => {
-                nodes.forEach(n => {
-                    if (!nodePositions[n.id] || !nodePositions[n.id].fixed) {
-                        nodePositions[n.id] = { x: n.x, y: n.y, fixed: false };
-                    }
-                });
-            });
-
-            mapInitialized[svgId] = true;
-
-            function dragstarted(event) {
-                if (!event.active) simulation.alphaTarget(0.3).restart();
-                event.subject.fx = event.subject.x;
-                event.subject.fy = event.subject.y;
-                d3.select(this).style('cursor', 'grabbing');
-            }
-
-            function dragged(event) {
-                event.subject.fx = event.x;
-                event.subject.fy = event.y;
-            }
-
-            function dragended(event) {
-                if (!event.active) simulation.alphaTarget(0);
-                // KEEP node fixed where user dropped it
-                event.subject.fx = event.subject.x;
-                event.subject.fy = event.subject.y;
-                nodePositions[event.subject.id] = {
-                    x: event.subject.x,
-                    y: event.subject.y,
-                    fixed: true
-                };
-                d3.select(this).style('cursor', 'grab');
-            }
-        }
-
-        function updateSystemMetrics() {
-            fetch('/api/system')
-                .then(res => res.json())
-                .then(data => {
-                    // CPU
-                    const cpuPercent = data.cpu_usage_percent || 0;
-                    document.getElementById('cpu-percent').textContent = cpuPercent.toFixed(1) + '%';
-                    document.getElementById('cpu-bar').style.width = cpuPercent + '%';
-                    document.getElementById('cpu-iowait').textContent = (data.cpu_iowait || 0).toFixed(1) + '%';
-                    document.getElementById('load-avg').textContent =
-                        `${(data.load_1 || 0).toFixed(2)} / ${(data.load_5 || 0).toFixed(2)} / ${(data.load_15 || 0).toFixed(2)}`;
-
-                    // Memory
-                    const memPercent = data.mem_usage_percent || 0;
-                    document.getElementById('mem-percent').textContent = memPercent.toFixed(1) + '%';
-                    document.getElementById('mem-bar').style.width = memPercent + '%';
-                    document.getElementById('mem-used').textContent = formatBytes(data.mem_used_bytes || 0);
-                    document.getElementById('mem-total').textContent = formatBytes(data.mem_total_bytes || 0);
-
-                    // Disk
-                    const diskRead = data.disk_read_per_sec || 0;
-                    const diskWrite = data.disk_write_per_sec || 0;
-                    document.getElementById('disk-io').textContent = formatBytesPerSec(diskRead + diskWrite);
-                    document.getElementById('disk-read').textContent = formatBytesPerSec(diskRead);
-                    document.getElementById('disk-write').textContent = formatBytesPerSec(diskWrite);
-                    // Simple disk bar based on activity
-                    const diskActivity = Math.min((diskRead + diskWrite) / 100000000 * 100, 100);
-                    document.getElementById('disk-bar').style.width = diskActivity + '%';
-
-                    // Network
-                    const netRx = data.net_rx_per_sec || 0;
-                    const netTx = data.net_tx_per_sec || 0;
-                    document.getElementById('net-io').textContent = formatBytesPerSec(netRx + netTx);
-                    document.getElementById('net-rx').textContent = formatBytesPerSec(netRx);
-                    document.getElementById('net-tx').textContent = formatBytesPerSec(netTx);
-                    // Simple net bar based on activity
-                    const netActivity = Math.min((netRx + netTx) / 10000000 * 100, 100);
-                    document.getElementById('net-bar').style.width = netActivity + '%';
-                })
-                .catch(err => console.error('Failed to fetch system metrics:', err));
-        }
-
-        function updateStats() {
-            fetch('/api/stats')
-                .then(res => res.json())
-                .then(data => {
-                    document.getElementById('total-connections').textContent = formatNumber(data.total_connections);
-                    document.getElementById('total-requests').textContent = formatNumber(data.total_requests);
-                    document.getElementById('total-errors').textContent = formatNumber(data.total_errors);
-
-                    const now = new Date();
-                    document.getElementById('last-update').textContent = 'Updated ' + now.toLocaleTimeString();
-
-                    // Endpoints table
-                    const endpointsBody = document.getElementById('endpoints-body');
-                    if (data.endpoints && data.endpoints.length > 0) {
-                        endpointsBody.innerHTML = data.endpoints.map(ep => `
-                            <tr>
-                                <td><span class="method ${ep.method}">${ep.method}</span></td>
-                                <td class="path">${escapeHtml(ep.path)}</td>
-                                <td>${formatNumber(ep.request_count)}</td>
-                                <td class="error-rate ${ep.error_rate > 5 ? 'bad' : 'good'}">${ep.error_rate.toFixed(1)}%</td>
-                                <td class="latency ${getLatencyClass(ep.p50_ms)}">${formatLatency(ep.p50_ms)}</td>
-                                <td class="latency ${getLatencyClass(ep.p99_ms)}">${formatLatency(ep.p99_ms)}</td>
-                                <td class="latency ${getLatencyClass(ep.avg_ms)}">${formatLatency(ep.avg_ms)}</td>
-                            </tr>
-                        `).join('');
-                    } else {
-                        endpointsBody.innerHTML = '<tr><td colspan="7" class="empty-state">No HTTP endpoints recorded yet</td></tr>';
-                    }
-
-                    // Connections table
-                    const connectionsBody = document.getElementById('connections-body');
-                    if (data.connections && data.connections.length > 0) {
-                        connectionsBody.innerHTML = data.connections.map(conn => `
-                            <tr>
-                                <td class="process">${escapeHtml(conn.process)}</td>
-                                <td class="pid">${conn.pid}</td>
-                                <td class="remote">${escapeHtml(conn.remote)}:${conn.port}</td>
-                                <td class="count">${formatNumber(conn.count)}</td>
-                            </tr>
-                        `).join('');
-                    } else {
-                        connectionsBody.innerHTML = '<tr><td colspan="4" class="empty-state">No connections recorded yet</td></tr>';
-                    }
-                })
-                .catch(err => {
-                    console.error('Failed to fetch stats:', err);
-                    document.getElementById('last-update').textContent = 'Connection error';
-                });
-        }
-
-        function updateServiceMap() {
-            fetch('/api/servicemap')
-                .then(res => res.json())
-                .then(data => {
-                    serviceMapData = data;
-                    renderServiceMap('service-map-mini', 370);
-                })
-                .catch(err => console.error('Failed to fetch service map:', err));
-        }
-
-        function updateProcesses() {
-            fetch('/api/processes')
-                .then(res => res.json())
-                .then(data => {
-                    const tbody = document.getElementById('processes-body');
-                    if (data && data.length > 0) {
-                        tbody.innerHTML = data.map(p => {
-                            const cpuBar = `<div style="background:#2f3336;border-radius:4px;height:16px;width:100%;position:relative;">
-                                <div style="background:linear-gradient(90deg,#1d9bf0,#1d4ed8);height:100%;border-radius:4px;width:${Math.min(p.cpu_pct, 100)}%;"></div>
-                                <span style="position:absolute;left:8px;top:0;font-size:11px;line-height:16px;">${p.cpu_pct.toFixed(1)}%</span>
-                            </div>`;
-                            const stateColor = p.state === 'R' ? '#00ba7c' : (p.state === 'S' ? '#71767b' : '#ffd400');
-                            return `<tr>
-                                <td class="pid">${p.pid}</td>
-                                <td class="process">${escapeHtml(p.name)}</td>
-                                <td>${cpuBar}</td>
-                                <td>${p.mem_mb.toFixed(1)} MB</td>
-                                <td><span style="color:${stateColor}">${p.state}</span></td>
-                            </tr>`;
-                        }).join('');
-                    } else {
-                        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No process data</td></tr>';
-                    }
-                })
-                .catch(err => console.error('Failed to fetch processes:', err));
-        }
-
-        // Initial load
-        updateSystemMetrics();
-        updateStats();
-        updateServiceMap();
-        updateProcesses();
-
-        // Refresh intervals
-        setInterval(updateSystemMetrics, 2000);
-        setInterval(updateStats, 2000);
-        setInterval(updateServiceMap, 10000);
-        setInterval(updateProcesses, 3000);
-
-        // Handle window resize
-        window.addEventListener('resize', () => {
-            renderServiceMap('service-map-mini', 370);
-            if (document.getElementById('services').classList.contains('active')) {
-                renderServiceMap('service-map', 600);
-            }
-        });
-
-        // Flame graph
-        let flameChart = null;
-
-        function updateFlameGraph() {
-            fetch('/api/flamegraph')
-                .then(res => {
-                    if (!res.ok) throw new Error('Profiler not available');
-                    return res.json();
-                })
-                .then(data => {
-                    if (!data || !data.children || data.children.length === 0) {
-                        document.getElementById('flamegraph').innerHTML =
-                            '<div class="empty-state">Collecting samples... wait a few seconds and refresh</div>';
+                    if (!incidents || incidents.length === 0) {
+                        list.innerHTML = '<div class="empty-state">No incidents. All quiet!</div>';
                         return;
                     }
 
-                    const container = document.getElementById('flamegraph');
-                    container.innerHTML = '';
+                    list.innerHTML = incidents.map(inc => {
+                        const time = new Date(inc.created_at).toLocaleString();
+                        const relTime = formatRelativeTime(new Date(inc.created_at));
+                        const sourceLabel = inc.source ? `from ${inc.source}` : '';
 
-                    flameChart = flamegraph()
-                        .width(container.clientWidth)
-                        .cellHeight(20)
-                        .transitionDuration(500)
-                        .minFrameSize(5)
-                        .selfValue(false)
-                        .setColorMapper(function(d, originalColor) {
-                            // Color by stack type
-                            if (d.data.name.startsWith('0x')) {
-                                return '#f4212e';  // Addresses (unresolved) - red
-                            }
-                            return '#1d9bf0';  // Process names - blue
-                        });
-
-                    d3.select('#flamegraph')
-                        .datum(data)
-                        .call(flameChart);
+                        return `<div class="incident-item" onclick="showIncidentDetail('${inc.id}')">
+                            <div class="incident-severity ${inc.severity || 'medium'}"></div>
+                            <div class="incident-info">
+                                <div class="incident-header">
+                                    <span class="incident-title">${escapeHtml(inc.title)}</span>
+                                    <span class="incident-status ${inc.status}">${inc.status}</span>
+                                </div>
+                                <div class="incident-meta">
+                                    <span class="incident-time" title="${time}">${relTime}</span>
+                                    ${inc.service ? `<span class="incident-source">${escapeHtml(inc.service)}</span>` : ''}
+                                    ${sourceLabel ? `<span class="incident-source">${sourceLabel}</span>` : ''}
+                                    ${inc.assigned_to ? `<span style="color:#00ba7c">@${escapeHtml(inc.assigned_to)}</span>` : ''}
+                                </div>
+                            </div>
+                            <div class="incident-actions" onclick="event.stopPropagation()">
+                                ${inc.status === 'triggered' ? `<button class="btn" onclick="ackIncident('${inc.id}')" title="Acknowledge">&#10003;</button>` : ''}
+                                ${inc.status !== 'resolved' ? `<button class="btn" onclick="resolveIncident('${inc.id}')" title="Resolve">&#10004;</button>` : ''}
+                            </div>
+                        </div>`;
+                    }).join('');
                 })
-                .catch(err => {
-                    document.getElementById('flamegraph').innerHTML =
-                        '<div class="empty-state">Profiler not available: ' + err.message + '</div>';
+                .catch(() => {
+                    const list = document.getElementById('incidents-list');
+                    if (list) list.innerHTML = '<div class="empty-state">Incidents not available</div>';
                 });
         }
 
-        function clearFlameGraph() {
-            fetch('/api/flamegraph/clear', { method: 'POST' })
-                .then(res => res.json())
-                .then(() => {
-                    document.getElementById('flamegraph').innerHTML =
-                        '<div class="empty-state">Samples cleared. Collecting new data...</div>';
-                })
-                .catch(err => console.error('Failed to clear:', err));
+        function showNewIncidentModal() {
+            const modal = document.createElement('div');
+            modal.className = 'modal-overlay';
+            modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+            modal.innerHTML = `
+                <div class="modal">
+                    <div class="modal-header">
+                        <span class="modal-title">Create Incident</span>
+                        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="form-group">
+                            <label class="form-label">Title *</label>
+                            <input type="text" id="inc-title" class="form-input" placeholder="Brief description of the incident">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Severity</label>
+                                <select id="inc-severity" class="form-select">
+                                    <option value="critical">Critical (P1)</option>
+                                    <option value="high">High (P2)</option>
+                                    <option value="medium" selected>Medium (P3)</option>
+                                    <option value="low">Low (P4)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Service</label>
+                                <input type="text" id="inc-service" class="form-input" placeholder="affected-service">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Description</label>
+                            <textarea id="inc-description" class="form-input" rows="3" placeholder="Details about the incident..."></textarea>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-primary" onclick="submitIncident()">Create Incident</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(modal);
         }
 
-        document.getElementById('refresh-flame').addEventListener('click', updateFlameGraph);
-        document.getElementById('clear-flame').addEventListener('click', clearFlameGraph);
-
-        // Load flame graph when switching to profiler tab
-        document.querySelectorAll('.tab').forEach(tab => {
-            if (tab.dataset.tab === 'profiler') {
-                tab.addEventListener('click', () => {
-                    setTimeout(updateFlameGraph, 100);
-                });
+        function submitIncident() {
+            const title = document.getElementById('inc-title').value.trim();
+            if (!title) {
+                alert('Title is required');
+                return;
             }
-        });
+
+            const incident = {
+                title: title,
+                severity: document.getElementById('inc-severity').value,
+                service: document.getElementById('inc-service').value.trim(),
+                description: document.getElementById('inc-description').value.trim(),
+                source: 'manual'
+            };
+
+            fetch('/api/incidents', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(incident)
+            })
+            .then(r => {
+                if (!r.ok) throw new Error('Failed to create incident');
+                return r.json();
+            })
+            .then(() => {
+                document.querySelector('.modal-overlay').remove();
+                loadIncidents();
+            })
+            .catch(err => alert('Error: ' + err.message));
+        }
+
+        function ackIncident(id) {
+            const user = prompt('Your name:', 'operator');
+            if (!user) return;
+
+            fetch(`/api/incidents/${id}/ack`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user: user })
+            })
+            .then(() => loadIncidents())
+            .catch(err => alert('Error: ' + err.message));
+        }
+
+        function resolveIncident(id) {
+            const resolution = prompt('Resolution notes (optional):');
+            const user = prompt('Your name:', 'operator');
+            if (!user) return;
+
+            fetch(`/api/incidents/${id}/resolve`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user: user, resolution: resolution || '' })
+            })
+            .then(() => loadIncidents())
+            .catch(err => alert('Error: ' + err.message));
+        }
+
+        function showIncidentDetail(id) {
+            fetch(`/api/incidents/${id}`)
+                .then(r => r.json())
+                .then(inc => {
+                    const severityColor = {
+                        critical: '#f4212e',
+                        high: '#ff6b35',
+                        medium: '#ffd400',
+                        low: '#1d9bf0'
+                    }[inc.severity] || '#71767b';
+
+                    const timeline = (inc.timeline || []).map(e => `
+                        <div style="display:flex;gap:0.5rem;padding:0.5rem 0;border-bottom:1px solid #2f3336;">
+                            <div style="width:60px;flex-shrink:0;font-size:0.7rem;color:#71767b;">
+                                ${new Date(e.timestamp).toLocaleTimeString()}
+                            </div>
+                            <div style="flex:1;">
+                                <span style="font-weight:500;color:#e7e9ea;">${escapeHtml(e.type)}</span>
+                                ${e.user ? `<span style="color:#71767b;"> by ${escapeHtml(e.user)}</span>` : ''}
+                                <div style="font-size:0.8rem;color:#8b949e;margin-top:0.2rem;">${escapeHtml(e.message)}</div>
+                            </div>
+                        </div>
+                    `).join('');
+
+                    const modal = document.createElement('div');
+                    modal.className = 'modal-overlay';
+                    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+                    modal.innerHTML = `
+                        <div class="modal" style="max-width:600px">
+                            <div class="modal-header">
+                                <span class="modal-title">Incident Details</span>
+                                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+                            </div>
+                            <div style="padding:1rem">
+                                <div style="display:flex;gap:1rem;align-items:flex-start;margin-bottom:1rem;">
+                                    <div class="incident-severity ${inc.severity}" style="height:60px;width:6px;"></div>
+                                    <div style="flex:1;">
+                                        <div style="font-size:1.2rem;font-weight:600;margin-bottom:0.3rem;">${escapeHtml(inc.title)}</div>
+                                        <div style="display:flex;gap:0.5rem;align-items:center;">
+                                            <span class="incident-status ${inc.status}">${inc.status}</span>
+                                            <span style="color:${severityColor};font-weight:600;text-transform:uppercase;font-size:0.7rem;">${inc.severity}</span>
+                                            ${inc.service ? `<span style="color:#71767b;">| ${escapeHtml(inc.service)}</span>` : ''}
+                                        </div>
+                                    </div>
+                                    <div style="text-align:right;">
+                                        ${inc.status === 'triggered' ? `<button class="btn btn-primary" onclick="ackIncident('${inc.id}');this.closest('.modal-overlay').remove();">Acknowledge</button>` : ''}
+                                        ${inc.status !== 'resolved' ? `<button class="btn" onclick="resolveIncident('${inc.id}');this.closest('.modal-overlay').remove();" style="margin-left:0.3rem;">Resolve</button>` : ''}
+                                    </div>
+                                </div>
+
+                                ${inc.description ? `
+                                <div style="padding:0.8rem;background:#1a1d21;border-radius:6px;margin-bottom:1rem;">
+                                    <div style="font-size:0.7rem;color:#71767b;margin-bottom:0.3rem;">Description</div>
+                                    <div style="font-size:0.9rem;">${escapeHtml(inc.description)}</div>
+                                </div>` : ''}
+
+                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem;">
+                                    <div class="stat-card" style="padding:0.6rem;">
+                                        <div style="font-size:0.65rem;color:#71767b;text-transform:uppercase;">Created</div>
+                                        <div style="font-size:0.85rem;">${new Date(inc.created_at).toLocaleString()}</div>
+                                    </div>
+                                    <div class="stat-card" style="padding:0.6rem;">
+                                        <div style="font-size:0.65rem;color:#71767b;text-transform:uppercase;">Assigned To</div>
+                                        <div style="font-size:0.85rem;">${inc.assigned_to || 'Unassigned'}</div>
+                                    </div>
+                                    ${inc.acked_at ? `
+                                    <div class="stat-card" style="padding:0.6rem;">
+                                        <div style="font-size:0.65rem;color:#71767b;text-transform:uppercase;">Acknowledged</div>
+                                        <div style="font-size:0.85rem;">${new Date(inc.acked_at).toLocaleString()} by ${inc.acked_by || 'unknown'}</div>
+                                    </div>` : ''}
+                                    ${inc.resolved_at ? `
+                                    <div class="stat-card" style="padding:0.6rem;">
+                                        <div style="font-size:0.65rem;color:#71767b;text-transform:uppercase;">Resolved</div>
+                                        <div style="font-size:0.85rem;">${new Date(inc.resolved_at).toLocaleString()} by ${inc.resolved_by || 'unknown'}</div>
+                                    </div>` : ''}
+                                </div>
+
+                                <div style="font-size:0.8rem;font-weight:600;margin-bottom:0.5rem;">Timeline</div>
+                                <div style="max-height:200px;overflow:auto;">
+                                    ${timeline || '<div style="color:#71767b;">No timeline events</div>'}
+                                </div>
+                            </div>
+                        </div>`;
+                    document.body.appendChild(modal);
+                })
+                .catch(err => alert('Error loading incident: ' + err.message));
+        }
+
+        // Initialize SLOs, Patterns, Containers, Deployments, and Incidents
+        setTimeout(loadSLOs, 600);
+        setInterval(loadSLOs, 10000);
+        setTimeout(loadPatterns, 700);
+        setInterval(loadPatterns, 15000);
+        setTimeout(loadContainers, 800);
+        setInterval(loadContainers, 10000);
+        setTimeout(loadDeployments, 900);
+        setInterval(loadDeployments, 15000);
+        setTimeout(loadIncidents, 1000);
+        setInterval(loadIncidents, 5000);
     </script>
 </body>
 </html>

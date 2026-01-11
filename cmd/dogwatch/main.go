@@ -7,11 +7,23 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"dogwatch/internal/aggregator"
+	"dogwatch/internal/containers"
+	"dogwatch/internal/custommetrics"
+	"dogwatch/internal/deploys"
+	"dogwatch/internal/dashboard"
+	"dogwatch/internal/incidents"
+	"dogwatch/internal/logs"
 	"dogwatch/internal/probe"
+	"dogwatch/internal/slo"
+	"dogwatch/internal/storage"
+	"dogwatch/internal/synthetics"
+	"dogwatch/internal/trace"
+	"dogwatch/internal/watch"
 	"dogwatch/internal/web"
 )
 
@@ -21,6 +33,7 @@ func main() {
 	interval := flag.Int("i", 5, "Stats refresh interval in seconds")
 	webPort := flag.Int("port", 9999, "Web UI port")
 	noWeb := flag.Bool("no-web", false, "Disable web UI")
+	dataDir := flag.String("data", "/var/lib/dogwatch", "Data directory for metrics storage")
 	flag.Parse()
 
 	if os.Geteuid() != 0 {
@@ -69,6 +82,133 @@ func main() {
 	// Create aggregator
 	agg := aggregator.New()
 
+	// Create storage for historical metrics
+	if err := os.MkdirAll(*dataDir, 0755); err != nil {
+		log.Printf("Warning: Could not create data directory: %v", err)
+	}
+	dbPath := filepath.Join(*dataDir, "metrics.db")
+	store, err := storage.New(dbPath)
+	if err != nil {
+		log.Printf("Warning: Could not create metrics storage: %v", err)
+		store = nil
+	} else {
+		defer store.Close()
+		fmt.Printf("Metrics storage: %s\n", dbPath)
+	}
+
+	// Create trace storage
+	traceDbPath := filepath.Join(*dataDir, "traces.db")
+	traceStore, err := trace.NewStore(traceDbPath)
+	if err != nil {
+		log.Printf("Warning: Could not create trace storage: %v", err)
+		traceStore = nil
+	} else {
+		defer traceStore.Close()
+		fmt.Printf("Trace storage: %s\n", traceDbPath)
+		fmt.Println("OTLP trace receiver: http://localhost:9999/v1/traces")
+	}
+
+	// Create watch storage
+	watchDbPath := filepath.Join(*dataDir, "watches.db")
+	watchStore, err := watch.NewStore(watchDbPath)
+	if err != nil {
+		log.Printf("Warning: Could not create watch storage: %v", err)
+		watchStore = nil
+	} else {
+		defer watchStore.Close()
+		fmt.Printf("Watch storage: %s\n", watchDbPath)
+	}
+
+	// Create dashboard storage
+	dashboardDbPath := filepath.Join(*dataDir, "dashboards.db")
+	dashboardStore, err := dashboard.NewStore(dashboardDbPath)
+	if err != nil {
+		log.Printf("Warning: Could not create dashboard storage: %v", err)
+		dashboardStore = nil
+	} else {
+		defer dashboardStore.Close()
+		fmt.Printf("Dashboard storage: %s\n", dashboardDbPath)
+	}
+
+	// Create log storage
+	logDbPath := filepath.Join(*dataDir, "logs.db")
+	logStore, err := logs.NewStore(logDbPath)
+	if err != nil {
+		log.Printf("Warning: Could not create log storage: %v", err)
+		logStore = nil
+	} else {
+		defer logStore.Close()
+		fmt.Printf("Log storage: %s\n", logDbPath)
+		fmt.Println("Log ingestion: http://localhost:9999/api/logs/ingest")
+	}
+
+	// Create custom metrics storage
+	customMetricsDbPath := filepath.Join(*dataDir, "custom_metrics.db")
+	customMetricsStore, err := custommetrics.NewStore(customMetricsDbPath)
+	if err != nil {
+		log.Printf("Warning: Could not create custom metrics storage: %v", err)
+		customMetricsStore = nil
+	} else {
+		defer customMetricsStore.Close()
+		fmt.Printf("Custom metrics storage: %s\n", customMetricsDbPath)
+	}
+
+	// Start StatsD receiver
+	var statsdReceiver *custommetrics.StatsDReceiver
+	if customMetricsStore != nil {
+		statsdReceiver = custommetrics.NewStatsDReceiver(customMetricsStore, 8125)
+		if err := statsdReceiver.Start(); err != nil {
+			log.Printf("Warning: Could not start StatsD receiver: %v", err)
+			statsdReceiver = nil
+		} else {
+			defer statsdReceiver.Stop()
+		}
+	}
+
+	// Create synthetics storage
+	syntheticsDbPath := filepath.Join(*dataDir, "synthetics.db")
+	syntheticsStore, err := synthetics.NewStore(syntheticsDbPath)
+	if err != nil {
+		log.Printf("Warning: Could not create synthetics storage: %v", err)
+		syntheticsStore = nil
+	} else {
+		defer syntheticsStore.Close()
+		fmt.Printf("Synthetics storage: %s\n", syntheticsDbPath)
+	}
+
+	// Create SLO storage
+	sloDbPath := filepath.Join(*dataDir, "slos.db")
+	sloStore, err := slo.NewStore(sloDbPath)
+	if err != nil {
+		log.Printf("Warning: Could not create SLO storage: %v", err)
+		sloStore = nil
+	} else {
+		defer sloStore.Close()
+		fmt.Printf("SLO storage: %s\n", sloDbPath)
+	}
+
+	// Create deployment storage
+	deployDbPath := filepath.Join(*dataDir, "deploys.db")
+	deployStore, err := deploys.NewStore(deployDbPath)
+	if err != nil {
+		log.Printf("Warning: Could not create deployment storage: %v", err)
+		deployStore = nil
+	} else {
+		defer deployStore.Close()
+		fmt.Printf("Deployment storage: %s\n", deployDbPath)
+	}
+
+	// Create incident storage (PagerDuty-like)
+	incidentDbPath := filepath.Join(*dataDir, "incidents.db")
+	incidentStore, err := incidents.NewStore(incidentDbPath)
+	if err != nil {
+		log.Printf("Warning: Could not create incident storage: %v", err)
+		incidentStore = nil
+	} else {
+		defer incidentStore.Close()
+		fmt.Printf("Incident storage: %s\n", incidentDbPath)
+	}
+
 	// Start web UI
 	var webServer *web.Server
 	if !*noWeb {
@@ -76,6 +216,57 @@ func main() {
 		if profileProbe != nil {
 			webServer.SetProfiler(profileProbe)
 		}
+		if store != nil {
+			webServer.SetStore(store)
+		}
+		if traceStore != nil {
+			webServer.SetTraceStore(traceStore)
+		}
+		if watchStore != nil {
+			webServer.SetWatchStore(watchStore)
+		}
+		if dashboardStore != nil {
+			webServer.SetDashboardStore(dashboardStore)
+		}
+		if logStore != nil {
+			webServer.SetLogStore(logStore)
+		}
+		if customMetricsStore != nil {
+			webServer.SetCustomMetricsStore(customMetricsStore)
+		}
+		if syntheticsStore != nil {
+			// Create notifier for synthetics alerts (reuses watch infrastructure)
+			notifier := watch.NewNotifier()
+			webServer.SetSyntheticsStore(syntheticsStore, notifier)
+			fmt.Println("Synthetics checks: http://localhost:9999/api/synthetics/checks")
+		}
+		if sloStore != nil {
+			webServer.SetSLOStore(sloStore)
+			fmt.Println("SLOs: http://localhost:9999/api/slos")
+		}
+
+		// Start container monitoring
+		containerCollector := containers.NewCollector()
+		if err := containerCollector.Start(); err != nil {
+			log.Printf("Container monitoring disabled: %v", err)
+		} else {
+			webServer.SetContainerCollector(containerCollector)
+			fmt.Println("Containers: http://localhost:9999/api/containers")
+		}
+
+		// Set deployment store
+		if deployStore != nil {
+			webServer.SetDeployStore(deployStore)
+			fmt.Println("Deployments: http://localhost:9999/api/deploys")
+		}
+
+		// Set incident store (PagerDuty-like paging)
+		if incidentStore != nil {
+			webServer.SetIncidentStore(incidentStore)
+			fmt.Println("Incidents: http://localhost:9999/api/incidents")
+			fmt.Println("On-call: http://localhost:9999/api/oncall")
+		}
+
 		go func() {
 			fmt.Printf("Web UI available at http://localhost:%d\n", *webPort)
 			if err := webServer.Start(); err != nil && err != http.ErrServerClosed {
@@ -113,11 +304,42 @@ func main() {
 	}
 
 	// SSL probe is disabled for MVP - see comments above
-	_ = sslProbe // silence unused variable warning
+	_ = sslProbe         // silence unused variable warning
+	_ = statsdReceiver   // StatsD receiver runs in background
 
 	// Ticker for stats display
 	statsTicker := time.NewTicker(time.Duration(*interval) * time.Second)
 	defer statsTicker.Stop()
+
+	// Start metrics recording to storage (every 10 seconds)
+	if store != nil && webServer != nil {
+		go func() {
+			recordTicker := time.NewTicker(10 * time.Second)
+			defer recordTicker.Stop()
+			for range recordTicker.C {
+				// Record system metrics
+				sysMetrics := webServer.GetMetricsCollector().Collect()
+				store.RecordSystemMetrics(
+					sysMetrics.CPUUsagePercent,
+					sysMetrics.MemUsagePercent,
+					sysMetrics.DiskReadPerSec,
+					sysMetrics.DiskWritePerSec,
+					sysMetrics.NetRxPerSec,
+					sysMetrics.NetTxPerSec,
+					sysMetrics.Load1,
+				)
+
+				// Record connection metrics
+				stats := agg.GetStats()
+				store.RecordConnectionMetrics(
+					stats.TotalConnections,
+					stats.TotalRequests,
+					stats.TotalErrors,
+				)
+			}
+		}()
+		fmt.Println("Historical metrics recording: enabled (10s intervals)")
+	}
 
 	// Event loop
 	for {
@@ -159,6 +381,11 @@ func main() {
 			fmt.Print(agg.Summary())
 			fmt.Println("Shutting down...")
 			if webServer != nil {
+				webServer.StopContainerCollector()
+				webServer.StopSLOCalculator()
+				webServer.StopPager()
+				webServer.StopSyntheticsRunner()
+				webServer.StopWatchEngine()
 				webServer.Stop()
 			}
 			return

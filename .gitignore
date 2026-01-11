@@ -11,3 +11,4 @@ internal/probe/*.o
 
 # OS
 .DS_Store
+data/
