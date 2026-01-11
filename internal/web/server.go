@@ -21,6 +21,7 @@ import (
 	"dogwatch/internal/custommetrics"
 	"dogwatch/internal/deploys"
 	"dogwatch/internal/dashboard"
+	"dogwatch/internal/federation"
 	"dogwatch/internal/incidents"
 	"dogwatch/internal/logs"
 	"dogwatch/internal/metrics"
@@ -63,6 +64,7 @@ type Server struct {
 	deployStore         *deploys.Store
 	incidentStore       *incidents.Store
 	pager               *incidents.Pager
+	cluster             *federation.Cluster
 	profiler            FlameGraphProvider
 	server              *http.Server
 	mu                  sync.RWMutex
@@ -159,6 +161,14 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	mux.HandleFunc("/api/oncall/current", s.handleCurrentOnCall)
 	mux.HandleFunc("/api/escalation", s.handleEscalationPolicies)
 	mux.HandleFunc("/api/escalation/", s.handleEscalationPolicy)
+
+	// Federation / Cluster endpoints
+	mux.HandleFunc("/api/cluster", s.handleCluster)
+	mux.HandleFunc("/api/cluster/nodes", s.handleClusterNodes)
+	mux.HandleFunc("/api/cluster/join", s.handleClusterJoin)
+	mux.HandleFunc("/api/cluster/incidents", s.handleClusterIncidents)
+	mux.HandleFunc("/api/cluster/metrics", s.handleClusterMetrics)
+	mux.HandleFunc("/api/cluster/state", s.handleClusterState)
 
 	s.server = &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
@@ -300,6 +310,54 @@ func (s *Server) StopPager() {
 	if s.pager != nil {
 		s.pager.Stop()
 	}
+}
+
+// SetCluster sets the federation cluster
+func (s *Server) SetCluster(c *federation.Cluster) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cluster = c
+
+	// Set up callbacks for incident synchronization
+	if s.cluster != nil {
+		s.cluster.GetState().SetOnIncidentChange(func(inc *federation.IncidentEvent) {
+			// Sync federated incidents to local store if we have one
+			if s.incidentStore != nil {
+				s.syncFederatedIncident(inc)
+			}
+		})
+	}
+}
+
+// GetCluster returns the federation cluster
+func (s *Server) GetCluster() *federation.Cluster {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cluster
+}
+
+// StopCluster stops the federation cluster
+func (s *Server) StopCluster() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cluster != nil {
+		s.cluster.Stop()
+	}
+}
+
+// syncFederatedIncident syncs a federated incident to the local store
+func (s *Server) syncFederatedIncident(inc *federation.IncidentEvent) {
+	// Only sync if we're not the originating node
+	if s.cluster == nil {
+		return
+	}
+	localNode := s.cluster.LocalNode()
+	if localNode != nil && inc.NodeID == localNode.ID {
+		return // We originated this, skip
+	}
+
+	// Log federated incident for visibility
+	// In a real implementation, we might store these separately or merge
 }
 
 // GetMetricsCollector returns the metrics collector for external recording
@@ -2951,4 +3009,176 @@ func (s *Server) handleEscalationPolicy(w http.ResponseWriter, r *http.Request) 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// ============================================================================
+// Federation / Cluster Handlers
+// ============================================================================
+
+// ClusterInfoResponse is the response for /api/cluster
+type ClusterInfoResponse struct {
+	Enabled     bool                       `json:"enabled"`
+	NodeID      string                     `json:"node_id,omitempty"`
+	NodeCount   int                        `json:"node_count"`
+	GossipAddr  string                     `json:"gossip_addr,omitempty"`
+	LocalNode   *federation.NodeStatus     `json:"local_node,omitempty"`
+}
+
+func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	cluster := s.cluster
+	s.mu.RUnlock()
+
+	resp := ClusterInfoResponse{
+		Enabled: cluster != nil,
+	}
+
+	if cluster != nil {
+		resp.NodeCount = cluster.NumMembers()
+		resp.GossipAddr = cluster.GetLocalAddr()
+		resp.LocalNode = cluster.LocalNode()
+		if resp.LocalNode != nil {
+			resp.NodeID = resp.LocalNode.ID
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) handleClusterNodes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	cluster := s.cluster
+	s.mu.RUnlock()
+
+	if cluster == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]interface{}{})
+		return
+	}
+
+	nodes := cluster.Members()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(nodes)
+}
+
+func (s *Server) handleClusterJoin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	cluster := s.cluster
+	s.mu.RUnlock()
+
+	if cluster == nil {
+		http.Error(w, "Cluster not enabled", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Addresses []string `json:"addresses"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if len(req.Addresses) == 0 {
+		http.Error(w, "No addresses provided", http.StatusBadRequest)
+		return
+	}
+
+	n, err := cluster.Join(req.Addresses)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to join: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"joined": n,
+		"total":  cluster.NumMembers(),
+	})
+}
+
+func (s *Server) handleClusterIncidents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	cluster := s.cluster
+	s.mu.RUnlock()
+
+	if cluster == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]interface{}{})
+		return
+	}
+
+	incidents := cluster.GetState().GetAllIncidents()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(incidents)
+}
+
+func (s *Server) handleClusterMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	cluster := s.cluster
+	s.mu.RUnlock()
+
+	if cluster == nil {
+		http.Error(w, "Cluster not enabled", http.StatusBadRequest)
+		return
+	}
+
+	// Return aggregated cluster metrics
+	metrics := cluster.GetState().GetClusterMetrics()
+	nodeStates := cluster.GetState().GetAllNodeStates()
+
+	resp := map[string]interface{}{
+		"aggregate":   metrics,
+		"node_states": nodeStates,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) handleClusterState(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	cluster := s.cluster
+	s.mu.RUnlock()
+
+	if cluster == nil {
+		http.Error(w, "Cluster not enabled", http.StatusBadRequest)
+		return
+	}
+
+	state := cluster.GetState().GetFullState()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(state)
 }

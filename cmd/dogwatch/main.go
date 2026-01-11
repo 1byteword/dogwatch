@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"dogwatch/internal/custommetrics"
 	"dogwatch/internal/deploys"
 	"dogwatch/internal/dashboard"
+	"dogwatch/internal/federation"
 	"dogwatch/internal/incidents"
 	"dogwatch/internal/logs"
 	"dogwatch/internal/probe"
@@ -34,6 +36,16 @@ func main() {
 	webPort := flag.Int("port", 9999, "Web UI port")
 	noWeb := flag.Bool("no-web", false, "Disable web UI")
 	dataDir := flag.String("data", "/var/lib/dogwatch", "Data directory for metrics storage")
+
+	// Federation flags
+	clusterEnabled := flag.Bool("cluster", false, "Enable multi-node federation")
+	clusterName := flag.String("cluster-name", "", "Node name in cluster (default: hostname)")
+	clusterBind := flag.String("cluster-bind", "0.0.0.0", "Bind address for gossip protocol")
+	clusterPort := flag.Int("cluster-port", 7946, "Port for gossip protocol")
+	clusterSeeds := flag.String("cluster-seeds", "", "Comma-separated list of seed node addresses (host:port)")
+	clusterAdvertise := flag.String("cluster-advertise", "", "Address to advertise to other nodes")
+	clusterKey := flag.String("cluster-key", "", "Encryption key for gossip (16/24/32 bytes for AES)")
+
 	flag.Parse()
 
 	if os.Geteuid() != 0 {
@@ -209,6 +221,44 @@ func main() {
 		fmt.Printf("Incident storage: %s\n", incidentDbPath)
 	}
 
+	// Initialize federation cluster if enabled
+	var cluster *federation.Cluster
+	if *clusterEnabled {
+		clusterCfg := federation.DefaultConfig()
+		clusterCfg.HTTPPort = *webPort
+
+		if *clusterName != "" {
+			clusterCfg.NodeName = *clusterName
+		}
+		clusterCfg.BindAddr = *clusterBind
+		clusterCfg.BindPort = *clusterPort
+
+		if *clusterAdvertise != "" {
+			parts := strings.Split(*clusterAdvertise, ":")
+			clusterCfg.AdvertiseAddr = parts[0]
+			if len(parts) > 1 {
+				fmt.Sscanf(parts[1], "%d", &clusterCfg.AdvertisePort)
+			}
+		}
+
+		if *clusterSeeds != "" {
+			clusterCfg.Seeds = strings.Split(*clusterSeeds, ",")
+		}
+
+		if *clusterKey != "" {
+			clusterCfg.EncryptionKey = []byte(*clusterKey)
+		}
+
+		var clusterErr error
+		cluster, clusterErr = federation.NewCluster(clusterCfg)
+		if clusterErr != nil {
+			log.Printf("Warning: Could not create cluster: %v", clusterErr)
+			cluster = nil
+		} else {
+			fmt.Printf("Federation cluster: %s (gossip port %d)\n", clusterCfg.NodeName, clusterCfg.BindPort)
+		}
+	}
+
 	// Start web UI
 	var webServer *web.Server
 	if !*noWeb {
@@ -265,6 +315,17 @@ func main() {
 			webServer.SetIncidentStore(incidentStore)
 			fmt.Println("Incidents: http://localhost:9999/api/incidents")
 			fmt.Println("On-call: http://localhost:9999/api/oncall")
+		}
+
+		// Set up federation cluster
+		if cluster != nil {
+			webServer.SetCluster(cluster)
+			if err := cluster.Start(); err != nil {
+				log.Printf("Warning: Could not start cluster: %v", err)
+			} else {
+				fmt.Printf("Cluster: http://localhost:%d/api/cluster\n", *webPort)
+				fmt.Printf("Cluster nodes: http://localhost:%d/api/cluster/nodes\n", *webPort)
+			}
 		}
 
 		go func() {
@@ -381,6 +442,7 @@ func main() {
 			fmt.Print(agg.Summary())
 			fmt.Println("Shutting down...")
 			if webServer != nil {
+				webServer.StopCluster()
 				webServer.StopContainerCollector()
 				webServer.StopSLOCalculator()
 				webServer.StopPager()

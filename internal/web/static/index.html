@@ -341,6 +341,25 @@
         .incident-status.resolved { background: #1a3d2e; color: #00ba7c; }
         @keyframes pulse-status { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
         .incident-meta { font-size: 0.7rem; color: #71767b; display: flex; gap: 0.8rem; }
+        /* Cluster/Federation styles */
+        .cluster-summary { display: flex; gap: 1rem; padding: 0.5rem 0.8rem; border-bottom: 1px solid #2f3336; font-size: 0.7rem; align-items: center; }
+        .cluster-stat { display: flex; flex-direction: column; }
+        .cluster-stat-value { font-size: 1rem; font-weight: 700; color: #e7e9ea; }
+        .cluster-stat-label { color: #71767b; font-size: 0.6rem; text-transform: uppercase; }
+        .cluster-node-item { padding: 0.6rem 0.8rem; border-bottom: 1px solid #2f3336; display: flex; align-items: center; gap: 0.8rem; }
+        .cluster-node-item:hover { background: rgba(255,255,255,0.02); }
+        .cluster-node-status { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+        .cluster-node-status.alive { background: #00ba7c; box-shadow: 0 0 6px #00ba7c; }
+        .cluster-node-status.suspect { background: #ffd400; animation: pulse-suspect 1.5s infinite; }
+        .cluster-node-status.dead { background: #f4212e; }
+        @keyframes pulse-suspect { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        .cluster-node-info { flex: 1; min-width: 0; }
+        .cluster-node-name { font-weight: 600; color: #e7e9ea; display: flex; align-items: center; gap: 0.4rem; }
+        .cluster-node-name .local-badge { font-size: 0.55rem; padding: 0.1rem 0.3rem; background: #1d4ed8; color: #fff; border-radius: 3px; }
+        .cluster-node-meta { font-size: 0.7rem; color: #71767b; display: flex; gap: 0.8rem; margin-top: 0.2rem; }
+        .cluster-node-metrics { display: flex; gap: 0.6rem; font-size: 0.7rem; color: #888; }
+        .cluster-node-metric { display: flex; flex-direction: column; align-items: center; }
+        .cluster-node-metric-value { font-weight: 600; color: #e7e9ea; }
         .incident-time { color: #8b949e; }
         .incident-source { color: #71767b; }
         .incident-actions { display: flex; gap: 0.3rem; }
@@ -416,6 +435,7 @@
             { id: 'containers', x: 0, y: 30, w: 12, h: 4, minW: 6, minH: 3 },
             { id: 'deployments', x: 0, y: 34, w: 6, h: 4, minW: 4, minH: 3 },
             { id: 'incidents', x: 6, y: 34, w: 6, h: 4, minW: 4, minH: 3 },
+            { id: 'cluster', x: 0, y: 38, w: 12, h: 4, minW: 6, minH: 3 },
         ];
 
         function widgetCPU() {
@@ -654,6 +674,34 @@
                 </div>`;
         }
 
+        function widgetCluster() {
+            return `<div class="widget-header">
+                    <span class="widget-title">Federation Cluster</span>
+                    <div style="display:flex;gap:0.3rem;">
+                        <button class="btn" onclick="showJoinClusterModal()">Join Node</button>
+                        <button class="btn" onclick="loadCluster()">Refresh</button>
+                    </div>
+                </div>
+                <div class="cluster-summary" id="cluster-summary">
+                    <div class="cluster-stat">
+                        <span class="cluster-stat-value" id="cluster-enabled">-</span>
+                        <span class="cluster-stat-label">Status</span>
+                    </div>
+                    <div class="cluster-stat">
+                        <span class="cluster-stat-value" id="cluster-nodes">0</span>
+                        <span class="cluster-stat-label">Nodes</span>
+                    </div>
+                    <div class="cluster-stat">
+                        <span class="cluster-stat-value" id="cluster-incidents">0</span>
+                        <span class="cluster-stat-label">Active Incidents</span>
+                    </div>
+                    <div id="cluster-local" style="margin-left:auto;font-size:0.75rem;color:#888;"></div>
+                </div>
+                <div class="widget-body no-pad" id="cluster-nodes-list" style="overflow:auto;">
+                    <div class="empty-state">Federation not enabled. Start with --cluster flag.</div>
+                </div>`;
+        }
+
         // Initialize GridStack
         const grid = GridStack.init({
             column: 12,
@@ -703,6 +751,7 @@
                 containers: widgetContainers,
                 deployments: widgetDeployments,
                 incidents: widgetIncidents,
+                cluster: widgetCluster,
                 cpuchart: () => widgetChart('CPU History', 'cpu-chart'),
                 memchart: () => widgetChart('Memory History', 'mem-chart'),
                 endpoints: widgetEndpoints,
@@ -2696,6 +2745,138 @@
         setInterval(loadDeployments, 15000);
         setTimeout(loadIncidents, 1000);
         setInterval(loadIncidents, 5000);
+
+        // ============ Cluster/Federation Functions ============
+        function loadCluster() {
+            fetch('/api/cluster')
+                .then(r => r.json())
+                .then(info => {
+                    const enabledEl = document.getElementById('cluster-enabled');
+                    const nodesCountEl = document.getElementById('cluster-nodes');
+                    const localEl = document.getElementById('cluster-local');
+                    const nodesListEl = document.getElementById('cluster-nodes-list');
+
+                    if (!enabledEl) return;
+
+                    if (!info.enabled) {
+                        enabledEl.textContent = 'Disabled';
+                        enabledEl.style.color = '#71767b';
+                        nodesCountEl.textContent = '-';
+                        localEl.textContent = '';
+                        nodesListEl.innerHTML = '<div class="empty-state">Federation not enabled. Start with --cluster flag.</div>';
+                        return;
+                    }
+
+                    enabledEl.textContent = 'Active';
+                    enabledEl.style.color = '#00ba7c';
+                    nodesCountEl.textContent = info.node_count;
+                    nodesCountEl.style.color = info.node_count > 1 ? '#00ba7c' : '#e7e9ea';
+
+                    if (info.local_node) {
+                        localEl.textContent = `This node: ${info.local_node.id} (${info.gossip_addr})`;
+                    }
+
+                    // Load node list
+                    return fetch('/api/cluster/nodes');
+                })
+                .then(r => r ? r.json() : null)
+                .then(nodes => {
+                    if (!nodes) return;
+
+                    const nodesListEl = document.getElementById('cluster-nodes-list');
+                    if (!nodesListEl) return;
+
+                    if (!nodes || nodes.length === 0) {
+                        nodesListEl.innerHTML = '<div class="empty-state">No nodes in cluster</div>';
+                        return;
+                    }
+
+                    // Get local node ID for comparison
+                    let localNodeId = '';
+                    fetch('/api/cluster').then(r => r.json()).then(info => {
+                        localNodeId = info.node_id || '';
+                    });
+
+                    nodesListEl.innerHTML = nodes.map(node => {
+                        const isLocal = node.id === localNodeId || (node.hostname && node.hostname === location.hostname);
+                        const stateClass = (node.state || 'alive').toLowerCase();
+                        const uptime = node.started_at ? formatUptime(new Date(node.started_at)) : '-';
+
+                        return `<div class="cluster-node-item">
+                            <div class="cluster-node-status ${stateClass}"></div>
+                            <div class="cluster-node-info">
+                                <div class="cluster-node-name">
+                                    ${node.id || node.hostname || 'unknown'}
+                                    ${isLocal ? '<span class="local-badge">LOCAL</span>' : ''}
+                                </div>
+                                <div class="cluster-node-meta">
+                                    <span>${node.address || '-'}</span>
+                                    <span>v${node.version || '?'}</span>
+                                    <span>Up ${uptime}</span>
+                                </div>
+                            </div>
+                            <div class="cluster-node-metrics">
+                                <div class="cluster-node-metric">
+                                    <span class="cluster-node-metric-value">${node.cpu_percent ? node.cpu_percent.toFixed(1) + '%' : '-'}</span>
+                                    <span>CPU</span>
+                                </div>
+                                <div class="cluster-node-metric">
+                                    <span class="cluster-node-metric-value">${node.mem_percent ? node.mem_percent.toFixed(1) + '%' : '-'}</span>
+                                    <span>Mem</span>
+                                </div>
+                                <div class="cluster-node-metric">
+                                    <span class="cluster-node-metric-value">${node.active_incidents || 0}</span>
+                                    <span>Inc</span>
+                                </div>
+                            </div>
+                        </div>`;
+                    }).join('');
+
+                    // Update cluster incidents count
+                    const totalIncidents = nodes.reduce((sum, n) => sum + (n.active_incidents || 0), 0);
+                    const incEl = document.getElementById('cluster-incidents');
+                    if (incEl) {
+                        incEl.textContent = totalIncidents;
+                        incEl.style.color = totalIncidents > 0 ? '#f4212e' : '#e7e9ea';
+                    }
+                })
+                .catch(err => console.error('Error loading cluster:', err));
+        }
+
+        function formatUptime(startTime) {
+            const now = new Date();
+            const diff = now - startTime;
+            const days = Math.floor(diff / (24 * 60 * 60 * 1000));
+            const hours = Math.floor((diff % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+            const mins = Math.floor((diff % (60 * 60 * 1000)) / (60 * 1000));
+
+            if (days > 0) return `${days}d ${hours}h`;
+            if (hours > 0) return `${hours}h ${mins}m`;
+            return `${mins}m`;
+        }
+
+        function showJoinClusterModal() {
+            const addresses = prompt('Enter seed node addresses (comma-separated, e.g., 192.168.1.10:7946,192.168.1.11:7946):');
+            if (!addresses) return;
+
+            fetch('/api/cluster/join', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ addresses: addresses.split(',').map(a => a.trim()) })
+            })
+            .then(r => {
+                if (!r.ok) return r.text().then(t => { throw new Error(t); });
+                return r.json();
+            })
+            .then(result => {
+                alert(`Joined ${result.joined} node(s). Total nodes: ${result.total}`);
+                loadCluster();
+            })
+            .catch(err => alert('Error joining cluster: ' + err.message));
+        }
+
+        setTimeout(loadCluster, 1100);
+        setInterval(loadCluster, 10000);
     </script>
 </body>
 </html>

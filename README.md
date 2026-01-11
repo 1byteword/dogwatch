@@ -55,6 +55,15 @@
 | **Persistent Layouts** | Save and restore dashboard configurations |
 | **Dark Theme** | Easy on the eyes, built for NOCs |
 
+### Federation
+| Feature | Description |
+|---------|-------------|
+| **Gossip-based Clustering** | P2P node discovery using HashiCorp memberlist |
+| **CRDT State Sync** | Conflict-free replicated data types for consistency |
+| **Edge-First Architecture** | Each node fully functional, share only aggregates |
+| **Cluster-wide Incidents** | Incidents broadcast and synchronized across nodes |
+| **Encrypted Gossip** | Optional AES-128/192/256 encryption for gossip traffic |
+
 ---
 
 ## Quick Start
@@ -333,7 +342,76 @@ dogwatch uses eBPF to hook into kernel functions with minimal overhead:
 | eBPF-native | Yes | Agent | No |
 | Incidents/Paging | Yes | Yes | Requires OnCall |
 | SLOs | Yes | Yes | Plugin |
+| P2P Federation | Yes | No (central) | No (central) |
 | Cost | Free | $$$$ | Free* |
+
+---
+
+## Multi-Node Federation
+
+dogwatch supports gossip-based P2P federation using HashiCorp memberlist. Each node is fully functional standalone - federation adds cluster-wide visibility.
+
+### Starting a Cluster
+
+```bash
+# First node (seed node)
+sudo dogwatch --cluster --cluster-port 7946
+
+# Additional nodes join the cluster
+sudo dogwatch --cluster --cluster-port 7946 --cluster-seeds 192.168.1.10:7946
+
+# With custom node name and advertise address
+sudo dogwatch --cluster \
+  --cluster-name node-west-1 \
+  --cluster-port 7946 \
+  --cluster-advertise 10.0.1.50:7946 \
+  --cluster-seeds 10.0.1.10:7946,10.0.1.20:7946
+
+# With encryption (16/24/32 bytes for AES-128/192/256)
+sudo dogwatch --cluster \
+  --cluster-key "supersecretkey16"
+```
+
+### Federation CLI Flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--cluster` | Enable multi-node federation | false |
+| `--cluster-name` | Node name in cluster | hostname |
+| `--cluster-bind` | Bind address for gossip | 0.0.0.0 |
+| `--cluster-port` | Port for gossip protocol | 7946 |
+| `--cluster-seeds` | Comma-separated seed node addresses | |
+| `--cluster-advertise` | Address to advertise to other nodes | |
+| `--cluster-key` | Encryption key for gossip | |
+
+### Federation API
+
+```bash
+# Get cluster status
+curl http://localhost:9999/api/cluster
+
+# List all cluster nodes
+curl http://localhost:9999/api/cluster/nodes
+
+# Join additional nodes dynamically
+curl -X POST http://localhost:9999/api/cluster/join \
+  -d '{"addresses": ["192.168.1.20:7946"]}'
+
+# Get cluster-wide incidents
+curl http://localhost:9999/api/cluster/incidents
+
+# Get aggregated cluster metrics
+curl http://localhost:9999/api/cluster/metrics
+```
+
+### How Federation Works
+
+1. **Gossip Protocol**: Nodes discover and communicate via UDP gossip (memberlist)
+2. **CRDT State**: Shared state uses conflict-free replicated data types (LWW semantics)
+3. **Edge-First**: Each node is fully functional - federation shares only aggregates
+4. **Incident Sync**: Incidents are broadcast and synchronized across the cluster
+5. **Node Metrics**: CPU, memory, and error rates are shared between nodes
+6. **Graceful Degradation**: If federation fails, nodes continue working independently
 
 ---
 
@@ -344,7 +422,7 @@ dogwatch uses eBPF to hook into kernel functions with minimal overhead:
 - [ ] Kubernetes integration
 - [ ] PagerDuty/Opsgenie integration
 - [ ] Prometheus remote write
-- [ ] Multi-node federation
+- [x] Multi-node federation
 
 ---
 
