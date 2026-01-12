@@ -18,6 +18,7 @@ import (
 
 	"dogwatch/internal/aggregator"
 	"dogwatch/internal/anomaly"
+	"dogwatch/internal/query"
 	"dogwatch/internal/containers"
 	"dogwatch/internal/custommetrics"
 	"dogwatch/internal/deploys"
@@ -69,6 +70,7 @@ type Server struct {
 	cluster             *federation.Cluster
 	k8sCollector        *kubernetes.Collector
 	anomalyService      *anomaly.Service
+	queryExecutor       *query.Executor
 	profiler            FlameGraphProvider
 	server              *http.Server
 	mu                  sync.RWMutex
@@ -198,6 +200,11 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	mux.HandleFunc("/api/anomaly/push", s.handleAnomalyPush)
 	mux.HandleFunc("/api/anomaly/train", s.handleAnomalyTrain)
 	mux.HandleFunc("/api/anomaly/subscribe", s.handleAnomalySubscribe)
+
+	// WatchQL query endpoints
+	mux.HandleFunc("/api/query", s.handleQuery)
+	mux.HandleFunc("/api/query/explain", s.handleQueryExplain)
+	mux.HandleFunc("/api/query/validate", s.handleQueryValidate)
 
 	s.server = &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
@@ -3820,4 +3827,169 @@ func (s *Server) handleAnomalySubscribe(w http.ResponseWriter, r *http.Request) 
 	}
 
 	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+}
+
+// WatchQL Query Handlers
+
+func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Query string `json:"query"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Query == "" {
+		http.Error(w, "query is required", http.StatusBadRequest)
+		return
+	}
+
+	s.mu.RLock()
+	executor := s.queryExecutor
+	s.mu.RUnlock()
+
+	if executor == nil {
+		// Create a default executor if not set
+		executor = query.NewExecutor()
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	result, err := executor.Execute(ctx, req.Query)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":   err.Error(),
+			"success": false,
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"columns": result.Columns,
+		"rows":    result.Rows,
+		"stats": map[string]interface{}{
+			"rows_returned":   result.Stats.RowsReturned,
+			"execution_time":  result.Stats.ExecutionTime.String(),
+			"execution_ms":    result.Stats.ExecutionTime.Milliseconds(),
+		},
+	})
+}
+
+func (s *Server) handleQueryExplain(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Query string `json:"query"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Query == "" {
+		http.Error(w, "query is required", http.StatusBadRequest)
+		return
+	}
+
+	// Parse the query
+	ast, err := query.Parse(req.Query)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":   err.Error(),
+			"success": false,
+		})
+		return
+	}
+
+	// Create a plan
+	planner := query.NewPlanner()
+	plan, err := planner.Plan(ast)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":   err.Error(),
+			"success": false,
+		})
+		return
+	}
+
+	// Generate explain output
+	explain := query.ExplainPlan(plan)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":        true,
+		"query":          req.Query,
+		"parsed":         ast.String(),
+		"plan":           explain,
+		"estimated_cost": plan.Root.EstimatedCost(),
+	})
+}
+
+func (s *Server) handleQueryValidate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Query string `json:"query"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Query == "" {
+		http.Error(w, "query is required", http.StatusBadRequest)
+		return
+	}
+
+	// Try to parse
+	ast, err := query.Parse(req.Query)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"valid":   false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"valid":      true,
+		"normalized": ast.String(),
+	})
+}
+
+// SetQueryExecutor sets the query executor
+func (s *Server) SetQueryExecutor(e *query.Executor) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.queryExecutor = e
+}
+
+// GetQueryExecutor returns the query executor
+func (s *Server) GetQueryExecutor() *query.Executor {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.queryExecutor
 }
