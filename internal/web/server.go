@@ -17,12 +17,14 @@ import (
 	"time"
 
 	"dogwatch/internal/aggregator"
+	"dogwatch/internal/anomaly"
 	"dogwatch/internal/containers"
 	"dogwatch/internal/custommetrics"
 	"dogwatch/internal/deploys"
 	"dogwatch/internal/dashboard"
 	"dogwatch/internal/federation"
 	"dogwatch/internal/incidents"
+	"dogwatch/internal/kubernetes"
 	"dogwatch/internal/logs"
 	"dogwatch/internal/metrics"
 	"dogwatch/internal/slo"
@@ -65,6 +67,8 @@ type Server struct {
 	incidentStore       *incidents.Store
 	pager               *incidents.Pager
 	cluster             *federation.Cluster
+	k8sCollector        *kubernetes.Collector
+	anomalyService      *anomaly.Service
 	profiler            FlameGraphProvider
 	server              *http.Server
 	mu                  sync.RWMutex
@@ -169,6 +173,31 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	mux.HandleFunc("/api/cluster/incidents", s.handleClusterIncidents)
 	mux.HandleFunc("/api/cluster/metrics", s.handleClusterMetrics)
 	mux.HandleFunc("/api/cluster/state", s.handleClusterState)
+
+	// Kubernetes endpoints
+	mux.HandleFunc("/api/k8s", s.handleK8sInfo)
+	mux.HandleFunc("/api/k8s/summary", s.handleK8sSummary)
+	mux.HandleFunc("/api/k8s/nodes", s.handleK8sNodes)
+	mux.HandleFunc("/api/k8s/namespaces", s.handleK8sNamespaces)
+	mux.HandleFunc("/api/k8s/pods", s.handleK8sPods)
+	mux.HandleFunc("/api/k8s/pods/", s.handleK8sPod)
+	mux.HandleFunc("/api/k8s/deployments", s.handleK8sDeployments)
+	mux.HandleFunc("/api/k8s/services", s.handleK8sServices)
+	mux.HandleFunc("/api/k8s/daemonsets", s.handleK8sDaemonSets)
+	mux.HandleFunc("/api/k8s/statefulsets", s.handleK8sStatefulSets)
+	mux.HandleFunc("/api/k8s/jobs", s.handleK8sJobs)
+	mux.HandleFunc("/api/k8s/cronjobs", s.handleK8sCronJobs)
+	mux.HandleFunc("/api/k8s/ingresses", s.handleK8sIngresses)
+	mux.HandleFunc("/api/k8s/events", s.handleK8sEvents)
+	mux.HandleFunc("/api/k8s/workloads", s.handleK8sWorkloads)
+
+	// Anomaly detection endpoints
+	mux.HandleFunc("/api/anomaly/stats", s.handleAnomalyStats)
+	mux.HandleFunc("/api/anomaly/recent", s.handleAnomalyRecent)
+	mux.HandleFunc("/api/anomaly/metrics", s.handleAnomalyMetrics)
+	mux.HandleFunc("/api/anomaly/push", s.handleAnomalyPush)
+	mux.HandleFunc("/api/anomaly/train", s.handleAnomalyTrain)
+	mux.HandleFunc("/api/anomaly/subscribe", s.handleAnomalySubscribe)
 
 	s.server = &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
@@ -343,6 +372,88 @@ func (s *Server) StopCluster() {
 	if s.cluster != nil {
 		s.cluster.Stop()
 	}
+}
+
+// SetK8sCollector sets the Kubernetes collector
+func (s *Server) SetK8sCollector(k8s *kubernetes.Collector) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.k8sCollector = k8s
+
+	// Connect pager for K8s events
+	if s.pager != nil && k8s != nil {
+		k8s.SetPager(&k8sPagerAdapter{pager: s.pager})
+	}
+}
+
+// GetK8sCollector returns the Kubernetes collector
+func (s *Server) GetK8sCollector() *kubernetes.Collector {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.k8sCollector
+}
+
+// StopK8sCollector stops the Kubernetes collector
+func (s *Server) StopK8sCollector() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.k8sCollector != nil {
+		s.k8sCollector.Stop()
+	}
+}
+
+// SetAnomalyService sets the anomaly detection service
+func (s *Server) SetAnomalyService(as *anomaly.Service) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.anomalyService = as
+
+	// Connect anomaly detection to incident triggering
+	if s.pager != nil && as != nil {
+		as.SetAnomalyCallback(func(result anomaly.AnomalyResult) {
+			if result.IsCritical {
+				s.pager.Trigger(&incidents.Incident{
+					Title:       fmt.Sprintf("[Anomaly] %s", result.MetricName),
+					Description: result.Reason,
+					Severity:    incidents.SeverityHigh,
+					Source:      "anomaly_detection",
+					Service:     result.MetricName,
+				})
+			}
+		})
+	}
+}
+
+// GetAnomalyService returns the anomaly detection service
+func (s *Server) GetAnomalyService() *anomaly.Service {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.anomalyService
+}
+
+// k8sPagerAdapter adapts our incidents.Pager to the kubernetes.IncidentTrigger interface
+type k8sPagerAdapter struct {
+	pager *incidents.Pager
+}
+
+func (a *k8sPagerAdapter) TriggerFromK8s(eventType, namespace, name, kind, reason, message string) error {
+	if a.pager == nil {
+		return nil
+	}
+
+	title := fmt.Sprintf("[K8s] %s: %s/%s %s", kind, namespace, name, reason)
+	severity := incidents.SeverityMedium
+	if reason == "CrashLoopBackOff" || reason == "OOMKilled" || reason == "FailedScheduling" {
+		severity = incidents.SeverityHigh
+	}
+
+	return a.pager.Trigger(&incidents.Incident{
+		Title:       title,
+		Description: message,
+		Severity:    severity,
+		Source:      "kubernetes",
+		Service:     fmt.Sprintf("%s/%s", namespace, name),
+	})
 }
 
 // syncFederatedIncident syncs a federated incident to the local store
@@ -3181,4 +3292,532 @@ func (s *Server) handleClusterState(w http.ResponseWriter, r *http.Request) {
 	state := cluster.GetState().GetFullState()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(state)
+}
+
+// ============================================================================
+// Kubernetes Handlers
+// ============================================================================
+
+func (s *Server) handleK8sInfo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	k8s := s.k8sCollector
+	s.mu.RUnlock()
+
+	if k8s == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"enabled": false,
+			"message": "Kubernetes not connected. Ensure kubeconfig is available.",
+		})
+		return
+	}
+
+	info := k8s.GetClusterInfo()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"enabled": true,
+		"cluster": info,
+	})
+}
+
+func (s *Server) handleK8sSummary(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	k8s := s.k8sCollector
+	s.mu.RUnlock()
+
+	if k8s == nil {
+		http.Error(w, "Kubernetes not connected", http.StatusServiceUnavailable)
+		return
+	}
+
+	summary := k8s.GetSummary()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(summary)
+}
+
+func (s *Server) handleK8sNodes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	k8s := s.k8sCollector
+	s.mu.RUnlock()
+
+	if k8s == nil {
+		http.Error(w, "Kubernetes not connected", http.StatusServiceUnavailable)
+		return
+	}
+
+	nodes := k8s.GetNodes()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(nodes)
+}
+
+func (s *Server) handleK8sNamespaces(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	k8s := s.k8sCollector
+	s.mu.RUnlock()
+
+	if k8s == nil {
+		http.Error(w, "Kubernetes not connected", http.StatusServiceUnavailable)
+		return
+	}
+
+	namespaces := k8s.GetNamespaces()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(namespaces)
+}
+
+func (s *Server) handleK8sPods(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	k8s := s.k8sCollector
+	s.mu.RUnlock()
+
+	if k8s == nil {
+		http.Error(w, "Kubernetes not connected", http.StatusServiceUnavailable)
+		return
+	}
+
+	namespace := r.URL.Query().Get("namespace")
+	pods := k8s.GetPods(namespace)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(pods)
+}
+
+func (s *Server) handleK8sPod(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	k8s := s.k8sCollector
+	s.mu.RUnlock()
+
+	if k8s == nil {
+		http.Error(w, "Kubernetes not connected", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Extract namespace/name from path: /api/k8s/pods/{namespace}/{name}
+	path := strings.TrimPrefix(r.URL.Path, "/api/k8s/pods/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) != 2 {
+		http.Error(w, "Invalid path, expected /api/k8s/pods/{namespace}/{name}", http.StatusBadRequest)
+		return
+	}
+
+	pod := k8s.GetPod(parts[0], parts[1])
+	if pod == nil {
+		http.Error(w, "Pod not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(pod)
+}
+
+func (s *Server) handleK8sDeployments(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	k8s := s.k8sCollector
+	s.mu.RUnlock()
+
+	if k8s == nil {
+		http.Error(w, "Kubernetes not connected", http.StatusServiceUnavailable)
+		return
+	}
+
+	namespace := r.URL.Query().Get("namespace")
+	deployments := k8s.GetDeployments(namespace)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(deployments)
+}
+
+func (s *Server) handleK8sServices(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	k8s := s.k8sCollector
+	s.mu.RUnlock()
+
+	if k8s == nil {
+		http.Error(w, "Kubernetes not connected", http.StatusServiceUnavailable)
+		return
+	}
+
+	namespace := r.URL.Query().Get("namespace")
+	services := k8s.GetServices(namespace)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(services)
+}
+
+func (s *Server) handleK8sDaemonSets(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	k8s := s.k8sCollector
+	s.mu.RUnlock()
+
+	if k8s == nil {
+		http.Error(w, "Kubernetes not connected", http.StatusServiceUnavailable)
+		return
+	}
+
+	namespace := r.URL.Query().Get("namespace")
+	daemonsets := k8s.GetDaemonSets(namespace)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(daemonsets)
+}
+
+func (s *Server) handleK8sStatefulSets(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	k8s := s.k8sCollector
+	s.mu.RUnlock()
+
+	if k8s == nil {
+		http.Error(w, "Kubernetes not connected", http.StatusServiceUnavailable)
+		return
+	}
+
+	namespace := r.URL.Query().Get("namespace")
+	statefulsets := k8s.GetStatefulSets(namespace)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(statefulsets)
+}
+
+func (s *Server) handleK8sJobs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	k8s := s.k8sCollector
+	s.mu.RUnlock()
+
+	if k8s == nil {
+		http.Error(w, "Kubernetes not connected", http.StatusServiceUnavailable)
+		return
+	}
+
+	namespace := r.URL.Query().Get("namespace")
+	jobs := k8s.GetJobs(namespace)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(jobs)
+}
+
+func (s *Server) handleK8sCronJobs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	k8s := s.k8sCollector
+	s.mu.RUnlock()
+
+	if k8s == nil {
+		http.Error(w, "Kubernetes not connected", http.StatusServiceUnavailable)
+		return
+	}
+
+	namespace := r.URL.Query().Get("namespace")
+	cronjobs := k8s.GetCronJobs(namespace)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(cronjobs)
+}
+
+func (s *Server) handleK8sIngresses(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	k8s := s.k8sCollector
+	s.mu.RUnlock()
+
+	if k8s == nil {
+		http.Error(w, "Kubernetes not connected", http.StatusServiceUnavailable)
+		return
+	}
+
+	namespace := r.URL.Query().Get("namespace")
+	ingresses := k8s.GetIngresses(namespace)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ingresses)
+}
+
+func (s *Server) handleK8sEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	k8s := s.k8sCollector
+	s.mu.RUnlock()
+
+	if k8s == nil {
+		http.Error(w, "Kubernetes not connected", http.StatusServiceUnavailable)
+		return
+	}
+
+	namespace := r.URL.Query().Get("namespace")
+	limitStr := r.URL.Query().Get("limit")
+	limit := 50
+	if limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	events := k8s.GetEvents(namespace, limit)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(events)
+}
+
+func (s *Server) handleK8sWorkloads(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	k8s := s.k8sCollector
+	s.mu.RUnlock()
+
+	if k8s == nil {
+		http.Error(w, "Kubernetes not connected", http.StatusServiceUnavailable)
+		return
+	}
+
+	workloads := k8s.GetWorkloadHealth()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(workloads)
+}
+
+// ============ Anomaly Detection Handlers ============
+
+func (s *Server) handleAnomalyStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	as := s.anomalyService
+	s.mu.RUnlock()
+
+	if as == nil {
+		http.Error(w, "Anomaly detection not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	stats := as.GetStats()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
+}
+
+func (s *Server) handleAnomalyRecent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	as := s.anomalyService
+	s.mu.RUnlock()
+
+	if as == nil {
+		http.Error(w, "Anomaly detection not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	limit := 100
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	anomalies := as.GetRecentAnomalies(limit)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(anomalies)
+}
+
+func (s *Server) handleAnomalyMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	as := s.anomalyService
+	s.mu.RUnlock()
+
+	if as == nil {
+		http.Error(w, "Anomaly detection not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	metricName := r.URL.Query().Get("name")
+	if metricName != "" {
+		stats := as.GetMetricStats(metricName)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(stats)
+		return
+	}
+
+	// Return list of subscribed metrics
+	metrics := as.GetSubscribedMetrics()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(metrics)
+}
+
+func (s *Server) handleAnomalyPush(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	as := s.anomalyService
+	s.mu.RUnlock()
+
+	if as == nil {
+		http.Error(w, "Anomaly detection not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	var req struct {
+		Metric string  `json:"metric"`
+		Value  float64 `json:"value"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	result := as.Push(req.Metric, req.Value, time.Now())
+
+	w.Header().Set("Content-Type", "application/json")
+	if result != nil {
+		json.NewEncoder(w).Encode(result)
+	} else {
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "data point recorded"})
+	}
+}
+
+func (s *Server) handleAnomalyTrain(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	as := s.anomalyService
+	s.mu.RUnlock()
+
+	if as == nil {
+		http.Error(w, "Anomaly detection not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	var req struct {
+		Metric string `json:"metric"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := as.TrainModel(req.Metric); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "model trained"})
+}
+
+func (s *Server) handleAnomalySubscribe(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	as := s.anomalyService
+	s.mu.RUnlock()
+
+	if as == nil {
+		http.Error(w, "Anomaly detection not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method == http.MethodPost {
+		var req struct {
+			Metric string `json:"metric"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		as.Subscribe(req.Metric)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "subscribed to " + req.Metric})
+		return
+	}
+
+	if r.Method == http.MethodDelete {
+		metric := r.URL.Query().Get("metric")
+		if metric == "" {
+			http.Error(w, "metric parameter required", http.StatusBadRequest)
+			return
+		}
+
+		as.Unsubscribe(metric)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "unsubscribed from " + metric})
+		return
+	}
+
+	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 }

@@ -13,12 +13,14 @@ import (
 	"time"
 
 	"dogwatch/internal/aggregator"
+	"dogwatch/internal/anomaly"
 	"dogwatch/internal/containers"
 	"dogwatch/internal/custommetrics"
 	"dogwatch/internal/deploys"
 	"dogwatch/internal/dashboard"
 	"dogwatch/internal/federation"
 	"dogwatch/internal/incidents"
+	"dogwatch/internal/kubernetes"
 	"dogwatch/internal/logs"
 	"dogwatch/internal/probe"
 	"dogwatch/internal/slo"
@@ -328,6 +330,37 @@ func main() {
 			}
 		}
 
+		// Set up Kubernetes collector (optional - only if kubeconfig available)
+		k8sCollector, err := kubernetes.NewCollector()
+		if err != nil {
+			log.Printf("Kubernetes monitoring disabled: %v", err)
+		} else {
+			webServer.SetK8sCollector(k8sCollector)
+			if err := k8sCollector.Start(); err != nil {
+				log.Printf("Warning: Could not start Kubernetes collector: %v", err)
+			} else {
+				fmt.Printf("Kubernetes: http://localhost:%d/api/k8s\n", *webPort)
+			}
+		}
+
+		// Set up anomaly detection service
+		anomalyService, err := anomaly.NewService(anomaly.ServiceConfig{
+			DataDir:           filepath.Join(*dataDir, "anomaly"),
+			AnomalyThreshold:  0.7,
+			CriticalThreshold: 0.9,
+			Algorithm:         "ensemble", // uses IForest + statistical
+		})
+		if err != nil {
+			log.Printf("Warning: Could not start anomaly detection: %v", err)
+		} else {
+			if err := anomalyService.Start(); err != nil {
+				log.Printf("Warning: Anomaly service start error: %v", err)
+			} else {
+				webServer.SetAnomalyService(anomalyService)
+				fmt.Printf("Anomaly detection: http://localhost:%d/api/anomaly\n", *webPort)
+			}
+		}
+
 		go func() {
 			fmt.Printf("Web UI available at http://localhost:%d\n", *webPort)
 			if err := webServer.Start(); err != nil && err != http.ErrServerClosed {
@@ -397,6 +430,18 @@ func main() {
 					stats.TotalRequests,
 					stats.TotalErrors,
 				)
+
+				// Push to anomaly detection
+				if as := webServer.GetAnomalyService(); as != nil {
+					now := time.Now()
+					as.Push("cpu_percent", sysMetrics.CPUUsagePercent, now)
+					as.Push("memory_percent", sysMetrics.MemUsagePercent, now)
+					as.Push("disk_io_read", float64(sysMetrics.DiskReadPerSec), now)
+					as.Push("disk_io_write", float64(sysMetrics.DiskWritePerSec), now)
+					as.Push("network_rx_bytes", float64(sysMetrics.NetRxPerSec), now)
+					as.Push("network_tx_bytes", float64(sysMetrics.NetTxPerSec), now)
+					as.Push("tcp_connection_count", float64(stats.TotalConnections), now)
+				}
 			}
 		}()
 		fmt.Println("Historical metrics recording: enabled (10s intervals)")
@@ -442,6 +487,7 @@ func main() {
 			fmt.Print(agg.Summary())
 			fmt.Println("Shutting down...")
 			if webServer != nil {
+				webServer.StopK8sCollector()
 				webServer.StopCluster()
 				webServer.StopContainerCollector()
 				webServer.StopSLOCalculator()
