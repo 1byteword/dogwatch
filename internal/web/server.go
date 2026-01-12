@@ -27,6 +27,7 @@ import (
 	"dogwatch/internal/incidents"
 	"dogwatch/internal/kubernetes"
 	"dogwatch/internal/logs"
+	"dogwatch/internal/oncall"
 	"dogwatch/internal/metrics"
 	"dogwatch/internal/slo"
 	"dogwatch/internal/storage"
@@ -71,6 +72,9 @@ type Server struct {
 	k8sCollector        *kubernetes.Collector
 	anomalyService      *anomaly.Service
 	queryExecutor       *query.Executor
+	oncallStore         *oncall.Store
+	oncallCalculator    *oncall.Calculator
+	oncallEscalation    *oncall.EscalationEngine
 	profiler            FlameGraphProvider
 	server              *http.Server
 	mu                  sync.RWMutex
@@ -205,6 +209,18 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	mux.HandleFunc("/api/query", s.handleQuery)
 	mux.HandleFunc("/api/query/explain", s.handleQueryExplain)
 	mux.HandleFunc("/api/query/validate", s.handleQueryValidate)
+
+	// On-call scheduling endpoints
+	mux.HandleFunc("/api/oncall/schedules", s.handleOncallSchedules)
+	mux.HandleFunc("/api/oncall/schedules/", s.handleOncallSchedule)
+	mux.HandleFunc("/api/oncall/current/", s.handleOncallCurrent)
+	mux.HandleFunc("/api/oncall/calendar/", s.handleOncallCalendar)
+	mux.HandleFunc("/api/oncall/overrides", s.handleOncallOverrides)
+	mux.HandleFunc("/api/oncall/overrides/", s.handleOncallOverride)
+	mux.HandleFunc("/api/oncall/policies", s.handleOncallPolicies)
+	mux.HandleFunc("/api/oncall/policies/", s.handleOncallPolicy)
+	mux.HandleFunc("/api/oncall/escalate", s.handleOncallEscalate)
+	mux.HandleFunc("/api/oncall/acknowledge", s.handleOncallAcknowledge)
 
 	s.server = &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
@@ -3992,4 +4008,416 @@ func (s *Server) GetQueryExecutor() *query.Executor {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.queryExecutor
+}
+
+// On-Call Scheduling Handlers
+
+// SetOncallStore sets the on-call store and creates calculator/engine
+func (s *Server) SetOncallStore(store *oncall.Store) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.oncallStore = store
+	s.oncallCalculator = oncall.NewCalculator(store)
+	s.oncallEscalation = oncall.NewEscalationEngine(store, s.oncallCalculator)
+	s.oncallEscalation.RegisterChannel(&oncall.LogChannel{})
+	s.oncallEscalation.Start()
+}
+
+func (s *Server) handleOncallSchedules(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	store := s.oncallStore
+	s.mu.RUnlock()
+
+	if store == nil {
+		http.Error(w, "On-call not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		schedules, err := store.ListSchedules()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(schedules)
+
+	case http.MethodPost:
+		var sched oncall.Schedule
+		if err := json.NewDecoder(r.Body).Decode(&sched); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if sched.ID == "" {
+			sched.ID = uuid.New().String()
+		}
+		if err := store.CreateSchedule(&sched); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(sched)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleOncallSchedule(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	store := s.oncallStore
+	s.mu.RUnlock()
+
+	if store == nil {
+		http.Error(w, "On-call not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	id := strings.TrimPrefix(r.URL.Path, "/api/oncall/schedules/")
+	if id == "" {
+		http.Error(w, "Schedule ID required", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		sched, err := store.GetSchedule(id)
+		if err != nil {
+			http.Error(w, "Schedule not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(sched)
+
+	case http.MethodPut:
+		var sched oncall.Schedule
+		if err := json.NewDecoder(r.Body).Decode(&sched); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		sched.ID = id
+		if err := store.UpdateSchedule(&sched); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(sched)
+
+	case http.MethodDelete:
+		if err := store.DeleteSchedule(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleOncallCurrent(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	calc := s.oncallCalculator
+	s.mu.RUnlock()
+
+	if calc == nil {
+		http.Error(w, "On-call not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	scheduleID := strings.TrimPrefix(r.URL.Path, "/api/oncall/current/")
+	if scheduleID == "" {
+		http.Error(w, "Schedule ID required", http.StatusBadRequest)
+		return
+	}
+
+	entry, err := calc.GetCurrentOnCall(scheduleID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if entry == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"on_call": nil})
+	} else {
+		json.NewEncoder(w).Encode(map[string]interface{}{"on_call": entry})
+	}
+}
+
+func (s *Server) handleOncallCalendar(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	calc := s.oncallCalculator
+	s.mu.RUnlock()
+
+	if calc == nil {
+		http.Error(w, "On-call not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	scheduleID := strings.TrimPrefix(r.URL.Path, "/api/oncall/calendar/")
+	if scheduleID == "" {
+		http.Error(w, "Schedule ID required", http.StatusBadRequest)
+		return
+	}
+
+	// Parse time range from query params
+	start := time.Now()
+	end := start.AddDate(0, 0, 14) // Default to 2 weeks
+
+	if startStr := r.URL.Query().Get("start"); startStr != "" {
+		if t, err := time.Parse(time.RFC3339, startStr); err == nil {
+			start = t
+		}
+	}
+	if endStr := r.URL.Query().Get("end"); endStr != "" {
+		if t, err := time.Parse(time.RFC3339, endStr); err == nil {
+			end = t
+		}
+	}
+
+	entries, err := calc.GetCalendar(scheduleID, start, end)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"schedule_id": scheduleID,
+		"start":       start,
+		"end":         end,
+		"entries":     entries,
+	})
+}
+
+func (s *Server) handleOncallOverrides(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	store := s.oncallStore
+	s.mu.RUnlock()
+
+	if store == nil {
+		http.Error(w, "On-call not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method == http.MethodPost {
+		var req struct {
+			ScheduleID string          `json:"schedule_id"`
+			Override   oncall.Override `json:"override"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if req.Override.ID == "" {
+			req.Override.ID = uuid.New().String()
+		}
+		if err := store.CreateOverride(req.ScheduleID, &req.Override); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(req.Override)
+		return
+	}
+
+	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+}
+
+func (s *Server) handleOncallOverride(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	store := s.oncallStore
+	s.mu.RUnlock()
+
+	if store == nil {
+		http.Error(w, "On-call not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	id := strings.TrimPrefix(r.URL.Path, "/api/oncall/overrides/")
+	if id == "" {
+		http.Error(w, "Override ID required", http.StatusBadRequest)
+		return
+	}
+
+	if r.Method == http.MethodDelete {
+		if err := store.DeleteOverride(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+}
+
+func (s *Server) handleOncallPolicies(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	store := s.oncallStore
+	s.mu.RUnlock()
+
+	if store == nil {
+		http.Error(w, "On-call not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		policies, err := store.ListPolicies()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(policies)
+
+	case http.MethodPost:
+		var policy oncall.EscalationPolicy
+		if err := json.NewDecoder(r.Body).Decode(&policy); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if policy.ID == "" {
+			policy.ID = uuid.New().String()
+		}
+		if err := store.CreatePolicy(&policy); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(policy)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleOncallPolicy(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	store := s.oncallStore
+	s.mu.RUnlock()
+
+	if store == nil {
+		http.Error(w, "On-call not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	id := strings.TrimPrefix(r.URL.Path, "/api/oncall/policies/")
+	if id == "" {
+		http.Error(w, "Policy ID required", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		policy, err := store.GetPolicy(id)
+		if err != nil {
+			http.Error(w, "Policy not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(policy)
+
+	case http.MethodPut:
+		var policy oncall.EscalationPolicy
+		if err := json.NewDecoder(r.Body).Decode(&policy); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		policy.ID = id
+		if err := store.UpdatePolicy(&policy); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(policy)
+
+	case http.MethodDelete:
+		if err := store.DeletePolicy(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleOncallEscalate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	engine := s.oncallEscalation
+	s.mu.RUnlock()
+
+	if engine == nil {
+		http.Error(w, "On-call not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	var req struct {
+		IncidentID string `json:"incident_id"`
+		PolicyID   string `json:"policy_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := engine.TriggerIncident(req.IncidentID, req.PolicyID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  "ok",
+		"message": "Escalation triggered",
+	})
+}
+
+func (s *Server) handleOncallAcknowledge(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	engine := s.oncallEscalation
+	s.mu.RUnlock()
+
+	if engine == nil {
+		http.Error(w, "On-call not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	var req struct {
+		IncidentID string `json:"incident_id"`
+		UserID     string `json:"user_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := engine.AcknowledgeIncident(req.IncidentID, req.UserID); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  "ok",
+		"message": "Incident acknowledged",
+	})
 }

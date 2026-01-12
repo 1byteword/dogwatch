@@ -22,6 +22,7 @@ import (
 	"dogwatch/internal/incidents"
 	"dogwatch/internal/kubernetes"
 	"dogwatch/internal/logs"
+	"dogwatch/internal/oncall"
 	"dogwatch/internal/probe"
 	"dogwatch/internal/slo"
 	"dogwatch/internal/storage"
@@ -223,6 +224,17 @@ func main() {
 		fmt.Printf("Incident storage: %s\n", incidentDbPath)
 	}
 
+	// Create on-call storage
+	oncallDbPath := filepath.Join(*dataDir, "oncall.db")
+	oncallStore, err := oncall.NewStore(oncallDbPath)
+	if err != nil {
+		log.Printf("Warning: Could not create on-call storage: %v", err)
+		oncallStore = nil
+	} else {
+		defer oncallStore.Close()
+		fmt.Printf("On-call storage: %s\n", oncallDbPath)
+	}
+
 	// Initialize federation cluster if enabled
 	var cluster *federation.Cluster
 	if *clusterEnabled {
@@ -316,7 +328,13 @@ func main() {
 		if incidentStore != nil {
 			webServer.SetIncidentStore(incidentStore)
 			fmt.Println("Incidents: http://localhost:9999/api/incidents")
-			fmt.Println("On-call: http://localhost:9999/api/oncall")
+		}
+
+		// Set on-call store (schedules, rotations, escalations)
+		if oncallStore != nil {
+			webServer.SetOncallStore(oncallStore)
+			fmt.Println("On-call schedules: http://localhost:9999/api/oncall/schedules")
+			fmt.Println("Escalation policies: http://localhost:9999/api/oncall/policies")
 		}
 
 		// Set up federation cluster
