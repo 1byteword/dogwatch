@@ -121,8 +121,9 @@
         .svcmap-legend-item { display: flex; align-items: center; gap: 6px; }
         .svcmap-legend-dot { width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 6px currentColor; }
         /* Nodes */
-        .svcmap-node { cursor: pointer; transition: all 0.2s ease; }
+        .svcmap-node { cursor: pointer; }
         .svcmap-node:hover { filter: brightness(1.2); }
+        .svcmap-main-group { will-change: transform; }
         .svcmap-node-ring { fill: none; stroke-width: 3; opacity: 0.3; }
         .svcmap-node-bg { fill: #1a1f2e; stroke-width: 2; }
         .svcmap-node-healthy .svcmap-node-bg { stroke: #00ba7c; }
@@ -3490,6 +3491,7 @@
         let svcMapZoomBehavior = null;
         let svcMapTransform = d3.zoomIdentity;
         let svcMapSelectedNode = null;
+        let svcMapMainGroup = null;
 
         function updateServiceMap() {
             fetch('/api/servicemap').then(r => r.json()).then(d => {
@@ -3505,6 +3507,7 @@
 
         function toggleSvcMapLayout() {
             svcMapLayout = svcMapLayout === 'hierarchical' ? 'radial' : 'hierarchical';
+            svcMapTransform = d3.zoomIdentity; // Reset zoom on layout change
             renderServiceMap();
         }
 
@@ -3553,30 +3556,14 @@
 
             svg.selectAll('*').remove();
 
-            // Setup zoom behavior
-            if (!svcMapZoomBehavior) {
-                svcMapZoomBehavior = d3.zoom()
-                    .scaleExtent([0.3, 3])
-                    .on('zoom', (event) => {
-                        svcMapTransform = event.transform;
-                        mainGroup.attr('transform', event.transform);
-                    });
-                svg.call(svcMapZoomBehavior);
-            } else {
-                svg.call(svcMapZoomBehavior);
-            }
-
-            // Main group for zoom/pan
-            const mainGroup = svg.append('g').attr('transform', svcMapTransform);
-
-            // Defs for markers and filters
+            // Defs for markers and filters (add before main group)
             const defs = svg.append('defs');
 
             // Arrow markers with different colors
             ['#536471', '#1d9bf0', '#f4212e', '#00ba7c'].forEach((color, i) => {
                 defs.append('marker')
                     .attr('id', `arrow-${i}`).attr('viewBox', '0 -5 10 10')
-                    .attr('refX', 28).attr('refY', 0)
+                    .attr('refX', 32).attr('refY', 0)
                     .attr('markerWidth', 5).attr('markerHeight', 5).attr('orient', 'auto')
                     .append('path').attr('d', 'M0,-4L10,0L0,4').attr('fill', color);
             });
@@ -3586,36 +3573,62 @@
             glow.append('feGaussianBlur').attr('stdDeviation', '3').attr('result', 'blur');
             glow.append('feMerge').html('<feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/>');
 
-            // Layout nodes
+            // Main group for zoom/pan
+            svcMapMainGroup = svg.append('g').attr('class', 'svcmap-main-group');
+
+            // Setup zoom behavior - instant transforms, no transitions
+            svcMapZoomBehavior = d3.zoom()
+                .scaleExtent([0.2, 4])
+                .filter((event) => {
+                    // Allow wheel zoom and drag pan, but not on double-click
+                    return !event.button && event.type !== 'dblclick';
+                })
+                .on('zoom', (event) => {
+                    svcMapTransform = event.transform;
+                    svcMapMainGroup.attr('transform', event.transform);
+                });
+
+            svg.call(svcMapZoomBehavior)
+               .call(svcMapZoomBehavior.transform, svcMapTransform); // Apply saved transform
+
+            // Layout nodes with more spacing
+            const nodeSpacing = 120; // Minimum spacing between nodes
+            const padding = 80;
+
             if (svcMapLayout === 'radial') {
                 const centerX = w / 2, centerY = h / 2;
-                const radius = Math.min(w, h) * 0.35;
+                // Much larger radius for better spacing
+                const baseRadius = Math.max(150, Math.min(w, h) * 0.4);
+                const radius = Math.max(baseRadius, nodes.length * 25);
                 nodes.forEach((n, i) => {
                     const angle = (i / nodes.length) * 2 * Math.PI - Math.PI / 2;
                     n.x = centerX + radius * Math.cos(angle);
                     n.y = centerY + radius * Math.sin(angle);
                 });
             } else {
-                // Hierarchical layout
+                // Hierarchical layout with more generous spacing
                 const layers = { 0: [], 1: [], 2: [] };
                 nodes.forEach(n => {
                     const layer = n.type === 'process' ? 0 : n.type === 'service' ? 1 : 2;
                     layers[layer].push(n);
                 });
                 const usedLayers = Object.entries(layers).filter(([, arr]) => arr.length > 0);
-                const layerHeight = h / (usedLayers.length + 1);
+                const layerGap = Math.max(150, h / (usedLayers.length + 1));
+
                 usedLayers.forEach(([, layerNodes], layerIdx) => {
-                    const y = (layerIdx + 1) * layerHeight;
-                    const nodeWidth = w / (layerNodes.length + 1);
+                    const y = padding + (layerIdx + 0.5) * layerGap;
+                    // Calculate width needed for this layer
+                    const layerWidth = Math.max(w, layerNodes.length * nodeSpacing + padding * 2);
+                    const startX = (layerWidth - (layerNodes.length - 1) * nodeSpacing) / 2;
                     layerNodes.forEach((n, i) => {
-                        n.x = (i + 1) * nodeWidth;
+                        n.x = startX + i * nodeSpacing;
                         n.y = y;
                     });
                 });
             }
 
             // Draw edges first (under nodes)
-            const linkGroup = mainGroup.append('g').attr('class', 'svcmap-links');
+            const linkGroup = svcMapMainGroup.append('g').attr('class', 'svcmap-links');
             links.forEach(l => {
                 const source = nodes.find(n => n.id === (l.source?.id || l.source));
                 const target = nodes.find(n => n.id === (l.target?.id || l.target));
@@ -3692,7 +3705,7 @@
             });
 
             // Draw nodes
-            const nodeGroup = mainGroup.append('g').attr('class', 'svcmap-nodes');
+            const nodeGroup = svcMapMainGroup.append('g').attr('class', 'svcmap-nodes');
             nodes.forEach(n => {
                 const g = nodeGroup.append('g')
                     .attr('class', 'svcmap-node')
