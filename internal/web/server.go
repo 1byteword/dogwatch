@@ -17,7 +17,10 @@ import (
 	"time"
 
 	"dogwatch/internal/aggregator"
+	"dogwatch/internal/alerting"
 	"dogwatch/internal/anomaly"
+	"dogwatch/internal/catalog"
+	"dogwatch/internal/correlation"
 	"dogwatch/internal/query"
 	"dogwatch/internal/containers"
 	"dogwatch/internal/custommetrics"
@@ -32,6 +35,7 @@ import (
 	"dogwatch/internal/slo"
 	"dogwatch/internal/storage"
 	"dogwatch/internal/synthetics"
+	"dogwatch/internal/statuspage"
 	"dogwatch/internal/trace"
 	"dogwatch/internal/watch"
 
@@ -75,7 +79,15 @@ type Server struct {
 	oncallStore         *oncall.Store
 	oncallCalculator    *oncall.Calculator
 	oncallEscalation    *oncall.EscalationEngine
+	alertManager        *alerting.AlertManager
 	profiler            FlameGraphProvider
+	statusPageStore     *statuspage.Store
+	statusPageHandlers  *StatusPageHandlers
+	catalogStore        *catalog.Store
+	catalogHandlers     *CatalogHandlers
+	catalogDiscovery    *catalog.DiscoveryService
+	correlationEngine   *correlation.Engine
+	correlationHandlers *CorrelationHandlers
 	server              *http.Server
 	mu                  sync.RWMutex
 }
@@ -222,12 +234,110 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	mux.HandleFunc("/api/oncall/escalate", s.handleOncallEscalate)
 	mux.HandleFunc("/api/oncall/acknowledge", s.handleOncallAcknowledge)
 
+	// Alerting endpoints
+	RegisterAlertingRoutes(mux)
+
+	// RBAC / Authentication endpoints
+	RegisterRBACRoutes(mux)
+
+	// SSO / OAuth2 / SAML endpoints
+	RegisterSSORoutes(mux)
+
+	// Notification channel endpoints
+	mux.HandleFunc("/api/notify/channels", s.handleNotifyChannels)
+	mux.HandleFunc("/api/notify/channels/", s.handleNotifyChannel)
+	mux.HandleFunc("/api/notify/history", s.handleNotifyHistory)
+
+	// Audit log endpoints
+	mux.HandleFunc("/api/audit/logs", s.handleAuditLogs)
+	mux.HandleFunc("/api/audit/stats", s.handleAuditStats)
+	mux.HandleFunc("/api/audit/export", s.handleAuditExport)
+
+	// Status page endpoints
+	s.initStatusPages()
+	if s.statusPageHandlers != nil {
+		s.statusPageHandlers.RegisterRoutes(mux)
+	}
+
+	// Service catalog endpoints
+	s.initCatalog()
+	if s.catalogHandlers != nil {
+		s.catalogHandlers.RegisterRoutes(mux)
+	}
+
+	// Correlation engine endpoints
+	s.initCorrelation()
+	if s.correlationHandlers != nil {
+		s.correlationHandlers.RegisterRoutes(mux)
+	}
+
+	// Health check endpoints (no auth required)
+	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/ready", s.handleReady)
+	mux.HandleFunc("/api/health", s.handleHealth)
+	mux.HandleFunc("/api/ready", s.handleReady)
+
+	// Apply rate limiting middleware
+	rateLimitConfig := DefaultRateLimitConfig()
+	rateLimitedHandler := RateLimitMiddleware(rateLimitConfig)(mux)
+
 	s.server = &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
-		Handler: mux,
+		Handler: rateLimitedHandler,
 	}
 
 	return s
+}
+
+// handleHealth returns basic health status
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "healthy",
+		"time":   time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// handleReady returns readiness status with component checks
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	checks := make(map[string]string)
+	allReady := true
+
+	// Check aggregator
+	if s.agg != nil {
+		checks["aggregator"] = "ok"
+	} else {
+		checks["aggregator"] = "not initialized"
+		allReady = false
+	}
+
+	// Check storage
+	if s.store != nil {
+		checks["metrics_store"] = "ok"
+	} else {
+		checks["metrics_store"] = "not configured"
+	}
+
+	// Check trace store
+	if s.traceStore != nil {
+		checks["trace_store"] = "ok"
+	} else {
+		checks["trace_store"] = "not configured"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if allReady {
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ready":  allReady,
+		"checks": checks,
+		"time":   time.Now().UTC().Format(time.RFC3339),
+	})
 }
 
 // SetProfiler sets the flame graph profiler
@@ -240,10 +350,119 @@ func (s *Server) SetStore(st *storage.Store) {
 	s.store = st
 }
 
+// initStatusPages initializes the status page store and handlers
+func (s *Server) initStatusPages() {
+	dbPath := os.Getenv("STATUSPAGE_DB")
+	if dbPath == "" {
+		dbPath = filepath.Join(os.TempDir(), "dogwatch_statuspage.db")
+	}
+
+	store, err := statuspage.NewStore(dbPath)
+	if err != nil {
+		fmt.Printf("Warning: Failed to initialize status page store: %v\n", err)
+		return
+	}
+
+	s.statusPageStore = store
+	s.statusPageHandlers = NewStatusPageHandlers(store)
+}
+
+// SetStatusPageStore sets the status page store
+func (s *Server) SetStatusPageStore(store *statuspage.Store) {
+	s.statusPageStore = store
+	s.statusPageHandlers = NewStatusPageHandlers(store)
+}
+
+// initCatalog initializes the service catalog store and handlers
+func (s *Server) initCatalog() {
+	dbPath := os.Getenv("CATALOG_DB")
+	if dbPath == "" {
+		dbPath = filepath.Join(os.TempDir(), "dogwatch_catalog.db")
+	}
+
+	store, err := catalog.NewStore(dbPath)
+	if err != nil {
+		fmt.Printf("Warning: Failed to initialize catalog store: %v\n", err)
+		return
+	}
+
+	s.catalogStore = store
+	s.catalogHandlers = NewCatalogHandlers(store)
+	s.catalogDiscovery = catalog.NewDiscoveryService(store, "default")
+	s.catalogDiscovery.Start()
+
+	// Wire up health callback if synthetics runner already exists
+	if s.syntheticsRunner != nil {
+		s.syntheticsRunner.SetHealthCallback(s.catalogDiscovery.UpdateServiceHealthFromSynthetics)
+	}
+
+	// Wire up existing stores for context API
+	if s.incidentStore != nil {
+		s.catalogHandlers.SetIncidentStore(s.incidentStore)
+	}
+	if s.syntheticsStore != nil {
+		s.catalogHandlers.SetSyntheticsStore(s.syntheticsStore)
+	}
+}
+
+// SetCatalogStore sets the catalog store
+func (s *Server) SetCatalogStore(store *catalog.Store) {
+	s.catalogStore = store
+	s.catalogHandlers = NewCatalogHandlers(store)
+	s.catalogDiscovery = catalog.NewDiscoveryService(store, "default")
+	s.catalogDiscovery.Start()
+
+	// Wire up health callback if synthetics runner already exists
+	if s.syntheticsRunner != nil {
+		s.syntheticsRunner.SetHealthCallback(s.catalogDiscovery.UpdateServiceHealthFromSynthetics)
+	}
+
+	// Wire up existing stores for context API
+	if s.incidentStore != nil {
+		s.catalogHandlers.SetIncidentStore(s.incidentStore)
+	}
+	if s.syntheticsStore != nil {
+		s.catalogHandlers.SetSyntheticsStore(s.syntheticsStore)
+	}
+}
+
+// GetCatalogDiscovery returns the catalog discovery service for trace integration
+func (s *Server) GetCatalogDiscovery() *catalog.DiscoveryService {
+	return s.catalogDiscovery
+}
+
+// initCorrelation initializes the correlation engine
+func (s *Server) initCorrelation() {
+	s.correlationEngine = correlation.NewEngine()
+	s.correlationHandlers = NewCorrelationHandlers(s.correlationEngine)
+
+	// Wire up any existing stores
+	if s.traceStore != nil {
+		s.correlationEngine.SetTraceStore(s.traceStore)
+	}
+	if s.logStore != nil {
+		s.correlationEngine.SetLogStore(s.logStore)
+	}
+	if s.incidentStore != nil {
+		s.correlationEngine.SetIncidentStore(s.incidentStore)
+	}
+	if s.deployStore != nil {
+		s.correlationEngine.SetDeployStore(s.deployStore)
+	}
+}
+
+// GetCorrelationEngine returns the correlation engine for external use
+func (s *Server) GetCorrelationEngine() *correlation.Engine {
+	return s.correlationEngine
+}
+
 // SetTraceStore sets the trace storage backend
 func (s *Server) SetTraceStore(ts *trace.Store) {
 	s.traceStore = ts
 	s.otlpReceiver = trace.NewOTLPReceiver(ts)
+	if s.correlationEngine != nil {
+		s.correlationEngine.SetTraceStore(ts)
+	}
 }
 
 // SetWatchStore sets the watch storage and starts the engine
@@ -276,6 +495,9 @@ func (s *Server) SetDashboardStore(ds *dashboard.Store) {
 // SetLogStore sets the log storage backend
 func (s *Server) SetLogStore(ls *logs.Store) {
 	s.logStore = ls
+	if s.correlationEngine != nil {
+		s.correlationEngine.SetLogStore(ls)
+	}
 }
 
 // SetCustomMetricsStore sets the custom metrics storage backend
@@ -288,6 +510,17 @@ func (s *Server) SetCustomMetricsStore(cms *custommetrics.Store) {
 func (s *Server) SetSyntheticsStore(ss *synthetics.Store, notifier *watch.Notifier) {
 	s.syntheticsStore = ss
 	s.syntheticsRunner = synthetics.NewRunner(ss, notifier)
+
+	// Wire up health callback to update Service Catalog health from synthetics results
+	if s.catalogDiscovery != nil {
+		s.syntheticsRunner.SetHealthCallback(s.catalogDiscovery.UpdateServiceHealthFromSynthetics)
+	}
+
+	// Connect synthetics store to catalog handlers for context API
+	if s.catalogHandlers != nil {
+		s.catalogHandlers.SetSyntheticsStore(ss)
+	}
+
 	s.syntheticsRunner.Start()
 }
 
@@ -333,6 +566,9 @@ func (s *Server) StopContainerCollector() {
 // SetDeployStore sets the deployment store
 func (s *Server) SetDeployStore(ds *deploys.Store) {
 	s.deployStore = ds
+	if s.correlationEngine != nil {
+		s.correlationEngine.SetDeployStore(ds)
+	}
 }
 
 // SetIncidentStore sets the incident store and starts the pager
@@ -349,6 +585,16 @@ func (s *Server) SetIncidentStore(is *incidents.Store) {
 	// Connect pager to SLO calculator if already set up
 	if s.sloCalculator != nil {
 		s.sloCalculator.SetPager(s.pager)
+	}
+
+	// Connect incident store to catalog handlers for context API
+	if s.catalogHandlers != nil {
+		s.catalogHandlers.SetIncidentStore(is)
+	}
+
+	// Connect incident store to correlation engine
+	if s.correlationEngine != nil {
+		s.correlationEngine.SetIncidentStore(is)
 	}
 }
 
@@ -452,6 +698,30 @@ func (s *Server) GetAnomalyService() *anomaly.Service {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.anomalyService
+}
+
+// SetAlertManager sets the alert manager
+func (s *Server) SetAlertManager(am *alerting.AlertManager) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.alertManager = am
+	SetAlertManager(am) // Set for handlers
+}
+
+// GetAlertManager returns the alert manager
+func (s *Server) GetAlertManager() *alerting.AlertManager {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.alertManager
+}
+
+// StopAlertManager stops the alert manager
+func (s *Server) StopAlertManager() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.alertManager != nil {
+		s.alertManager.Stop()
+	}
 }
 
 // k8sPagerAdapter adapts our incidents.Pager to the kubernetes.IncidentTrigger interface
@@ -1082,13 +1352,8 @@ func (s *Server) handleListTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse query params
-	limit := 50
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
-			limit = parsed
-		}
-	}
+	// Parse pagination params
+	params := ParsePaginationParams(r)
 
 	service := r.URL.Query().Get("service")
 
@@ -1099,14 +1364,31 @@ func (s *Server) handleListTraces(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	traces, err := s.traceStore.ListTraces(limit, service, since)
+	// Fetch one extra to determine if there are more
+	traces, err := s.traceStore.ListTraces(params.Limit+1, service, since)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	// Determine if there are more results
+	hasMore := len(traces) > params.Limit
+	if hasMore {
+		traces = traces[:params.Limit]
+	}
+
+	// Set pagination headers
+	w.Header().Set("X-Page-Size", strconv.Itoa(params.Limit))
+	w.Header().Set("X-Has-More", strconv.FormatBool(hasMore))
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(traces)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"data": traces,
+		"pagination": map[string]interface{}{
+			"limit":    params.Limit,
+			"has_more": hasMore,
+		},
+	})
 }
 
 func (s *Server) handleGetTrace(w http.ResponseWriter, r *http.Request) {
@@ -1554,28 +1836,20 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse pagination params
+	params := ParsePaginationParams(r)
+
 	// Parse query parameters
 	q := logs.SearchQuery{
 		Query:   r.URL.Query().Get("q"),
 		Service: r.URL.Query().Get("service"),
 		TraceID: r.URL.Query().Get("trace_id"),
-		Limit:   100,
+		Limit:   params.Limit + 1, // Fetch one extra to check has_more
+		Offset:  params.Offset,
 	}
 
 	if level := r.URL.Query().Get("level"); level != "" {
 		q.Level = logs.LogLevel(level)
-	}
-
-	if limit := r.URL.Query().Get("limit"); limit != "" {
-		if l, err := strconv.Atoi(limit); err == nil && l > 0 {
-			q.Limit = l
-		}
-	}
-
-	if offset := r.URL.Query().Get("offset"); offset != "" {
-		if o, err := strconv.Atoi(offset); err == nil && o >= 0 {
-			q.Offset = o
-		}
 	}
 
 	// Time range - default to last hour
@@ -1599,8 +1873,28 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Determine if there are more results
+	hasMore := len(result.Entries) > params.Limit
+	if hasMore {
+		result.Entries = result.Entries[:params.Limit]
+	}
+
+	// Set pagination headers
+	w.Header().Set("X-Total-Count", strconv.Itoa(result.TotalCount))
+	w.Header().Set("X-Page-Size", strconv.Itoa(params.Limit))
+	w.Header().Set("X-Has-More", strconv.FormatBool(hasMore))
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"data":  result.Entries,
+		"total": result.TotalCount,
+		"pagination": map[string]interface{}{
+			"limit":    params.Limit,
+			"offset":   params.Offset,
+			"has_more": hasMore,
+			"total":    result.TotalCount,
+		},
+	})
 }
 
 func (s *Server) handleLogIngest(w http.ResponseWriter, r *http.Request) {
@@ -2705,21 +2999,34 @@ func (s *Server) handleIncidents(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
+		params := ParsePaginationParams(r)
 		status := r.URL.Query().Get("status")
-		limit := 50
-		if l := r.URL.Query().Get("limit"); l != "" {
-			if parsed, err := strconv.Atoi(l); err == nil {
-				limit = parsed
-			}
-		}
 
-		incs, err := s.incidentStore.ListIncidents(status, limit)
+		// Fetch one extra to check for more
+		incs, err := s.incidentStore.ListIncidents(status, params.Limit+1)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+
+		// Determine if there are more results
+		hasMore := len(incs) > params.Limit
+		if hasMore {
+			incs = incs[:params.Limit]
+		}
+
+		// Set pagination headers
+		w.Header().Set("X-Page-Size", strconv.Itoa(params.Limit))
+		w.Header().Set("X-Has-More", strconv.FormatBool(hasMore))
+
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(incs)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": incs,
+			"pagination": map[string]interface{}{
+				"limit":    params.Limit,
+				"has_more": hasMore,
+			},
+		})
 
 	case http.MethodPost:
 		var inc incidents.Incident

@@ -37,9 +37,10 @@ type Incident struct {
 	Description string            `json:"description"`
 	Severity    Severity          `json:"severity"`
 	Status      Status            `json:"status"`
-	Service     string            `json:"service"`     // Affected service
-	Source      string            `json:"source"`      // watch, slo, synthetic, manual
-	SourceID    string            `json:"source_id"`   // ID of triggering alert
+	Service     string            `json:"service"`      // Affected service name (for display)
+	ServiceID   string            `json:"service_id"`   // Link to service catalog
+	Source      string            `json:"source"`       // watch, slo, synthetic, manual
+	SourceID    string            `json:"source_id"`    // ID of triggering alert
 	CreatedAt   time.Time         `json:"created_at"`
 	UpdatedAt   time.Time         `json:"updated_at"`
 	AckedAt     *time.Time        `json:"acked_at,omitempty"`
@@ -148,6 +149,7 @@ func NewStore(dbPath string) (*Store, error) {
 		severity TEXT DEFAULT 'medium',
 		status TEXT DEFAULT 'triggered',
 		service TEXT,
+		service_id TEXT,
 		source TEXT,
 		source_id TEXT,
 		created_at DATETIME NOT NULL,
@@ -165,6 +167,7 @@ func NewStore(dbPath string) (*Store, error) {
 	CREATE INDEX IF NOT EXISTS idx_incident_severity ON incidents(severity);
 	CREATE INDEX IF NOT EXISTS idx_incident_created ON incidents(created_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_incident_service ON incidents(service);
+	CREATE INDEX IF NOT EXISTS idx_incident_service_id ON incidents(service_id);
 
 	CREATE TABLE IF NOT EXISTS oncall_schedules (
 		id TEXT PRIMARY KEY,
@@ -242,10 +245,10 @@ func (s *Store) CreateIncident(inc *Incident) error {
 	timelineJSON, _ := json.Marshal(inc.Timeline)
 
 	_, err := s.db.Exec(`
-		INSERT INTO incidents (id, title, description, severity, status, service, source, source_id,
+		INSERT INTO incidents (id, title, description, severity, status, service, service_id, source, source_id,
 			created_at, updated_at, assigned_to, escalation_level, tags, timeline)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		inc.ID, inc.Title, inc.Description, inc.Severity, inc.Status, inc.Service, inc.Source, inc.SourceID,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		inc.ID, inc.Title, inc.Description, inc.Severity, inc.Status, inc.Service, inc.ServiceID, inc.Source, inc.SourceID,
 		inc.CreatedAt, inc.UpdatedAt, inc.AssignedTo, inc.EscLevel, string(tagsJSON), string(timelineJSON),
 	)
 	return err
@@ -257,7 +260,7 @@ func (s *Store) GetIncident(id string) (*Incident, error) {
 	defer s.mu.RUnlock()
 
 	row := s.db.QueryRow(`
-		SELECT id, title, description, severity, status, service, source, source_id,
+		SELECT id, title, description, severity, status, service, service_id, source, source_id,
 			created_at, updated_at, acked_at, acked_by, resolved_at, resolved_by,
 			assigned_to, escalation_level, tags, timeline
 		FROM incidents WHERE id = ?`, id)
@@ -279,14 +282,14 @@ func (s *Store) ListIncidents(status string, limit int) ([]Incident, error) {
 
 	if status != "" && status != "all" {
 		rows, err = s.db.Query(`
-			SELECT id, title, description, severity, status, service, source, source_id,
+			SELECT id, title, description, severity, status, service, service_id, source, source_id,
 				created_at, updated_at, acked_at, acked_by, resolved_at, resolved_by,
 				assigned_to, escalation_level, tags, timeline
 			FROM incidents WHERE status = ?
 			ORDER BY created_at DESC LIMIT ?`, status, limit)
 	} else {
 		rows, err = s.db.Query(`
-			SELECT id, title, description, severity, status, service, source, source_id,
+			SELECT id, title, description, severity, status, service, service_id, source, source_id,
 				created_at, updated_at, acked_at, acked_by, resolved_at, resolved_by,
 				assigned_to, escalation_level, tags, timeline
 			FROM incidents ORDER BY created_at DESC LIMIT ?`, limit)
@@ -306,7 +309,7 @@ func (s *Store) ListActiveIncidents() ([]Incident, error) {
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(`
-		SELECT id, title, description, severity, status, service, source, source_id,
+		SELECT id, title, description, severity, status, service, service_id, source, source_id,
 			created_at, updated_at, acked_at, acked_by, resolved_at, resolved_by,
 			assigned_to, escalation_level, tags, timeline
 		FROM incidents WHERE status IN ('triggered', 'acknowledged')
@@ -318,6 +321,29 @@ func (s *Store) ListActiveIncidents() ([]Incident, error) {
 				ELSE 4
 			END,
 			created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return s.scanIncidents(rows)
+}
+
+// ListIncidentsByService returns incidents for a specific service
+func (s *Store) ListIncidentsByService(serviceID string, limit int) ([]Incident, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if limit <= 0 {
+		limit = 50
+	}
+
+	rows, err := s.db.Query(`
+		SELECT id, title, description, severity, status, service, service_id, source, source_id,
+			created_at, updated_at, acked_at, acked_by, resolved_at, resolved_by,
+			assigned_to, escalation_level, tags, timeline
+		FROM incidents WHERE service_id = ?
+		ORDER BY created_at DESC LIMIT ?`, serviceID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -772,11 +798,12 @@ func (s *Store) GetNotificationLogs(incidentID string) ([]NotificationLog, error
 
 func (s *Store) scanIncident(row *sql.Row) (*Incident, error) {
 	var inc Incident
+	var serviceID sql.NullString
 	var ackedAt, resolvedAt sql.NullTime
 	var ackedBy, resolvedBy, assignedTo, tagsJSON, timelineJSON sql.NullString
 
 	err := row.Scan(&inc.ID, &inc.Title, &inc.Description, &inc.Severity, &inc.Status,
-		&inc.Service, &inc.Source, &inc.SourceID, &inc.CreatedAt, &inc.UpdatedAt,
+		&inc.Service, &serviceID, &inc.Source, &inc.SourceID, &inc.CreatedAt, &inc.UpdatedAt,
 		&ackedAt, &ackedBy, &resolvedAt, &resolvedBy, &assignedTo, &inc.EscLevel,
 		&tagsJSON, &timelineJSON)
 	if err == sql.ErrNoRows {
@@ -786,6 +813,7 @@ func (s *Store) scanIncident(row *sql.Row) (*Incident, error) {
 		return nil, err
 	}
 
+	inc.ServiceID = serviceID.String
 	if ackedAt.Valid {
 		inc.AckedAt = &ackedAt.Time
 	}
@@ -810,17 +838,19 @@ func (s *Store) scanIncidents(rows *sql.Rows) ([]Incident, error) {
 	var incidents []Incident
 	for rows.Next() {
 		var inc Incident
+		var serviceID sql.NullString
 		var ackedAt, resolvedAt sql.NullTime
 		var ackedBy, resolvedBy, assignedTo, tagsJSON, timelineJSON sql.NullString
 
 		err := rows.Scan(&inc.ID, &inc.Title, &inc.Description, &inc.Severity, &inc.Status,
-			&inc.Service, &inc.Source, &inc.SourceID, &inc.CreatedAt, &inc.UpdatedAt,
+			&inc.Service, &serviceID, &inc.Source, &inc.SourceID, &inc.CreatedAt, &inc.UpdatedAt,
 			&ackedAt, &ackedBy, &resolvedAt, &resolvedBy, &assignedTo, &inc.EscLevel,
 			&tagsJSON, &timelineJSON)
 		if err != nil {
 			continue
 		}
 
+		inc.ServiceID = serviceID.String
 		if ackedAt.Valid {
 			inc.AckedAt = &ackedAt.Time
 		}

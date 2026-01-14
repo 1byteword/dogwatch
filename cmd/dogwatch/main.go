@@ -13,8 +13,11 @@ import (
 	"time"
 
 	"dogwatch/internal/aggregator"
+	"dogwatch/internal/alerting"
 	"dogwatch/internal/anomaly"
+	"dogwatch/internal/audit"
 	"dogwatch/internal/containers"
+	"dogwatch/internal/sso"
 	"dogwatch/internal/custommetrics"
 	"dogwatch/internal/deploys"
 	"dogwatch/internal/dashboard"
@@ -22,8 +25,10 @@ import (
 	"dogwatch/internal/incidents"
 	"dogwatch/internal/kubernetes"
 	"dogwatch/internal/logs"
+	"dogwatch/internal/notify"
 	"dogwatch/internal/oncall"
 	"dogwatch/internal/probe"
+	"dogwatch/internal/rbac"
 	"dogwatch/internal/slo"
 	"dogwatch/internal/storage"
 	"dogwatch/internal/synthetics"
@@ -235,6 +240,88 @@ func main() {
 		fmt.Printf("On-call storage: %s\n", oncallDbPath)
 	}
 
+	// Create RBAC storage and auth
+	rbacDbPath := filepath.Join(*dataDir, "rbac.db")
+	rbacStore, err := rbac.NewStore(rbacDbPath)
+	if err != nil {
+		log.Printf("Warning: Could not create RBAC storage: %v", err)
+	} else {
+		defer rbacStore.Close()
+		fmt.Printf("RBAC storage: %s\n", rbacDbPath)
+
+		// Ensure default organization exists
+		defaultOrg, _ := rbacStore.EnsureDefaultOrg("default", "Default Organization")
+		if defaultOrg != nil {
+			fmt.Printf("Default organization: %s (%s)\n", defaultOrg.Name, defaultOrg.ID)
+		}
+
+		// Create auth and middleware
+		rbacAuth := rbac.NewAuth(rbacStore)
+		rbacMiddleware := rbac.NewMiddleware(rbacAuth)
+
+		// Ensure default admin user exists (in production, use env vars)
+		adminEmail := os.Getenv("DOGWATCH_ADMIN_EMAIL")
+		adminPassword := os.Getenv("DOGWATCH_ADMIN_PASSWORD")
+		if adminEmail == "" {
+			adminEmail = "admin@localhost"
+		}
+		if adminPassword == "" {
+			adminPassword = "changeme123"
+		}
+
+		if defaultOrg != nil {
+			admin, _ := rbacAuth.EnsureDefaultAdmin(defaultOrg.ID, adminEmail, adminPassword)
+			if admin != nil {
+				fmt.Printf("Admin user: %s (role: %s)\n", admin.Email, admin.Role)
+			}
+		}
+
+		// Set RBAC for web handlers
+		web.SetRBACAuth(rbacAuth, rbacMiddleware, rbacStore)
+		fmt.Printf("Authentication: http://localhost:%d/api/auth/login\n", *webPort)
+	}
+
+	// Create notification service
+	notifyDbPath := filepath.Join(*dataDir, "notify.db")
+	notifyStore, err := notify.NewStore(notifyDbPath)
+	var notifyService *notify.Service
+	if err != nil {
+		log.Printf("Warning: Could not create notification storage: %v", err)
+	} else {
+		defer notifyStore.Close()
+		baseURL := fmt.Sprintf("http://localhost:%d", *webPort)
+		notifyService = notify.NewService(notifyStore, baseURL)
+		web.SetNotifyService(notifyService)
+		fmt.Printf("Notification storage: %s\n", notifyDbPath)
+		fmt.Printf("Notification channels: http://localhost:%d/api/notify/channels\n", *webPort)
+	}
+
+	// Create audit logging store
+	auditDbPath := filepath.Join(*dataDir, "audit.db")
+	auditStore, err := audit.NewStore(auditDbPath)
+	if err != nil {
+		log.Printf("Warning: Could not create audit storage: %v", err)
+	} else {
+		defer auditStore.Close()
+		web.SetAuditStore(auditStore)
+		fmt.Printf("Audit storage: %s\n", auditDbPath)
+		fmt.Printf("Audit logs: http://localhost:%d/api/audit/logs\n", *webPort)
+	}
+
+	// Create SSO store and initialize SSO
+	ssoDbPath := filepath.Join(*dataDir, "sso.db")
+	ssoStore, err := sso.NewStore(ssoDbPath)
+	if err != nil {
+		log.Printf("Warning: Could not create SSO storage: %v", err)
+	} else {
+		defer ssoStore.Close()
+		baseURL := fmt.Sprintf("http://localhost:%d", *webPort)
+		web.InitSSO(ssoStore, baseURL)
+		fmt.Printf("SSO storage: %s\n", ssoDbPath)
+		fmt.Printf("OAuth2 providers: http://localhost:%d/api/auth/providers\n", *webPort)
+		fmt.Printf("SAML SSO: http://localhost:%d/api/auth/saml/login?org=ORG_ID\n", *webPort)
+	}
+
 	// Initialize federation cluster if enabled
 	var cluster *federation.Cluster
 	if *clusterEnabled {
@@ -335,6 +422,96 @@ func main() {
 			webServer.SetOncallStore(oncallStore)
 			fmt.Println("On-call schedules: http://localhost:9999/api/oncall/schedules")
 			fmt.Println("Escalation policies: http://localhost:9999/api/oncall/policies")
+		}
+
+		// Set up alerting system
+		alertingDbPath := filepath.Join(*dataDir, "alerting.db")
+		metricsProvider := alerting.NewSimpleMetricsProvider()
+		alertManager, err := alerting.NewAlertManager(alertingDbPath, metricsProvider)
+		if err != nil {
+			log.Printf("Warning: Could not create alert manager: %v", err)
+		} else {
+			// Register default receivers
+			alertManager.Router.RegisterReceiver(alerting.NewLogReceiver("default"))
+
+			// Register notification service receiver if available
+			if notifyService != nil {
+				alertManager.Router.RegisterReceiver(alerting.NewNotifyServiceReceiver(
+					"notify",
+					func(group *alerting.AlertGroup) error {
+						// Send to all enabled channels
+						for _, alert := range group.Alerts {
+							// Map alert severity
+							var severity notify.Severity
+							switch alert.Severity {
+							case alerting.SeverityCritical:
+								severity = notify.SeverityCritical
+							case alerting.SeverityWarning:
+								severity = notify.SeverityWarning
+							default:
+								severity = notify.SeverityInfo
+							}
+
+							// Get description from annotations if available
+							message := alert.RuleName + " is firing"
+							if desc, ok := alert.Annotations["description"]; ok {
+								message = desc
+							} else if summary, ok := alert.Annotations["summary"]; ok {
+								message = summary
+							}
+
+							// Handle nil FiredAt
+							timestamp := time.Now()
+							if alert.FiredAt != nil {
+								timestamp = *alert.FiredAt
+							}
+
+							notification := &notify.Notification{
+								Type:      notify.NotificationAlert,
+								Title:     alert.RuleName,
+								Message:   message,
+								Severity:  severity,
+								Source:    "alerting",
+								Value:     alert.Value,
+								Threshold: alert.Threshold,
+								Labels:    alert.Labels,
+								Timestamp: timestamp,
+							}
+
+							// Send to all channels (type-agnostic broadcast)
+							channels, _ := notifyService.GetStore().ListChannels("")
+							for _, ch := range channels {
+								if ch.Enabled {
+									notifyService.Send(ch.ID, notification)
+								}
+							}
+						}
+						return nil
+					},
+				))
+				log.Println("[alerting] Notification service receiver registered")
+			}
+
+			// Connect to on-call escalation if available
+			if oncallStore != nil {
+				oncallCalc := oncall.NewCalculator(oncallStore)
+				escalationEngine := oncall.NewEscalationEngine(oncallStore, oncallCalc)
+				escalationEngine.RegisterChannel(&oncall.LogChannel{})
+				escalationEngine.Start()
+
+				// Create on-call receiver that triggers escalation
+				alertManager.Router.RegisterReceiver(alerting.NewOnCallReceiver(
+					"oncall",
+					"", // Default escalation ID
+					func(incidentID, policyID string) error {
+						return escalationEngine.TriggerIncident(incidentID, policyID)
+					},
+				))
+			}
+
+			alertManager.Start()
+			webServer.SetAlertManager(alertManager)
+			fmt.Printf("Alerting: http://localhost:%d/api/alerting\n", *webPort)
 		}
 
 		// Set up federation cluster
@@ -505,6 +682,7 @@ func main() {
 			fmt.Print(agg.Summary())
 			fmt.Println("Shutting down...")
 			if webServer != nil {
+				webServer.StopAlertManager()
 				webServer.StopK8sCollector()
 				webServer.StopCluster()
 				webServer.StopContainerCollector()

@@ -14,13 +14,17 @@ import (
 	"dogwatch/internal/watch"
 )
 
+// HealthCallback is called after each check with service health info
+type HealthCallback func(serviceID string, passing bool, responseTimeMs float64)
+
 // Runner executes synthetic checks on schedule
 type Runner struct {
-	store    *Store
-	notifier *watch.Notifier
-	client   *http.Client
-	stopChan chan struct{}
-	wg       sync.WaitGroup
+	store          *Store
+	notifier       *watch.Notifier
+	healthCallback HealthCallback
+	client         *http.Client
+	stopChan       chan struct{}
+	wg             sync.WaitGroup
 
 	// Track last run time for each check
 	lastRun   map[string]time.Time
@@ -41,6 +45,12 @@ func NewRunner(store *Store, notifier *watch.Notifier) *Runner {
 		stopChan: make(chan struct{}),
 		lastRun:  make(map[string]time.Time),
 	}
+}
+
+// SetHealthCallback sets a callback to be invoked after each check
+// with service health information for Service Catalog integration
+func (r *Runner) SetHealthCallback(cb HealthCallback) {
+	r.healthCallback = cb
 }
 
 // Start begins the check runner loop
@@ -124,6 +134,12 @@ func (r *Runner) executeCheck(check Check) {
 	// Update check status
 	if err := r.store.UpdateCheckStatus(check.ID, result.Status, result.LatencyMs); err != nil {
 		log.Printf("[synthetics] Failed to update status for %s: %v", check.Name, err)
+	}
+
+	// Update service health via callback if check is linked to a service
+	if check.ServiceID != "" && r.healthCallback != nil {
+		passing := result.Status == StatusUp
+		r.healthCallback(check.ServiceID, passing, float64(result.LatencyMs))
 	}
 
 	// Send notification if check failed and has channels configured

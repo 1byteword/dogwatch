@@ -33,6 +33,7 @@ const (
 type Check struct {
 	ID          string            `json:"id"`
 	Name        string            `json:"name"`
+	ServiceID   string            `json:"service_id,omitempty"` // Link to service catalog
 	Type        CheckType         `json:"type"`
 	URL         string            `json:"url"`
 	Method      string            `json:"method,omitempty"`
@@ -98,6 +99,7 @@ func NewStore(dbPath string) (*Store, error) {
 	CREATE TABLE IF NOT EXISTS checks (
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL,
+		service_id TEXT,
 		type TEXT NOT NULL,
 		url TEXT NOT NULL,
 		method TEXT DEFAULT 'GET',
@@ -114,6 +116,7 @@ func NewStore(dbPath string) (*Store, error) {
 		created DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
+	CREATE INDEX IF NOT EXISTS idx_check_service ON checks(service_id);
 
 	CREATE TABLE IF NOT EXISTS check_results (
 		id TEXT PRIMARY KEY,
@@ -172,9 +175,9 @@ func (s *Store) CreateCheck(c *Check) error {
 	channelsJSON, _ := json.Marshal(c.Channels)
 
 	_, err := s.db.Exec(`
-		INSERT INTO checks (id, name, type, url, method, headers, body, interval_secs, timeout_secs, assertions, channels, enabled, status, created, updated)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		c.ID, c.Name, c.Type, c.URL, c.Method, string(headersJSON), c.Body,
+		INSERT INTO checks (id, name, service_id, type, url, method, headers, body, interval_secs, timeout_secs, assertions, channels, enabled, status, created, updated)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.ID, c.Name, c.ServiceID, c.Type, c.URL, c.Method, string(headersJSON), c.Body,
 		c.Interval, c.Timeout, string(assertionsJSON), string(channelsJSON),
 		c.Enabled, c.Status, c.Created, c.Updated,
 	)
@@ -184,7 +187,7 @@ func (s *Store) CreateCheck(c *Check) error {
 // GetCheck retrieves a check by ID
 func (s *Store) GetCheck(id string) (*Check, error) {
 	row := s.db.QueryRow(`
-		SELECT id, name, type, url, method, headers, body, interval_secs, timeout_secs,
+		SELECT id, name, service_id, type, url, method, headers, body, interval_secs, timeout_secs,
 		       assertions, channels, enabled, status, last_check, last_latency_ms, created, updated
 		FROM checks WHERE id = ?`, id)
 
@@ -194,7 +197,7 @@ func (s *Store) GetCheck(id string) (*Check, error) {
 // ListChecks returns all checks
 func (s *Store) ListChecks() ([]Check, error) {
 	rows, err := s.db.Query(`
-		SELECT id, name, type, url, method, headers, body, interval_secs, timeout_secs,
+		SELECT id, name, service_id, type, url, method, headers, body, interval_secs, timeout_secs,
 		       assertions, channels, enabled, status, last_check, last_latency_ms, created, updated
 		FROM checks ORDER BY name`)
 	if err != nil {
@@ -216,7 +219,7 @@ func (s *Store) ListChecks() ([]Check, error) {
 // ListEnabledChecks returns all enabled checks
 func (s *Store) ListEnabledChecks() ([]Check, error) {
 	rows, err := s.db.Query(`
-		SELECT id, name, type, url, method, headers, body, interval_secs, timeout_secs,
+		SELECT id, name, service_id, type, url, method, headers, body, interval_secs, timeout_secs,
 		       assertions, channels, enabled, status, last_check, last_latency_ms, created, updated
 		FROM checks WHERE enabled = 1 ORDER BY name`)
 	if err != nil {
@@ -244,14 +247,36 @@ func (s *Store) UpdateCheck(c *Check) error {
 	channelsJSON, _ := json.Marshal(c.Channels)
 
 	_, err := s.db.Exec(`
-		UPDATE checks SET name=?, type=?, url=?, method=?, headers=?, body=?,
+		UPDATE checks SET name=?, service_id=?, type=?, url=?, method=?, headers=?, body=?,
 		       interval_secs=?, timeout_secs=?, assertions=?, channels=?, enabled=?, updated=?
 		WHERE id=?`,
-		c.Name, c.Type, c.URL, c.Method, string(headersJSON), c.Body,
+		c.Name, c.ServiceID, c.Type, c.URL, c.Method, string(headersJSON), c.Body,
 		c.Interval, c.Timeout, string(assertionsJSON), string(channelsJSON),
 		c.Enabled, c.Updated, c.ID,
 	)
 	return err
+}
+
+// ListChecksByService returns all checks for a given service
+func (s *Store) ListChecksByService(serviceID string) ([]Check, error) {
+	rows, err := s.db.Query(`
+		SELECT id, name, service_id, type, url, method, headers, body, interval_secs, timeout_secs,
+		       assertions, channels, enabled, status, last_check, last_latency_ms, created, updated
+		FROM checks WHERE service_id = ? ORDER BY name`, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var checks []Check
+	for rows.Next() {
+		c, err := s.scanCheckRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		checks = append(checks, *c)
+	}
+	return checks, nil
 }
 
 // UpdateCheckStatus updates the status and last check time
@@ -389,12 +414,13 @@ func (s *Store) Cleanup(maxAge time.Duration) (int64, error) {
 
 func (s *Store) scanCheck(row *sql.Row) (*Check, error) {
 	var c Check
+	var serviceID sql.NullString
 	var headersJSON, assertionsJSON, channelsJSON sql.NullString
 	var lastCheck sql.NullTime
 	var lastLatency sql.NullInt64
 
 	err := row.Scan(
-		&c.ID, &c.Name, &c.Type, &c.URL, &c.Method, &headersJSON, &c.Body,
+		&c.ID, &c.Name, &serviceID, &c.Type, &c.URL, &c.Method, &headersJSON, &c.Body,
 		&c.Interval, &c.Timeout, &assertionsJSON, &channelsJSON,
 		&c.Enabled, &c.Status, &lastCheck, &lastLatency, &c.Created, &c.Updated,
 	)
@@ -405,6 +431,7 @@ func (s *Store) scanCheck(row *sql.Row) (*Check, error) {
 		return nil, err
 	}
 
+	c.ServiceID = serviceID.String
 	if headersJSON.Valid {
 		json.Unmarshal([]byte(headersJSON.String), &c.Headers)
 	}
@@ -422,12 +449,13 @@ func (s *Store) scanCheck(row *sql.Row) (*Check, error) {
 
 func (s *Store) scanCheckRows(rows *sql.Rows) (*Check, error) {
 	var c Check
+	var serviceID sql.NullString
 	var headersJSON, assertionsJSON, channelsJSON sql.NullString
 	var lastCheck sql.NullTime
 	var lastLatency sql.NullInt64
 
 	err := rows.Scan(
-		&c.ID, &c.Name, &c.Type, &c.URL, &c.Method, &headersJSON, &c.Body,
+		&c.ID, &c.Name, &serviceID, &c.Type, &c.URL, &c.Method, &headersJSON, &c.Body,
 		&c.Interval, &c.Timeout, &assertionsJSON, &channelsJSON,
 		&c.Enabled, &c.Status, &lastCheck, &lastLatency, &c.Created, &c.Updated,
 	)
@@ -435,6 +463,7 @@ func (s *Store) scanCheckRows(rows *sql.Rows) (*Check, error) {
 		return nil, err
 	}
 
+	c.ServiceID = serviceID.String
 	if headersJSON.Valid {
 		json.Unmarshal([]byte(headersJSON.String), &c.Headers)
 	}

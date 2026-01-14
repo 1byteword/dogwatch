@@ -52,6 +52,7 @@ type SLO struct {
 	ID          string     `json:"id"`
 	Name        string     `json:"name"`
 	Description string     `json:"description"`
+	ServiceID   string     `json:"service_id,omitempty"` // Link to service catalog
 	Type        SLOType    `json:"type"`
 	Target      float64    `json:"target"`       // Target value (e.g., 99.9 for availability)
 	Window      TimeWindow `json:"window"`       // Time window for evaluation
@@ -107,6 +108,7 @@ func NewStore(dbPath string) (*Store, error) {
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL,
 		description TEXT,
+		service_id TEXT,
 		type TEXT NOT NULL,
 		target REAL NOT NULL,
 		window TEXT NOT NULL,
@@ -116,6 +118,7 @@ func NewStore(dbPath string) (*Store, error) {
 		created DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
+	CREATE INDEX IF NOT EXISTS idx_slo_service ON slos(service_id);
 
 	CREATE TABLE IF NOT EXISTS slo_snapshots (
 		id TEXT PRIMARY KEY,
@@ -157,9 +160,9 @@ func (s *Store) CreateSLO(slo *SLO) error {
 	sourceJSON, _ := json.Marshal(slo.Source)
 
 	_, err := s.db.Exec(`
-		INSERT INTO slos (id, name, description, type, target, window, source, threshold, enabled, created, updated)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		slo.ID, slo.Name, slo.Description, slo.Type, slo.Target, slo.Window,
+		INSERT INTO slos (id, name, description, service_id, type, target, window, source, threshold, enabled, created, updated)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		slo.ID, slo.Name, slo.Description, slo.ServiceID, slo.Type, slo.Target, slo.Window,
 		string(sourceJSON), slo.Threshold, slo.Enabled, slo.Created, slo.Updated,
 	)
 	return err
@@ -168,7 +171,7 @@ func (s *Store) CreateSLO(slo *SLO) error {
 // GetSLO retrieves an SLO by ID
 func (s *Store) GetSLO(id string) (*SLO, error) {
 	row := s.db.QueryRow(`
-		SELECT id, name, description, type, target, window, source, threshold, enabled, created, updated
+		SELECT id, name, description, service_id, type, target, window, source, threshold, enabled, created, updated
 		FROM slos WHERE id = ?`, id)
 
 	return s.scanSLO(row)
@@ -177,8 +180,29 @@ func (s *Store) GetSLO(id string) (*SLO, error) {
 // ListSLOs returns all SLOs
 func (s *Store) ListSLOs() ([]SLO, error) {
 	rows, err := s.db.Query(`
-		SELECT id, name, description, type, target, window, source, threshold, enabled, created, updated
+		SELECT id, name, description, service_id, type, target, window, source, threshold, enabled, created, updated
 		FROM slos ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var slos []SLO
+	for rows.Next() {
+		slo, err := s.scanSLORows(rows)
+		if err != nil {
+			return nil, err
+		}
+		slos = append(slos, *slo)
+	}
+	return slos, nil
+}
+
+// ListSLOsByService returns all SLOs for a given service
+func (s *Store) ListSLOsByService(serviceID string) ([]SLO, error) {
+	rows, err := s.db.Query(`
+		SELECT id, name, description, service_id, type, target, window, source, threshold, enabled, created, updated
+		FROM slos WHERE service_id = ? ORDER BY name`, serviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +222,7 @@ func (s *Store) ListSLOs() ([]SLO, error) {
 // ListEnabledSLOs returns all enabled SLOs
 func (s *Store) ListEnabledSLOs() ([]SLO, error) {
 	rows, err := s.db.Query(`
-		SELECT id, name, description, type, target, window, source, threshold, enabled, created, updated
+		SELECT id, name, description, service_id, type, target, window, source, threshold, enabled, created, updated
 		FROM slos WHERE enabled = 1 ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -222,9 +246,9 @@ func (s *Store) UpdateSLO(slo *SLO) error {
 	sourceJSON, _ := json.Marshal(slo.Source)
 
 	_, err := s.db.Exec(`
-		UPDATE slos SET name=?, description=?, type=?, target=?, window=?, source=?, threshold=?, enabled=?, updated=?
+		UPDATE slos SET name=?, description=?, service_id=?, type=?, target=?, window=?, source=?, threshold=?, enabled=?, updated=?
 		WHERE id=?`,
-		slo.Name, slo.Description, slo.Type, slo.Target, slo.Window,
+		slo.Name, slo.Description, slo.ServiceID, slo.Type, slo.Target, slo.Window,
 		string(sourceJSON), slo.Threshold, slo.Enabled, slo.Updated, slo.ID,
 	)
 	return err
@@ -298,8 +322,9 @@ func (s *Store) scanSLO(row *sql.Row) (*SLO, error) {
 	var slo SLO
 	var sourceJSON string
 	var threshold sql.NullFloat64
+	var serviceID sql.NullString
 
-	err := row.Scan(&slo.ID, &slo.Name, &slo.Description, &slo.Type, &slo.Target,
+	err := row.Scan(&slo.ID, &slo.Name, &slo.Description, &serviceID, &slo.Type, &slo.Target,
 		&slo.Window, &sourceJSON, &threshold, &slo.Enabled, &slo.Created, &slo.Updated)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -310,6 +335,7 @@ func (s *Store) scanSLO(row *sql.Row) (*SLO, error) {
 
 	json.Unmarshal([]byte(sourceJSON), &slo.Source)
 	slo.Threshold = threshold.Float64
+	slo.ServiceID = serviceID.String
 	return &slo, nil
 }
 
@@ -317,8 +343,9 @@ func (s *Store) scanSLORows(rows *sql.Rows) (*SLO, error) {
 	var slo SLO
 	var sourceJSON string
 	var threshold sql.NullFloat64
+	var serviceID sql.NullString
 
-	err := rows.Scan(&slo.ID, &slo.Name, &slo.Description, &slo.Type, &slo.Target,
+	err := rows.Scan(&slo.ID, &slo.Name, &slo.Description, &serviceID, &slo.Type, &slo.Target,
 		&slo.Window, &sourceJSON, &threshold, &slo.Enabled, &slo.Created, &slo.Updated)
 	if err != nil {
 		return nil, err
@@ -326,6 +353,7 @@ func (s *Store) scanSLORows(rows *sql.Rows) (*SLO, error) {
 
 	json.Unmarshal([]byte(sourceJSON), &slo.Source)
 	slo.Threshold = threshold.Float64
+	slo.ServiceID = serviceID.String
 	return &slo, nil
 }
 
