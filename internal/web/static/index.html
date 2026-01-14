@@ -3394,6 +3394,7 @@
         grid.on('change', saveLayout);
         loadLayout();
         loadDashboards();
+        setTimeout(initCharts, 100);
 
         // Utility functions
         function formatBytes(b) {
