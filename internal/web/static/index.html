@@ -105,34 +105,90 @@
         .stat-big { font-size: 1.8rem; font-weight: 700; }
         .stat-big.error { color: #f4212e; }
 
-        /* Service map - redesigned */
-        .svcmap-container { position: relative; width: 100%; height: 100%; background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 100%); }
-        .svcmap-controls { position: absolute; top: 8px; right: 8px; display: flex; gap: 4px; z-index: 10; }
-        .svcmap-controls select, .svcmap-controls button { padding: 4px 8px; font-size: 0.7rem; background: #2f3336; border: 1px solid #3f4346; border-radius: 4px; color: #e7e9ea; cursor: pointer; }
-        .svcmap-controls select:hover, .svcmap-controls button:hover { background: #3f4346; }
-        .svcmap-legend { position: absolute; bottom: 8px; left: 8px; display: flex; gap: 12px; font-size: 0.65rem; color: #71767b; }
-        .svcmap-legend-item { display: flex; align-items: center; gap: 4px; }
-        .svcmap-legend-dot { width: 8px; height: 8px; border-radius: 50%; }
-        .svcmap-stats { position: absolute; top: 8px; left: 8px; font-size: 0.7rem; color: #71767b; }
-        .svcmap-node { cursor: pointer; transition: transform 0.2s; }
-        .svcmap-node:hover { transform: scale(1.1); }
-        .svcmap-node-healthy { fill: #00ba7c; filter: drop-shadow(0 0 4px rgba(0,186,124,0.5)); }
-        .svcmap-node-degraded { fill: #ffd400; filter: drop-shadow(0 0 4px rgba(255,212,0,0.5)); }
-        .svcmap-node-unhealthy { fill: #f4212e; filter: drop-shadow(0 0 4px rgba(244,33,46,0.5)); animation: pulse-node 1.5s infinite; }
-        .svcmap-node-external { fill: #7c3aed; filter: drop-shadow(0 0 4px rgba(124,58,237,0.5)); }
-        .svcmap-node-process { fill: #1d9bf0; filter: drop-shadow(0 0 4px rgba(29,155,240,0.5)); }
-        @keyframes pulse-node { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
-        .svcmap-node-label { fill: #e7e9ea; font-size: 11px; font-weight: 500; pointer-events: none; text-shadow: 0 1px 2px rgba(0,0,0,0.8); }
-        .svcmap-node-sublabel { fill: #71767b; font-size: 9px; pointer-events: none; }
-        .svcmap-edge { stroke: #3f4346; stroke-width: 2; fill: none; }
-        .svcmap-edge-active { stroke: #1d9bf0; stroke-width: 2; stroke-dasharray: 8 4; animation: flow 1s linear infinite; }
-        .svcmap-edge-error { stroke: #f4212e; stroke-width: 2; }
-        @keyframes flow { from { stroke-dashoffset: 12; } to { stroke-dashoffset: 0; } }
-        .svcmap-edge-label { fill: #71767b; font-size: 9px; font-family: monospace; }
-        .svcmap-tooltip { position: absolute; background: #1a1f2e; border: 1px solid #3f4346; border-radius: 6px; padding: 8px 12px; font-size: 0.75rem; pointer-events: none; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
-        .svcmap-tooltip-title { font-weight: 600; color: #e7e9ea; margin-bottom: 4px; }
-        .svcmap-tooltip-row { display: flex; justify-content: space-between; gap: 16px; color: #71767b; }
-        .svcmap-tooltip-value { color: #e7e9ea; font-family: monospace; }
+        /* Service Map - Redesigned */
+        .svcmap-container { position: relative; width: 100%; height: 100%; background: radial-gradient(ellipse at center, #1a1f2e 0%, #0f1419 100%); overflow: hidden; }
+        .svcmap-container svg { position: absolute; top: 0; left: 0; width: 100%; height: calc(100% - 40px); }
+        .svcmap-toolbar { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; justify-content: space-between; align-items: center; z-index: 10; }
+        .svcmap-controls { display: flex; gap: 6px; align-items: center; }
+        .svcmap-controls select, .svcmap-controls button { padding: 6px 10px; font-size: 0.7rem; background: rgba(47,51,54,0.9); border: 1px solid #3f4346; border-radius: 6px; color: #e7e9ea; cursor: pointer; backdrop-filter: blur(4px); }
+        .svcmap-controls select:hover, .svcmap-controls button:hover { background: rgba(63,67,70,0.9); border-color: #1d9bf0; }
+        .svcmap-controls .btn-icon { padding: 6px 8px; font-size: 0.85rem; }
+        .svcmap-stats { position: absolute; top: 10px; left: 10px; font-size: 0.7rem; color: #71767b; background: rgba(15,20,25,0.9); padding: 6px 12px; border-radius: 6px; display: flex; gap: 6px; align-items: center; z-index: 5; backdrop-filter: blur(4px); }
+        .svcmap-zoom-controls { position: absolute; bottom: 50px; right: 10px; display: flex; flex-direction: column; gap: 4px; z-index: 10; }
+        .svcmap-zoom-controls button { width: 32px; height: 32px; padding: 0; font-size: 1rem; background: rgba(47,51,54,0.9); border: 1px solid #3f4346; border-radius: 6px; color: #e7e9ea; cursor: pointer; }
+        .svcmap-zoom-controls button:hover { background: rgba(63,67,70,0.9); border-color: #1d9bf0; }
+        .svcmap-legend { position: absolute; bottom: 10px; left: 10px; display: flex; gap: 16px; font-size: 0.65rem; color: #8b949e; background: rgba(15,20,25,0.8); padding: 6px 12px; border-radius: 6px; }
+        .svcmap-legend-item { display: flex; align-items: center; gap: 6px; }
+        .svcmap-legend-dot { width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 6px currentColor; }
+        /* Nodes */
+        .svcmap-node { cursor: pointer; transition: all 0.2s ease; }
+        .svcmap-node:hover { filter: brightness(1.2); }
+        .svcmap-node-ring { fill: none; stroke-width: 3; opacity: 0.3; }
+        .svcmap-node-bg { fill: #1a1f2e; stroke-width: 2; }
+        .svcmap-node-healthy .svcmap-node-bg { stroke: #00ba7c; }
+        .svcmap-node-healthy .svcmap-node-ring { stroke: #00ba7c; }
+        .svcmap-node-degraded .svcmap-node-bg { stroke: #ffd400; }
+        .svcmap-node-degraded .svcmap-node-ring { stroke: #ffd400; }
+        .svcmap-node-unhealthy .svcmap-node-bg { stroke: #f4212e; }
+        .svcmap-node-unhealthy .svcmap-node-ring { stroke: #f4212e; animation: pulse-ring 1.5s ease-out infinite; }
+        .svcmap-node-external .svcmap-node-bg { stroke: #7c3aed; }
+        .svcmap-node-external .svcmap-node-ring { stroke: #7c3aed; }
+        @keyframes pulse-ring { 0% { r: 24; opacity: 0.4; } 100% { r: 36; opacity: 0; } }
+        .svcmap-node-icon { font-size: 16px; dominant-baseline: central; text-anchor: middle; }
+        .svcmap-node-label { fill: #e7e9ea; font-size: 11px; font-weight: 600; text-anchor: middle; }
+        .svcmap-node-metrics { fill: #8b949e; font-size: 9px; text-anchor: middle; font-family: monospace; }
+        .svcmap-node-badge { font-size: 8px; font-weight: 600; }
+        /* Edges */
+        .svcmap-edge { fill: none; stroke-width: 2; stroke-linecap: round; }
+        .svcmap-edge-normal { stroke: #3f4346; }
+        .svcmap-edge-active { stroke: rgba(29,155,240,0.6); stroke-dasharray: 6 4; animation: edge-flow 0.8s linear infinite; }
+        .svcmap-edge-error { stroke: rgba(244,33,46,0.7); stroke-width: 2.5; }
+        .svcmap-edge-slow { stroke: rgba(255,212,0,0.6); }
+        .svcmap-edge-highlight { stroke: #1d9bf0; stroke-width: 3; filter: drop-shadow(0 0 4px rgba(29,155,240,0.5)); }
+        @keyframes edge-flow { from { stroke-dashoffset: 10; } to { stroke-dashoffset: 0; } }
+        .svcmap-edge-hitarea { fill: none; stroke: transparent; stroke-width: 16; cursor: pointer; }
+        /* Edge Labels (metrics badges) */
+        .svcmap-edge-label-bg { fill: #1a1f2e; rx: 4; }
+        .svcmap-edge-label { font-size: 9px; font-family: 'SF Mono', Consolas, monospace; dominant-baseline: central; }
+        .svcmap-edge-label-latency { fill: #8b949e; }
+        .svcmap-edge-label-rps { fill: #71767b; }
+        .svcmap-edge-label-error { fill: #f4212e; }
+        /* Tooltip */
+        .svcmap-tooltip { position: absolute; background: rgba(26,31,46,0.95); border: 1px solid #3f4346; border-radius: 8px; padding: 12px 16px; font-size: 0.8rem; pointer-events: none; z-index: 100; box-shadow: 0 8px 24px rgba(0,0,0,0.5); backdrop-filter: blur(8px); min-width: 180px; display: none; }
+        .svcmap-tooltip-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #2f3336; }
+        .svcmap-tooltip-status { width: 10px; height: 10px; border-radius: 50%; }
+        .svcmap-tooltip-title { font-weight: 600; color: #e7e9ea; font-size: 0.9rem; margin-bottom: 8px; }
+        .svcmap-tooltip-type { font-size: 0.7rem; color: #71767b; background: #2f3336; padding: 2px 6px; border-radius: 3px; margin-left: auto; }
+        .svcmap-tooltip-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid rgba(47,51,54,0.5); }
+        .svcmap-tooltip-row:last-child { border-bottom: none; }
+        .svcmap-tooltip-row span:first-child { color: #71767b; }
+        .svcmap-tooltip-value { color: #e7e9ea; font-weight: 500; font-family: 'SF Mono', Consolas, monospace; }
+        .svcmap-tooltip-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .svcmap-tooltip-metric { display: flex; flex-direction: column; }
+        .svcmap-tooltip-metric-label { font-size: 0.65rem; color: #71767b; text-transform: uppercase; letter-spacing: 0.5px; }
+        .svcmap-tooltip-metric-value { font-size: 1rem; font-weight: 600; color: #e7e9ea; font-family: monospace; }
+        .svcmap-tooltip-metric-value.error { color: #f4212e; }
+        .svcmap-tooltip-metric-value.warning { color: #ffd400; }
+        .svcmap-tooltip-metric-value.success { color: #00ba7c; }
+        /* Node detail panel */
+        .svcmap-detail { position: absolute; top: 50px; right: 10px; width: 280px; background: rgba(26,31,46,0.95); border: 1px solid #3f4346; border-radius: 10px; z-index: 20; box-shadow: 0 8px 32px rgba(0,0,0,0.4); backdrop-filter: blur(8px); display: none; }
+        .svcmap-detail.open { display: block; animation: slideIn 0.2s ease; }
+        .svcmap-detail-header { padding: 12px 16px; border-bottom: 1px solid #2f3336; display: flex; justify-content: space-between; align-items: center; }
+        .svcmap-detail-title { font-weight: 600; color: #e7e9ea; }
+        .svcmap-detail-close { background: none; border: none; color: #71767b; cursor: pointer; font-size: 1.2rem; padding: 0; }
+        .svcmap-detail-close:hover { color: #e7e9ea; }
+        .svcmap-detail-body { padding: 12px 16px; max-height: 400px; overflow-y: auto; }
+        .svcmap-detail-section { margin-bottom: 16px; }
+        .svcmap-detail-section-title { font-size: 0.7rem; color: #71767b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+        .svcmap-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .svcmap-detail-stat { background: #2f3336; padding: 8px; border-radius: 6px; }
+        .svcmap-detail-stat-value { font-size: 1.1rem; font-weight: 600; color: #e7e9ea; }
+        .svcmap-detail-stat-label { font-size: 0.65rem; color: #71767b; }
+        .svcmap-detail-list { list-style: none; padding: 0; margin: 0; }
+        .svcmap-detail-list li { padding: 6px 0; border-bottom: 1px solid #2f3336; font-size: 0.8rem; display: flex; justify-content: space-between; }
+        .svcmap-detail-list li:last-child { border-bottom: none; }
+        .svcmap-detail-actions { padding: 12px 16px; border-top: 1px solid #2f3336; display: flex; gap: 8px; }
+        .svcmap-detail-actions .btn { flex: 1; text-align: center; }
 
         /* Flame graph - redesigned */
         .flamegraph-container { position: relative; width: 100%; height: 100%; background: #1a1f2e; display: flex; flex-direction: column; }
@@ -2340,29 +2396,43 @@
         function widgetServiceMap() {
             return `<div class="widget-header">
                     <span class="widget-title">Service Map</span>
-                    <div style="display:flex;gap:0.3rem;">
-                        <button class="btn" onclick="toggleSvcMapLayout()">Layout</button>
-                        <button class="btn" onclick="updateServiceMap()">Refresh</button>
-                    </div>
-                </div>
-                <div class="widget-body no-pad svcmap-container" id="svcmap-container">
-                    <div class="svcmap-controls">
-                        <select id="svcmap-filter" onchange="filterServiceMap()">
-                            <option value="">All</option>
+                    <div style="display:flex;gap:0.3rem;align-items:center;">
+                        <select id="svcmap-filter" class="trace-select" style="height:26px;font-size:0.7rem;" onchange="filterServiceMap()">
+                            <option value="">All Nodes</option>
                             <option value="services">Services</option>
                             <option value="external">External</option>
                             <option value="processes">Processes</option>
                         </select>
+                        <button class="btn" onclick="toggleSvcMapLayout()" title="Toggle Layout">⟲</button>
+                        <button class="btn" onclick="updateServiceMap()" title="Refresh">↻</button>
                     </div>
+                </div>
+                <div class="widget-body no-pad svcmap-container" id="svcmap-container">
                     <div class="svcmap-stats" id="svcmap-stats"></div>
-                    <svg id="service-map" style="position:absolute;inset:0;width:100%;height:100%;"></svg>
+                    <svg id="service-map"></svg>
+                    <div class="svcmap-zoom-controls">
+                        <button onclick="svcMapZoom(1.2)" title="Zoom In">+</button>
+                        <button onclick="svcMapZoom(0.8)" title="Zoom Out">−</button>
+                        <button onclick="svcMapReset()" title="Reset View">⌂</button>
+                    </div>
                     <div class="svcmap-legend">
                         <div class="svcmap-legend-item"><div class="svcmap-legend-dot" style="background:#00ba7c"></div>Healthy</div>
                         <div class="svcmap-legend-item"><div class="svcmap-legend-dot" style="background:#ffd400"></div>Degraded</div>
                         <div class="svcmap-legend-item"><div class="svcmap-legend-dot" style="background:#f4212e"></div>Error</div>
-                        <div class="svcmap-legend-item"><div class="svcmap-legend-dot" style="background:#7c3aed"></div>External</div>
+                        <div class="svcmap-legend-item"><div class="svcmap-legend-dot" style="background:#536471"></div>External</div>
                     </div>
-                    <div class="svcmap-tooltip" id="svcmap-tooltip" style="display:none;"></div>
+                    <div class="svcmap-tooltip" id="svcmap-tooltip"></div>
+                    <div class="svcmap-detail" id="svcmap-detail">
+                        <div class="svcmap-detail-header">
+                            <span class="svcmap-detail-title" id="svcmap-detail-title">Node Details</span>
+                            <button class="svcmap-detail-close" onclick="closeSvcMapDetail()">×</button>
+                        </div>
+                        <div class="svcmap-detail-body" id="svcmap-detail-body"></div>
+                        <div class="svcmap-detail-actions">
+                            <button class="btn" onclick="viewServiceLogs()">View Logs</button>
+                            <button class="btn" onclick="viewServiceTraces()">View Traces</button>
+                        </div>
+                    </div>
                 </div>`;
         }
         function widgetChart(title, id) {
@@ -3315,6 +3385,9 @@
         let svcMapLayout = 'hierarchical'; // 'hierarchical' or 'radial'
         let svcMapFilter = '';
         let svcMapSim = null;
+        let svcMapZoomBehavior = null;
+        let svcMapTransform = d3.zoomIdentity;
+        let svcMapSelectedNode = null;
 
         function updateServiceMap() {
             fetch('/api/servicemap').then(r => r.json()).then(d => {
@@ -3343,8 +3416,8 @@
             const rect = container.getBoundingClientRect();
             if (rect.width < 50 || rect.height < 50) return;
 
-            const w = rect.width, h = rect.height - 40; // Account for legend
-            svg.attr('viewBox', `0 0 ${w} ${h}`);
+            const w = rect.width, h = rect.height - 50;
+            svg.attr('width', w).attr('height', h);
 
             // Filter nodes
             let nodes = svcMapData.nodes.map(n => ({...n}));
@@ -3357,49 +3430,90 @@
             const nodeIds = new Set(nodes.map(n => n.id));
             let links = svcMapData.links.filter(l => nodeIds.has(l.source?.id || l.source) && nodeIds.has(l.target?.id || l.target)).map(l => ({...l}));
 
-            // Update stats
+            // Calculate aggregate stats
+            const totalRequests = links.reduce((sum, l) => sum + (l.count || 0), 0);
+            const avgLatency = links.length ? Math.round(links.reduce((sum, l) => sum + (l.latency || 0), 0) / links.length) : 0;
+            const totalErrors = links.reduce((sum, l) => sum + (l.errors || 0), 0);
+            const errorRate = totalRequests > 0 ? ((totalErrors / totalRequests) * 100).toFixed(1) : 0;
+
             if (statsEl) {
-                statsEl.textContent = `${nodes.length} nodes, ${links.length} connections`;
+                statsEl.innerHTML = `<span>${nodes.length} nodes</span><span>·</span><span>${links.length} edges</span>` +
+                    (totalRequests > 0 ? `<span>·</span><span>${totalRequests} req</span><span>·</span><span>${avgLatency}ms avg</span>` : '') +
+                    (totalErrors > 0 ? `<span>·</span><span style="color:#f4212e">${errorRate}% err</span>` : '');
             }
 
             if (!nodes.length) {
                 svg.selectAll('*').remove();
-                svg.append('text').attr('x', w/2).attr('y', h/2).attr('text-anchor', 'middle').attr('fill', '#71767b').attr('font-size', '14px').text('No connections yet');
+                svg.append('text').attr('x', w/2).attr('y', h/2).attr('text-anchor', 'middle')
+                    .attr('fill', '#71767b').attr('font-size', '14px').text('No service connections yet');
                 return;
             }
 
             svg.selectAll('*').remove();
 
-            // Create arrow marker
-            svg.append('defs').append('marker')
-                .attr('id', 'arrowhead').attr('viewBox', '0 -5 10 10').attr('refX', 20).attr('refY', 0)
-                .attr('markerWidth', 6).attr('markerHeight', 6).attr('orient', 'auto')
-                .append('path').attr('d', 'M0,-5L10,0L0,5').attr('fill', '#3f4346');
+            // Setup zoom behavior
+            if (!svcMapZoomBehavior) {
+                svcMapZoomBehavior = d3.zoom()
+                    .scaleExtent([0.3, 3])
+                    .on('zoom', (event) => {
+                        svcMapTransform = event.transform;
+                        mainGroup.attr('transform', event.transform);
+                    });
+                svg.call(svcMapZoomBehavior);
+            } else {
+                svg.call(svcMapZoomBehavior);
+            }
 
-            // Hierarchical layout - place nodes in layers
-            const layers = {};
-            nodes.forEach(n => {
-                const layer = n.type === 'process' ? 0 : n.type === 'service' ? 1 : 2;
-                if (!layers[layer]) layers[layer] = [];
-                layers[layer].push(n);
+            // Main group for zoom/pan
+            const mainGroup = svg.append('g').attr('transform', svcMapTransform);
+
+            // Defs for markers and filters
+            const defs = svg.append('defs');
+
+            // Arrow markers with different colors
+            ['#536471', '#1d9bf0', '#f4212e', '#00ba7c'].forEach((color, i) => {
+                defs.append('marker')
+                    .attr('id', `arrow-${i}`).attr('viewBox', '0 -5 10 10')
+                    .attr('refX', 28).attr('refY', 0)
+                    .attr('markerWidth', 5).attr('markerHeight', 5).attr('orient', 'auto')
+                    .append('path').attr('d', 'M0,-4L10,0L0,4').attr('fill', color);
             });
 
-            const layerCount = Object.keys(layers).length;
-            const layerHeight = h / (layerCount + 1);
+            // Glow filter for selected nodes
+            const glow = defs.append('filter').attr('id', 'glow').attr('x', '-50%').attr('y', '-50%').attr('width', '200%').attr('height', '200%');
+            glow.append('feGaussianBlur').attr('stdDeviation', '3').attr('result', 'blur');
+            glow.append('feMerge').html('<feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/>');
 
-            Object.entries(layers).forEach(([layer, layerNodes]) => {
-                const y = (parseInt(layer) + 1) * layerHeight;
-                const nodeWidth = w / (layerNodes.length + 1);
-                layerNodes.forEach((n, i) => {
-                    n.x = (i + 1) * nodeWidth;
-                    n.y = y;
-                    n.fx = n.x; // Fixed position
-                    n.fy = n.y;
+            // Layout nodes
+            if (svcMapLayout === 'radial') {
+                const centerX = w / 2, centerY = h / 2;
+                const radius = Math.min(w, h) * 0.35;
+                nodes.forEach((n, i) => {
+                    const angle = (i / nodes.length) * 2 * Math.PI - Math.PI / 2;
+                    n.x = centerX + radius * Math.cos(angle);
+                    n.y = centerY + radius * Math.sin(angle);
                 });
-            });
+            } else {
+                // Hierarchical layout
+                const layers = { 0: [], 1: [], 2: [] };
+                nodes.forEach(n => {
+                    const layer = n.type === 'process' ? 0 : n.type === 'service' ? 1 : 2;
+                    layers[layer].push(n);
+                });
+                const usedLayers = Object.entries(layers).filter(([, arr]) => arr.length > 0);
+                const layerHeight = h / (usedLayers.length + 1);
+                usedLayers.forEach(([, layerNodes], layerIdx) => {
+                    const y = (layerIdx + 1) * layerHeight;
+                    const nodeWidth = w / (layerNodes.length + 1);
+                    layerNodes.forEach((n, i) => {
+                        n.x = (i + 1) * nodeWidth;
+                        n.y = y;
+                    });
+                });
+            }
 
-            // Draw edges with curves
-            const linkGroup = svg.append('g');
+            // Draw edges first (under nodes)
+            const linkGroup = mainGroup.append('g').attr('class', 'svcmap-links');
             links.forEach(l => {
                 const source = nodes.find(n => n.id === (l.source?.id || l.source));
                 const target = nodes.find(n => n.id === (l.target?.id || l.target));
@@ -3407,80 +3521,310 @@
 
                 const hasErrors = l.errors > 0;
                 const isActive = l.count > 0;
+                const errorRate = l.count > 0 ? (l.errors || 0) / l.count : 0;
 
-                // Curved path
+                // Curved path with bezier
                 const dx = target.x - source.x;
                 const dy = target.y - source.y;
-                const dr = Math.sqrt(dx * dx + dy * dy) * 0.5;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                const curve = Math.min(40, dist * 0.15);
 
-                const path = linkGroup.append('path')
-                    .attr('d', `M${source.x},${source.y} Q${(source.x + target.x)/2},${(source.y + target.y)/2 - 30} ${target.x},${target.y}`)
-                    .attr('class', hasErrors ? 'svcmap-edge svcmap-edge-error' : isActive ? 'svcmap-edge svcmap-edge-active' : 'svcmap-edge')
-                    .attr('marker-end', 'url(#arrowhead)');
+                // Perpendicular offset for curve
+                const mx = (source.x + target.x) / 2;
+                const my = (source.y + target.y) / 2;
+                const perpX = -dy / dist * curve;
+                const perpY = dx / dist * curve;
 
-                // Edge label with count
-                if (l.count) {
-                    linkGroup.append('text')
-                        .attr('x', (source.x + target.x) / 2)
-                        .attr('y', (source.y + target.y) / 2 - 10)
-                        .attr('class', 'svcmap-edge-label')
+                const pathData = `M${source.x},${source.y} Q${mx + perpX},${my + perpY} ${target.x},${target.y}`;
+
+                // Determine edge style
+                let edgeClass = 'svcmap-edge';
+                let markerIdx = 0;
+                if (hasErrors && errorRate > 0.1) {
+                    edgeClass += ' svcmap-edge-error';
+                    markerIdx = 2;
+                } else if (isActive) {
+                    edgeClass += ' svcmap-edge-active';
+                    markerIdx = 1;
+                }
+
+                const edgeG = linkGroup.append('g');
+
+                // Draw edge
+                edgeG.append('path')
+                    .attr('d', pathData)
+                    .attr('class', edgeClass)
+                    .attr('marker-end', `url(#arrow-${markerIdx})`);
+
+                // Edge metrics badge (shown on hover or always for important edges)
+                if (l.count || l.latency) {
+                    const badgeX = mx + perpX * 0.5;
+                    const badgeY = my + perpY * 0.5;
+
+                    const badge = edgeG.append('g')
+                        .attr('class', 'svcmap-edge-badge')
+                        .attr('transform', `translate(${badgeX},${badgeY})`);
+
+                    // Badge background
+                    badge.append('rect')
+                        .attr('x', -30).attr('y', -10)
+                        .attr('width', 60).attr('height', 20)
+                        .attr('rx', 4)
+                        .attr('fill', hasErrors ? 'rgba(74,25,25,0.95)' : 'rgba(47,51,54,0.95)')
+                        .attr('stroke', hasErrors ? '#f4212e' : '#3f4346');
+
+                    // Metrics text
+                    let metricsText = '';
+                    if (l.count) metricsText += `${l.count}`;
+                    if (l.latency) metricsText += ` · ${l.latency}ms`;
+                    if (l.errors && errorRate > 0) metricsText = `${(errorRate * 100).toFixed(0)}% err`;
+
+                    badge.append('text')
                         .attr('text-anchor', 'middle')
-                        .text(`${l.count} req${l.latency ? ' / ' + l.latency + 'ms' : ''}`);
+                        .attr('dy', 4)
+                        .attr('fill', hasErrors ? '#f4212e' : '#e7e9ea')
+                        .attr('font-size', '9px')
+                        .attr('font-weight', '500')
+                        .text(metricsText);
                 }
             });
 
             // Draw nodes
-            const nodeGroup = svg.append('g');
+            const nodeGroup = mainGroup.append('g').attr('class', 'svcmap-nodes');
             nodes.forEach(n => {
                 const g = nodeGroup.append('g')
                     .attr('class', 'svcmap-node')
-                    .attr('transform', `translate(${n.x},${n.y})`);
+                    .attr('transform', `translate(${n.x},${n.y})`)
+                    .attr('data-node-id', n.id)
+                    .style('cursor', 'pointer');
 
                 // Determine health status
-                const healthClass = n.errors > 0 ? 'svcmap-node-unhealthy' :
-                    n.latency > 1000 ? 'svcmap-node-degraded' :
-                    n.type === 'external' ? 'svcmap-node-external' :
-                    n.type === 'process' ? 'svcmap-node-process' : 'svcmap-node-healthy';
+                const hasErrors = n.errors > 0;
+                const isDegraded = n.latency > 500;
+                const isExternal = n.type === 'external';
+                const isProcess = n.type === 'process';
 
-                // Node circle with icon representation
-                g.append('circle').attr('r', 18).attr('class', healthClass);
+                let nodeColor = '#00ba7c'; // healthy
+                if (hasErrors) nodeColor = '#f4212e';
+                else if (isDegraded) nodeColor = '#ffd400';
+                else if (isExternal) nodeColor = '#536471';
+                else if (isProcess) nodeColor = '#7c3aed';
 
-                // Inner icon based on type
-                const icon = n.type === 'external' ? '🌐' : n.type === 'process' ? '⚙️' : '📦';
-                g.append('text').attr('text-anchor', 'middle').attr('dy', 5).attr('font-size', '12px').text(icon);
+                // Outer ring (health indicator)
+                g.append('circle')
+                    .attr('r', 24)
+                    .attr('fill', 'none')
+                    .attr('stroke', nodeColor)
+                    .attr('stroke-width', 2)
+                    .attr('opacity', 0.5);
 
-                // Label below
+                // Inner circle
+                g.append('circle')
+                    .attr('r', 18)
+                    .attr('fill', '#1a1f2e')
+                    .attr('stroke', nodeColor)
+                    .attr('stroke-width', 2);
+
+                // Icon (using simple text icons)
+                const icons = {
+                    'external': '⬡',
+                    'process': '◎',
+                    'service': '◆',
+                    'database': '▣',
+                    'cache': '◈',
+                    'queue': '▤'
+                };
+                g.append('text')
+                    .attr('text-anchor', 'middle')
+                    .attr('dy', 5)
+                    .attr('fill', nodeColor)
+                    .attr('font-size', '14px')
+                    .text(icons[n.type] || icons.service);
+
+                // Label
+                const displayName = n.name.length > 18 ? n.name.slice(0, 16) + '..' : n.name;
                 g.append('text')
                     .attr('class', 'svcmap-node-label')
                     .attr('text-anchor', 'middle')
-                    .attr('y', 32)
-                    .text(n.name.length > 15 ? n.name.slice(0, 13) + '..' : n.name);
+                    .attr('y', 36)
+                    .attr('fill', '#e7e9ea')
+                    .attr('font-size', '11px')
+                    .attr('font-weight', '500')
+                    .text(displayName);
 
-                // Sublabel with metrics
+                // Metrics sublabel
                 if (n.count || n.latency) {
+                    const metrics = [];
+                    if (n.count) metrics.push(`${n.count} req`);
+                    if (n.latency) metrics.push(`${n.latency}ms`);
                     g.append('text')
                         .attr('class', 'svcmap-node-sublabel')
                         .attr('text-anchor', 'middle')
-                        .attr('y', 44)
-                        .text(`${n.count || 0} req${n.latency ? ' · ' + n.latency + 'ms' : ''}`);
+                        .attr('y', 48)
+                        .attr('fill', '#71767b')
+                        .attr('font-size', '9px')
+                        .text(metrics.join(' · '));
                 }
 
-                // Tooltip on hover
-                g.on('mouseenter', (event) => {
+                // Error indicator badge
+                if (hasErrors) {
+                    g.append('circle')
+                        .attr('cx', 14).attr('cy', -14)
+                        .attr('r', 8)
+                        .attr('fill', '#f4212e');
+                    g.append('text')
+                        .attr('x', 14).attr('y', -11)
+                        .attr('text-anchor', 'middle')
+                        .attr('fill', '#fff')
+                        .attr('font-size', '9px')
+                        .attr('font-weight', 'bold')
+                        .text(n.errors > 99 ? '99+' : n.errors);
+                }
+
+                // Hover effects
+                g.on('mouseenter', function(event) {
+                    d3.select(this).select('circle:nth-child(2)').attr('filter', 'url(#glow)');
+
                     tooltip.innerHTML = `
                         <div class="svcmap-tooltip-title">${escapeHtml(n.name)}</div>
-                        <div class="svcmap-tooltip-row"><span>Type:</span><span class="svcmap-tooltip-value">${n.type}</span></div>
-                        <div class="svcmap-tooltip-row"><span>Requests:</span><span class="svcmap-tooltip-value">${n.count || 0}</span></div>
-                        ${n.latency ? `<div class="svcmap-tooltip-row"><span>Avg Latency:</span><span class="svcmap-tooltip-value">${n.latency}ms</span></div>` : ''}
-                        ${n.errors ? `<div class="svcmap-tooltip-row"><span>Errors:</span><span class="svcmap-tooltip-value" style="color:#f4212e">${n.errors}</span></div>` : ''}
+                        <div class="svcmap-tooltip-row"><span>Type</span><span class="svcmap-tooltip-value">${n.type}</span></div>
+                        <div class="svcmap-tooltip-row"><span>Requests</span><span class="svcmap-tooltip-value">${n.count || 0}</span></div>
+                        ${n.latency ? `<div class="svcmap-tooltip-row"><span>Avg Latency</span><span class="svcmap-tooltip-value">${n.latency}ms</span></div>` : ''}
+                        ${n.errors ? `<div class="svcmap-tooltip-row"><span>Errors</span><span class="svcmap-tooltip-value" style="color:#f4212e">${n.errors}</span></div>` : ''}
                     `;
                     tooltip.style.display = 'block';
-                    tooltip.style.left = (event.offsetX + 10) + 'px';
-                    tooltip.style.top = (event.offsetY + 10) + 'px';
-                }).on('mouseleave', () => {
+
+                    const svgRect = svg.node().getBoundingClientRect();
+                    tooltip.style.left = Math.min(event.clientX - svgRect.left + 15, w - 180) + 'px';
+                    tooltip.style.top = Math.min(event.clientY - svgRect.top + 15, h - 100) + 'px';
+                })
+                .on('mouseleave', function() {
+                    d3.select(this).select('circle:nth-child(2)').attr('filter', null);
                     tooltip.style.display = 'none';
+                })
+                .on('click', function() {
+                    openSvcMapDetail(n);
                 });
             });
+        }
+
+        // Zoom controls
+        function svcMapZoom(factor) {
+            const svg = d3.select('#service-map');
+            if (svcMapZoomBehavior) {
+                svg.transition().duration(200).call(svcMapZoomBehavior.scaleBy, factor);
+            }
+        }
+
+        function svcMapReset() {
+            const svg = d3.select('#service-map');
+            if (svcMapZoomBehavior) {
+                svcMapTransform = d3.zoomIdentity;
+                svg.transition().duration(300).call(svcMapZoomBehavior.transform, d3.zoomIdentity);
+            }
+        }
+
+        // Node detail panel
+        function openSvcMapDetail(node) {
+            svcMapSelectedNode = node;
+            const detail = document.getElementById('svcmap-detail');
+            const title = document.getElementById('svcmap-detail-title');
+            const body = document.getElementById('svcmap-detail-body');
+
+            if (!detail) return;
+
+            title.textContent = node.name;
+
+            // Find connected nodes
+            const inbound = svcMapData.links.filter(l => (l.target?.id || l.target) === node.id);
+            const outbound = svcMapData.links.filter(l => (l.source?.id || l.source) === node.id);
+
+            const inboundTotal = inbound.reduce((sum, l) => sum + (l.count || 0), 0);
+            const outboundTotal = outbound.reduce((sum, l) => sum + (l.count || 0), 0);
+            const errorTotal = node.errors || 0;
+            const errorRate = (inboundTotal + outboundTotal) > 0 ?
+                ((errorTotal / (inboundTotal + outboundTotal)) * 100).toFixed(1) : 0;
+
+            body.innerHTML = `
+                <div class="svcmap-detail-section">
+                    <div class="svcmap-detail-section-title">Overview</div>
+                    <div class="svcmap-detail-grid">
+                        <div class="svcmap-detail-stat">
+                            <div class="svcmap-detail-stat-value">${node.count || 0}</div>
+                            <div class="svcmap-detail-stat-label">Total Requests</div>
+                        </div>
+                        <div class="svcmap-detail-stat">
+                            <div class="svcmap-detail-stat-value">${node.latency || 0}ms</div>
+                            <div class="svcmap-detail-stat-label">Avg Latency</div>
+                        </div>
+                        <div class="svcmap-detail-stat">
+                            <div class="svcmap-detail-stat-value" style="color:${errorTotal > 0 ? '#f4212e' : '#e7e9ea'}">${errorTotal}</div>
+                            <div class="svcmap-detail-stat-label">Errors</div>
+                        </div>
+                        <div class="svcmap-detail-stat">
+                            <div class="svcmap-detail-stat-value">${errorRate}%</div>
+                            <div class="svcmap-detail-stat-label">Error Rate</div>
+                        </div>
+                    </div>
+                </div>
+                ${inbound.length > 0 ? `
+                <div class="svcmap-detail-section">
+                    <div class="svcmap-detail-section-title">Inbound (${inbound.length})</div>
+                    <ul class="svcmap-detail-list">
+                        ${inbound.slice(0, 5).map(l => {
+                            const srcNode = svcMapData.nodes.find(n => n.id === (l.source?.id || l.source));
+                            return `<li><span>${escapeHtml(srcNode?.name || 'unknown')}</span><span>${l.count || 0} req</span></li>`;
+                        }).join('')}
+                        ${inbound.length > 5 ? `<li style="color:#71767b"><span>+${inbound.length - 5} more</span></li>` : ''}
+                    </ul>
+                </div>` : ''}
+                ${outbound.length > 0 ? `
+                <div class="svcmap-detail-section">
+                    <div class="svcmap-detail-section-title">Outbound (${outbound.length})</div>
+                    <ul class="svcmap-detail-list">
+                        ${outbound.slice(0, 5).map(l => {
+                            const tgtNode = svcMapData.nodes.find(n => n.id === (l.target?.id || l.target));
+                            return `<li><span>${escapeHtml(tgtNode?.name || 'unknown')}</span><span>${l.count || 0} req</span></li>`;
+                        }).join('')}
+                        ${outbound.length > 5 ? `<li style="color:#71767b"><span>+${outbound.length - 5} more</span></li>` : ''}
+                    </ul>
+                </div>` : ''}
+            `;
+
+            detail.classList.add('open');
+        }
+
+        function closeSvcMapDetail() {
+            svcMapSelectedNode = null;
+            const detail = document.getElementById('svcmap-detail');
+            if (detail) detail.classList.remove('open');
+        }
+
+        function viewServiceLogs() {
+            if (!svcMapSelectedNode) return;
+            closeSvcMapDetail();
+            showTab('logs');
+            // Set service filter if available
+            setTimeout(() => {
+                const serviceFilter = document.getElementById('log-service-filter');
+                if (serviceFilter) {
+                    serviceFilter.value = svcMapSelectedNode.name;
+                    loadLogs();
+                }
+            }, 100);
+        }
+
+        function viewServiceTraces() {
+            if (!svcMapSelectedNode) return;
+            closeSvcMapDetail();
+            showTab('traces');
+            setTimeout(() => {
+                const serviceFilter = document.getElementById('trace-service-filter');
+                if (serviceFilter) {
+                    serviceFilter.value = svcMapSelectedNode.name;
+                    loadTraces();
+                }
+            }, 100);
         }
 
         // Charts
