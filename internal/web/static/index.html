@@ -281,42 +281,98 @@
         .gs-item:hover > .ui-resizable-se { opacity: 1; }
         .ui-resizable-se { opacity: 0; transition: opacity 0.2s; width: 15px; height: 15px; right: 3px; bottom: 3px; background: #1d9bf0; border-radius: 3px; }
 
-        /* Trace visualization */
+        /* Trace visualization - Redesigned */
         .trace-controls { display: flex; gap: 0.5rem; align-items: center; }
         .trace-select { background: #2f3336; border: 1px solid #3f4346; border-radius: 4px; color: #e7e9ea; padding: 0.2rem 0.5rem; font-size: 0.7rem; }
         .trace-list { max-height: 200px; overflow-y: auto; border-bottom: 1px solid #2f3336; }
-        .trace-item { padding: 0.5rem 0.8rem; border-bottom: 1px solid #2f3336; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
-        .trace-item:hover { background: #1d1f23; }
-        .trace-item.selected { background: #1d4ed8; }
+        .trace-item { padding: 0.6rem 0.8rem; border-bottom: 1px solid #2f3336; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: all 0.15s; }
+        .trace-item:hover { background: rgba(29,155,240,0.1); }
+        .trace-item.selected { background: linear-gradient(90deg, rgba(29,155,240,0.2), rgba(29,155,240,0.1)); border-left: 3px solid #1d9bf0; }
         .trace-item:last-child { border-bottom: none; }
         .trace-name { font-weight: 500; font-size: 0.75rem; }
         .trace-service { color: #71767b; font-size: 0.65rem; }
         .trace-meta { text-align: right; }
-        .trace-duration { font-family: monospace; font-size: 0.7rem; }
+        .trace-duration { font-family: 'SF Mono', Consolas, monospace; font-size: 0.7rem; }
         .trace-time { color: #71767b; font-size: 0.6rem; }
-        .trace-status { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 0.4rem; }
-        .trace-status.ok { background: #00ba7c; }
-        .trace-status.error { background: #f4212e; }
-        .trace-status.unset { background: #71767b; }
+        .trace-status { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 0.5rem; box-shadow: 0 0 6px currentColor; }
+        .trace-status.ok { background: #00ba7c; color: #00ba7c; }
+        .trace-status.error { background: #f4212e; color: #f4212e; }
+        .trace-status.unset { background: #71767b; color: #71767b; }
 
-        /* Waterfall view */
-        .waterfall { padding: 0.5rem 0.8rem; overflow-x: auto; }
-        .waterfall-header { display: flex; justify-content: space-between; font-size: 0.65rem; color: #71767b; margin-bottom: 0.5rem; padding: 0 0.5rem; }
-        .span-row { display: flex; align-items: center; padding: 0.25rem 0; border-bottom: 1px solid #1d1f23; min-height: 28px; }
-        .span-row:hover { background: #1d1f23; }
-        .span-info { width: 180px; flex-shrink: 0; padding-right: 0.5rem; overflow: hidden; }
-        .span-name { font-size: 0.7rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .span-service { font-size: 0.6rem; color: #71767b; }
-        .span-timeline { flex: 1; position: relative; height: 18px; }
-        .span-bar { position: absolute; height: 14px; top: 2px; border-radius: 2px; min-width: 3px; }
-        .span-bar.server { background: linear-gradient(90deg, #1d9bf0, #3b82f6); }
-        .span-bar.client { background: linear-gradient(90deg, #7c3aed, #8b5cf6); }
-        .span-bar.internal { background: linear-gradient(90deg, #00ba7c, #10b981); }
-        .span-bar.error { background: linear-gradient(90deg, #f4212e, #ef4444); }
-        .span-duration { position: absolute; right: 0; top: 0; font-size: 0.6rem; font-family: monospace; color: #71767b; }
+        /* Waterfall View - Redesigned */
+        .waterfall-container { display: flex; flex-direction: column; height: 100%; background: linear-gradient(180deg, #0f1419 0%, #1a1f2e 100%); }
+        .waterfall-toolbar { display: flex; gap: 8px; padding: 10px 12px; border-bottom: 1px solid #2f3336; align-items: center; background: rgba(15,20,25,0.8); flex-shrink: 0; }
+        .waterfall-btn { padding: 6px 10px; background: #2f3336; border: 1px solid #3f4346; border-radius: 6px; color: #e7e9ea; font-size: 0.7rem; cursor: pointer; transition: all 0.15s; }
+        .waterfall-btn:hover { background: #3f4346; border-color: #536471; }
+        .waterfall-btn.active { background: linear-gradient(135deg, #1d9bf0, #1a8cd8); border-color: #1d9bf0; }
+        .waterfall-stats { margin-left: auto; font-size: 0.7rem; color: #71767b; display: flex; gap: 12px; }
+        .waterfall-stat { display: flex; align-items: center; gap: 4px; }
+        .waterfall-stat-value { color: #e7e9ea; font-weight: 600; font-family: 'SF Mono', Consolas, monospace; }
+        .waterfall-legend { display: flex; gap: 12px; padding: 8px 12px; border-bottom: 1px solid #2f3336; background: rgba(47,51,54,0.3); font-size: 0.65rem; flex-shrink: 0; overflow-x: auto; }
+        .waterfall-legend-item { display: flex; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer; padding: 2px 6px; border-radius: 4px; transition: all 0.15s; }
+        .waterfall-legend-item:hover { background: rgba(255,255,255,0.05); }
+        .waterfall-legend-item.dimmed { opacity: 0.4; }
+        .waterfall-legend-color { width: 12px; height: 12px; border-radius: 3px; }
+        .waterfall-legend-name { color: #e7e9ea; }
+        .waterfall-legend-count { color: #71767b; font-family: 'SF Mono', Consolas, monospace; }
+        .waterfall { flex: 1; overflow: auto; padding: 0; }
+        .waterfall-header { display: flex; font-size: 0.65rem; color: #536471; padding: 8px 12px; background: rgba(47,51,54,0.5); border-bottom: 1px solid #2f3336; position: sticky; top: 0; z-index: 5; }
+        .waterfall-header-op { width: 240px; flex-shrink: 0; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+        .waterfall-header-timeline { flex: 1; display: flex; justify-content: space-between; padding: 0 8px; }
+        .waterfall-body { padding: 4px 0; }
+        .span-row { display: flex; align-items: center; padding: 4px 12px; cursor: pointer; transition: all 0.1s; border-left: 3px solid transparent; }
+        .span-row:hover { background: rgba(29,155,240,0.08); }
+        .span-row.selected { background: rgba(29,155,240,0.15); border-left-color: #1d9bf0; }
+        .span-row.critical-path { background: rgba(249,115,22,0.08); }
+        .span-row.critical-path .span-bar { box-shadow: 0 0 8px rgba(249,115,22,0.5); }
+        .span-row.dimmed { opacity: 0.3; }
+        .span-indent { display: flex; align-items: center; height: 100%; }
+        .span-indent-line { width: 16px; height: 100%; border-left: 1px solid #3f4346; margin-left: 7px; }
+        .span-indent-corner { width: 16px; height: 50%; border-left: 1px solid #3f4346; border-bottom: 1px solid #3f4346; margin-left: 7px; border-bottom-left-radius: 4px; }
+        .span-info { width: 240px; flex-shrink: 0; padding-right: 12px; overflow: hidden; display: flex; align-items: center; gap: 8px; }
+        .span-icon { width: 20px; height: 20px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 10px; flex-shrink: 0; }
+        .span-details { overflow: hidden; flex: 1; }
+        .span-name { font-size: 0.75rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #e7e9ea; }
+        .span-meta { display: flex; gap: 6px; align-items: center; margin-top: 2px; }
+        .span-service { font-size: 0.65rem; padding: 1px 5px; border-radius: 3px; background: rgba(255,255,255,0.05); }
+        .span-kind { font-size: 0.6rem; color: #71767b; text-transform: uppercase; }
+        .span-timeline { flex: 1; position: relative; height: 24px; margin: 0 8px; }
         .timeline-grid { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; pointer-events: none; }
-        .timeline-grid-line { flex: 1; border-left: 1px dashed #2f3336; }
-        .no-trace-selected { padding: 2rem; text-align: center; color: #71767b; font-size: 0.8rem; }
+        .timeline-grid-line { flex: 1; border-left: 1px dashed rgba(63,67,70,0.5); }
+        .span-bar { position: absolute; height: 16px; top: 4px; border-radius: 4px; min-width: 4px; cursor: pointer; transition: all 0.15s; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        .span-bar:hover { transform: scaleY(1.2); box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 10; }
+        .span-bar-inner { position: absolute; inset: 0; border-radius: 4px; overflow: hidden; }
+        .span-bar-fill { height: 100%; border-radius: 4px; }
+        .span-bar-self { position: absolute; right: 0; top: 0; bottom: 0; background: rgba(255,255,255,0.3); border-radius: 0 4px 4px 0; }
+        .span-bar.error { animation: error-pulse 2s ease-in-out infinite; }
+        @keyframes error-pulse { 0%, 100% { box-shadow: 0 0 4px rgba(244,33,46,0.5); } 50% { box-shadow: 0 0 12px rgba(244,33,46,0.8); } }
+        .span-duration { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: 0.65rem; font-family: 'SF Mono', Consolas, monospace; color: #8b949e; background: rgba(15,20,25,0.8); padding: 2px 6px; border-radius: 3px; }
+        .span-status-icon { position: absolute; left: -2px; top: 50%; transform: translateY(-50%); width: 8px; height: 8px; border-radius: 50%; border: 2px solid #0f1419; }
+        .no-trace-selected { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #71767b; font-size: 0.85rem; gap: 12px; }
+        .no-trace-selected-icon { font-size: 2.5rem; opacity: 0.5; }
+        /* Span Detail Panel */
+        .span-detail-panel { position: absolute; top: 0; right: 0; width: 320px; height: 100%; background: rgba(26,31,46,0.98); border-left: 1px solid #3f4346; z-index: 20; transform: translateX(100%); transition: transform 0.2s ease; overflow-y: auto; }
+        .span-detail-panel.open { transform: translateX(0); }
+        .span-detail-header { padding: 16px; border-bottom: 1px solid #2f3336; display: flex; justify-content: space-between; align-items: flex-start; position: sticky; top: 0; background: rgba(26,31,46,0.98); z-index: 1; }
+        .span-detail-title { font-weight: 600; color: #e7e9ea; font-size: 0.9rem; word-break: break-all; }
+        .span-detail-close { background: none; border: none; color: #71767b; cursor: pointer; font-size: 1.2rem; padding: 0; }
+        .span-detail-close:hover { color: #e7e9ea; }
+        .span-detail-body { padding: 16px; }
+        .span-detail-section { margin-bottom: 20px; }
+        .span-detail-section-title { font-size: 0.7rem; color: #71767b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; font-weight: 600; }
+        .span-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .span-detail-stat { background: #2f3336; padding: 10px 12px; border-radius: 8px; }
+        .span-detail-stat-value { font-size: 1.1rem; font-weight: 600; color: #e7e9ea; font-family: 'SF Mono', Consolas, monospace; }
+        .span-detail-stat-label { font-size: 0.65rem; color: #71767b; margin-top: 2px; }
+        .span-detail-tags { display: flex; flex-direction: column; gap: 6px; }
+        .span-detail-tag { display: flex; justify-content: space-between; padding: 8px 10px; background: #2f3336; border-radius: 6px; font-size: 0.75rem; }
+        .span-detail-tag-key { color: #71767b; }
+        .span-detail-tag-value { color: #e7e9ea; font-family: 'SF Mono', Consolas, monospace; max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+        .span-detail-logs { display: flex; flex-direction: column; gap: 8px; }
+        .span-detail-log { padding: 8px 10px; background: #2f3336; border-radius: 6px; font-size: 0.7rem; border-left: 3px solid #3f4346; }
+        .span-detail-log.error { border-left-color: #f4212e; }
+        .span-detail-log-time { color: #71767b; font-family: 'SF Mono', Consolas, monospace; margin-bottom: 4px; }
+        .span-detail-log-msg { color: #e7e9ea; word-break: break-all; }
 
         /* Watches */
         .watch-item { padding: 0.6rem 0.8rem; border-bottom: 1px solid #2f3336; display: flex; justify-content: space-between; align-items: center; }
@@ -3989,70 +4045,325 @@
             loadTraceDetail(traceId);
         }
 
+        let currentTraceData = null;
+        let selectedSpanId = null;
+        let traceServiceFilter = null;
+
         function loadTraceDetail(traceId) {
             const detail = document.getElementById('trace-detail');
             if (!detail) return;
 
             fetch(`/api/traces/${traceId}`).then(r => r.json()).then(trace => {
                 if (!trace?.spans?.length) {
-                    detail.innerHTML = '<div class="no-trace-selected">No spans found</div>';
+                    detail.innerHTML = '<div class="no-trace-selected"><div class="no-trace-selected-icon">🔍</div>No spans found</div>';
                     return;
                 }
 
-                // Build waterfall
-                const spans = trace.spans;
-                const minTime = Math.min(...spans.map(s => new Date(s.start_time).getTime()));
-                const maxTime = Math.max(...spans.map(s => new Date(s.end_time).getTime()));
-                const totalDuration = maxTime - minTime;
+                currentTraceData = trace;
+                selectedSpanId = null;
+                traceServiceFilter = null;
+                renderWaterfall(detail, trace);
+            }).catch(() => {
+                detail.innerHTML = '<div class="no-trace-selected"><div class="no-trace-selected-icon">⚠️</div>Failed to load trace</div>';
+            });
+        }
 
-                // Sort by start time and build tree structure
-                spans.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+        function renderWaterfall(container, trace) {
+            const spans = trace.spans;
+            const minTime = Math.min(...spans.map(s => new Date(s.start_time).getTime()));
+            const maxTime = Math.max(...spans.map(s => new Date(s.end_time).getTime()));
+            const totalDuration = maxTime - minTime;
 
-                // Assign colors to services
-                const serviceColors = {};
-                const colors = ['#1d9bf0', '#00ba7c', '#7c3aed', '#f4212e', '#ffd400', '#ff7a00'];
-                let colorIdx = 0;
-                spans.forEach(s => {
-                    if (!serviceColors[s.service_name]) {
-                        serviceColors[s.service_name] = colors[colorIdx++ % colors.length];
-                    }
-                });
+            // Build parent-child relationships
+            const spanMap = {};
+            spans.forEach(s => { spanMap[s.span_id] = s; s.children = []; s.depth = 0; });
+            spans.forEach(s => {
+                if (s.parent_span_id && spanMap[s.parent_span_id]) {
+                    spanMap[s.parent_span_id].children.push(s);
+                }
+            });
 
-                const timeMarkers = [0, 0.25, 0.5, 0.75, 1].map(p => formatTraceDuration(totalDuration * p));
+            // Calculate depths
+            function setDepth(span, depth) {
+                span.depth = depth;
+                span.children.forEach(c => setDepth(c, depth + 1));
+            }
+            const rootSpans = spans.filter(s => !s.parent_span_id || !spanMap[s.parent_span_id]);
+            rootSpans.forEach(s => setDepth(s, 0));
 
-                detail.innerHTML = `
+            // Sort by start time within each level
+            spans.sort((a, b) => {
+                if (a.depth !== b.depth) return a.depth - b.depth;
+                return new Date(a.start_time) - new Date(b.start_time);
+            });
+
+            // Flatten tree maintaining parent-child order
+            const orderedSpans = [];
+            function addSpanAndChildren(span) {
+                orderedSpans.push(span);
+                span.children.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+                span.children.forEach(addSpanAndChildren);
+            }
+            rootSpans.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+            rootSpans.forEach(addSpanAndChildren);
+
+            // Assign colors to services
+            const serviceColors = {};
+            const serviceSpanCounts = {};
+            const colors = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ef4444', '#ec4899', '#06b6d4', '#84cc16'];
+            let colorIdx = 0;
+            orderedSpans.forEach(s => {
+                if (!serviceColors[s.service_name]) {
+                    serviceColors[s.service_name] = colors[colorIdx++ % colors.length];
+                    serviceSpanCounts[s.service_name] = 0;
+                }
+                serviceSpanCounts[s.service_name]++;
+            });
+
+            // Find critical path (longest path through the trace)
+            const criticalPathIds = new Set();
+            function findCriticalPath(span) {
+                criticalPathIds.add(span.span_id);
+                if (span.children.length === 0) return;
+                const longestChild = span.children.reduce((a, b) =>
+                    (b.duration_ms || 0) > (a.duration_ms || 0) ? b : a
+                );
+                findCriticalPath(longestChild);
+            }
+            if (rootSpans.length > 0) {
+                const longestRoot = rootSpans.reduce((a, b) =>
+                    (b.duration_ms || 0) > (a.duration_ms || 0) ? b : a
+                );
+                findCriticalPath(longestRoot);
+            }
+
+            // Stats
+            const errorCount = spans.filter(s => s.status === 'ERROR').length;
+            const avgDuration = spans.reduce((sum, s) => sum + (s.duration_ms || 0), 0) / spans.length;
+
+            const timeMarkers = [0, 0.25, 0.5, 0.75, 1].map(p => formatTraceDuration(totalDuration * p));
+
+            container.innerHTML = `
+                <div class="waterfall-container" style="position:relative;">
+                    <div class="waterfall-toolbar">
+                        <button class="waterfall-btn" onclick="toggleCriticalPath()" id="critical-path-btn" title="Highlight Critical Path">Critical Path</button>
+                        <button class="waterfall-btn" onclick="expandAllSpans()" title="Expand All">Expand</button>
+                        <div class="waterfall-stats">
+                            <div class="waterfall-stat">
+                                <span class="waterfall-stat-value">${spans.length}</span>
+                                <span>spans</span>
+                            </div>
+                            <div class="waterfall-stat">
+                                <span class="waterfall-stat-value">${formatTraceDuration(totalDuration)}</span>
+                                <span>total</span>
+                            </div>
+                            ${errorCount > 0 ? `
+                            <div class="waterfall-stat">
+                                <span class="waterfall-stat-value" style="color:#f4212e">${errorCount}</span>
+                                <span>errors</span>
+                            </div>` : ''}
+                        </div>
+                    </div>
+                    <div class="waterfall-legend" id="waterfall-legend">
+                        ${Object.entries(serviceColors).map(([svc, color]) => `
+                            <div class="waterfall-legend-item" onclick="filterByService('${escapeHtml(svc)}')" data-service="${escapeHtml(svc)}">
+                                <div class="waterfall-legend-color" style="background:${color}"></div>
+                                <span class="waterfall-legend-name">${escapeHtml(svc)}</span>
+                                <span class="waterfall-legend-count">${serviceSpanCounts[svc]}</span>
+                            </div>
+                        `).join('')}
+                    </div>
                     <div class="waterfall">
                         <div class="waterfall-header">
-                            <span style="width:180px">Operation</span>
-                            <div style="flex:1;display:flex;justify-content:space-between;">
+                            <div class="waterfall-header-op">Operation</div>
+                            <div class="waterfall-header-timeline">
                                 ${timeMarkers.map(m => `<span>${m}</span>`).join('')}
                             </div>
                         </div>
-                        ${spans.map(span => {
-                            const startOffset = new Date(span.start_time).getTime() - minTime;
-                            const left = totalDuration > 0 ? (startOffset / totalDuration * 100) : 0;
-                            const width = totalDuration > 0 ? (span.duration_ms / totalDuration * 100) : 100;
-                            const barClass = span.status === 'ERROR' ? 'error' :
-                                (span.kind || '').toLowerCase() === 'client' ? 'client' :
-                                (span.kind || '').toLowerCase() === 'internal' ? 'internal' : 'server';
-
-                            return `<div class="span-row">
-                                <div class="span-info">
-                                    <div class="span-name" title="${escapeHtml(span.name)}">${escapeHtml(span.name)}</div>
-                                    <div class="span-service" style="color:${serviceColors[span.service_name]}">${escapeHtml(span.service_name)}</div>
-                                </div>
-                                <div class="span-timeline">
-                                    <div class="timeline-grid">${'<div class="timeline-grid-line"></div>'.repeat(4)}</div>
-                                    <div class="span-bar ${barClass}" style="left:${left}%;width:${Math.max(width, 0.5)}%;background:${serviceColors[span.service_name]}"></div>
-                                    <span class="span-duration">${formatTraceDuration(span.duration_ms)}</span>
-                                </div>
-                            </div>`;
-                        }).join('')}
+                        <div class="waterfall-body" id="waterfall-body">
+                            ${orderedSpans.map((span, idx) => renderSpanRow(span, minTime, totalDuration, serviceColors, criticalPathIds)).join('')}
+                        </div>
                     </div>
-                `;
-            }).catch(() => {
-                detail.innerHTML = '<div class="no-trace-selected">Failed to load trace</div>';
+                    <div class="span-detail-panel" id="span-detail-panel">
+                        <div class="span-detail-header">
+                            <div class="span-detail-title" id="span-detail-title">Span Details</div>
+                            <button class="span-detail-close" onclick="closeSpanDetail()">×</button>
+                        </div>
+                        <div class="span-detail-body" id="span-detail-body"></div>
+                    </div>
+                </div>
+            `;
+
+            // Store for interactions
+            container.dataset.criticalPath = JSON.stringify([...criticalPathIds]);
+        }
+
+        function renderSpanRow(span, minTime, totalDuration, serviceColors, criticalPathIds) {
+            const startOffset = new Date(span.start_time).getTime() - minTime;
+            const left = totalDuration > 0 ? (startOffset / totalDuration * 100) : 0;
+            const width = totalDuration > 0 ? ((span.duration_ms || 0) / totalDuration * 100) : 100;
+            const color = serviceColors[span.service_name];
+            const isError = span.status === 'ERROR';
+            const isCritical = criticalPathIds.has(span.span_id);
+            const kind = (span.kind || 'internal').toLowerCase();
+
+            // Indent based on depth
+            const indent = span.depth * 16;
+
+            const kindIcons = { server: '◆', client: '◇', internal: '○', producer: '▷', consumer: '◁' };
+            const kindIcon = kindIcons[kind] || '○';
+
+            return `<div class="span-row ${isCritical ? 'critical-path' : ''} ${isError ? 'error' : ''}"
+                        data-span-id="${span.span_id}"
+                        data-service="${escapeHtml(span.service_name)}"
+                        onclick="selectSpan('${span.span_id}')">
+                <div class="span-info" style="padding-left:${indent}px">
+                    <div class="span-icon" style="background:${color}20;color:${color}">${kindIcon}</div>
+                    <div class="span-details">
+                        <div class="span-name" title="${escapeHtml(span.name)}">${escapeHtml(span.name)}</div>
+                        <div class="span-meta">
+                            <span class="span-service" style="color:${color}">${escapeHtml(span.service_name)}</span>
+                            <span class="span-kind">${kind}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="span-timeline">
+                    <div class="timeline-grid">${'<div class="timeline-grid-line"></div>'.repeat(4)}</div>
+                    <div class="span-bar ${isError ? 'error' : ''}"
+                         style="left:${left}%;width:${Math.max(width, 0.5)}%;background:linear-gradient(90deg,${color},${color}cc)">
+                        ${isError ? `<div class="span-status-icon" style="background:#f4212e"></div>` : ''}
+                    </div>
+                    <span class="span-duration">${formatTraceDuration(span.duration_ms)}</span>
+                </div>
+            </div>`;
+        }
+
+        function selectSpan(spanId) {
+            selectedSpanId = spanId;
+
+            // Update row selection
+            document.querySelectorAll('.span-row').forEach(row => {
+                row.classList.toggle('selected', row.dataset.spanId === spanId);
             });
+
+            // Find span data
+            const span = currentTraceData?.spans?.find(s => s.span_id === spanId);
+            if (!span) return;
+
+            // Open detail panel
+            const panel = document.getElementById('span-detail-panel');
+            const title = document.getElementById('span-detail-title');
+            const body = document.getElementById('span-detail-body');
+
+            if (!panel) return;
+
+            title.textContent = span.name;
+
+            const attributes = span.attributes || {};
+            const attrEntries = Object.entries(attributes);
+
+            body.innerHTML = `
+                <div class="span-detail-section">
+                    <div class="span-detail-section-title">Timing</div>
+                    <div class="span-detail-grid">
+                        <div class="span-detail-stat">
+                            <div class="span-detail-stat-value">${formatTraceDuration(span.duration_ms)}</div>
+                            <div class="span-detail-stat-label">Duration</div>
+                        </div>
+                        <div class="span-detail-stat">
+                            <div class="span-detail-stat-value">${new Date(span.start_time).toLocaleTimeString()}</div>
+                            <div class="span-detail-stat-label">Start Time</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="span-detail-section">
+                    <div class="span-detail-section-title">Info</div>
+                    <div class="span-detail-tags">
+                        <div class="span-detail-tag">
+                            <span class="span-detail-tag-key">Service</span>
+                            <span class="span-detail-tag-value">${escapeHtml(span.service_name)}</span>
+                        </div>
+                        <div class="span-detail-tag">
+                            <span class="span-detail-tag-key">Kind</span>
+                            <span class="span-detail-tag-value">${span.kind || 'internal'}</span>
+                        </div>
+                        <div class="span-detail-tag">
+                            <span class="span-detail-tag-key">Status</span>
+                            <span class="span-detail-tag-value" style="color:${span.status === 'ERROR' ? '#f4212e' : '#00ba7c'}">${span.status || 'OK'}</span>
+                        </div>
+                        <div class="span-detail-tag">
+                            <span class="span-detail-tag-key">Span ID</span>
+                            <span class="span-detail-tag-value">${span.span_id.slice(0, 16)}</span>
+                        </div>
+                        ${span.parent_span_id ? `
+                        <div class="span-detail-tag">
+                            <span class="span-detail-tag-key">Parent</span>
+                            <span class="span-detail-tag-value">${span.parent_span_id.slice(0, 16)}</span>
+                        </div>` : ''}
+                    </div>
+                </div>
+                ${attrEntries.length > 0 ? `
+                <div class="span-detail-section">
+                    <div class="span-detail-section-title">Attributes (${attrEntries.length})</div>
+                    <div class="span-detail-tags">
+                        ${attrEntries.slice(0, 10).map(([k, v]) => `
+                            <div class="span-detail-tag">
+                                <span class="span-detail-tag-key">${escapeHtml(k)}</span>
+                                <span class="span-detail-tag-value" title="${escapeHtml(String(v))}">${escapeHtml(String(v).slice(0, 50))}</span>
+                            </div>
+                        `).join('')}
+                        ${attrEntries.length > 10 ? `<div style="color:#71767b;font-size:0.7rem;text-align:center;padding:8px;">+${attrEntries.length - 10} more</div>` : ''}
+                    </div>
+                </div>` : ''}
+            `;
+
+            panel.classList.add('open');
+        }
+
+        function closeSpanDetail() {
+            selectedSpanId = null;
+            document.querySelectorAll('.span-row').forEach(row => row.classList.remove('selected'));
+            document.getElementById('span-detail-panel')?.classList.remove('open');
+        }
+
+        function toggleCriticalPath() {
+            const btn = document.getElementById('critical-path-btn');
+            const isActive = btn?.classList.toggle('active');
+            const container = document.getElementById('trace-detail');
+            const criticalIds = JSON.parse(container?.dataset.criticalPath || '[]');
+
+            document.querySelectorAll('.span-row').forEach(row => {
+                if (isActive && !criticalIds.includes(row.dataset.spanId)) {
+                    row.classList.add('dimmed');
+                } else {
+                    row.classList.remove('dimmed');
+                }
+            });
+        }
+
+        function filterByService(service) {
+            const legendItems = document.querySelectorAll('.waterfall-legend-item');
+            const rows = document.querySelectorAll('.span-row');
+
+            if (traceServiceFilter === service) {
+                // Clear filter
+                traceServiceFilter = null;
+                legendItems.forEach(item => item.classList.remove('dimmed'));
+                rows.forEach(row => row.classList.remove('dimmed'));
+            } else {
+                // Apply filter
+                traceServiceFilter = service;
+                legendItems.forEach(item => {
+                    item.classList.toggle('dimmed', item.dataset.service !== service);
+                });
+                rows.forEach(row => {
+                    row.classList.toggle('dimmed', row.dataset.service !== service);
+                });
+            }
+        }
+
+        function expandAllSpans() {
+            // Future: expand collapsed spans
         }
 
         function formatTraceDuration(ms) {
