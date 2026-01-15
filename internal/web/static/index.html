@@ -3411,6 +3411,317 @@
         function getLatencyClass(ms) { return !ms ? '' : ms < 100 ? 'good' : ms < 500 ? 'warn' : 'bad'; }
         function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
 
+        // Demo/Simulated Data Generator
+        const DemoData = {
+            enabled: true, // Set to true to show demo data when real data is empty
+
+            services: ['api-gateway', 'user-service', 'payment-service', 'inventory-service', 'notification-service', 'auth-service', 'search-service', 'order-service'],
+
+            generateServiceMap() {
+                const nodes = this.services.map((name, i) => ({
+                    id: name,
+                    name: name,
+                    type: i < 6 ? 'service' : 'external',
+                    status: i === 2 ? 'degraded' : (i === 5 ? 'error' : 'healthy'),
+                    requests: Math.floor(Math.random() * 10000) + 1000,
+                    latency: Math.floor(Math.random() * 200) + 20,
+                    errors: i === 5 ? Math.floor(Math.random() * 50) + 10 : Math.floor(Math.random() * 5)
+                }));
+                const links = [
+                    { source: 'api-gateway', target: 'user-service', count: 5420, latency: 45, errors: 2 },
+                    { source: 'api-gateway', target: 'auth-service', count: 8900, latency: 23, errors: 45 },
+                    { source: 'api-gateway', target: 'order-service', count: 3200, latency: 89, errors: 5 },
+                    { source: 'user-service', target: 'notification-service', count: 1200, latency: 120, errors: 0 },
+                    { source: 'order-service', target: 'payment-service', count: 2800, latency: 156, errors: 12 },
+                    { source: 'order-service', target: 'inventory-service', count: 3100, latency: 67, errors: 3 },
+                    { source: 'payment-service', target: 'notification-service', count: 890, latency: 89, errors: 1 },
+                    { source: 'inventory-service', target: 'search-service', count: 4500, latency: 34, errors: 0 }
+                ];
+                return { nodes, links };
+            },
+
+            generateTraces() {
+                const now = Date.now();
+                return Array.from({ length: 15 }, (_, i) => ({
+                    trace_id: `trace-${Date.now()}-${i}`,
+                    name: ['GET /api/users', 'POST /api/orders', 'GET /api/products', 'POST /api/payments', 'GET /api/search'][i % 5],
+                    service_name: this.services[i % this.services.length],
+                    span_count: Math.floor(Math.random() * 8) + 2,
+                    duration_ms: Math.floor(Math.random() * 500) + 20,
+                    status: i === 3 ? 'error' : (i === 7 ? 'error' : 'ok'),
+                    start_time: new Date(now - i * 60000).toISOString()
+                }));
+            },
+
+            generateTraceDetail(traceId) {
+                const now = Date.now();
+                const services = ['api-gateway', 'user-service', 'database'];
+                return {
+                    trace_id: traceId,
+                    spans: [
+                        { span_id: 'span-1', parent_span_id: null, name: 'GET /api/users', service_name: 'api-gateway', kind: 'server', start_time: new Date(now - 200).toISOString(), end_time: new Date(now).toISOString(), status: 'ok', attributes: { 'http.method': 'GET', 'http.url': '/api/users', 'http.status_code': 200 } },
+                        { span_id: 'span-2', parent_span_id: 'span-1', name: 'user.getAll', service_name: 'user-service', kind: 'internal', start_time: new Date(now - 180).toISOString(), end_time: new Date(now - 50).toISOString(), status: 'ok', attributes: { 'code.function': 'getAll' } },
+                        { span_id: 'span-3', parent_span_id: 'span-2', name: 'SELECT * FROM users', service_name: 'database', kind: 'client', start_time: new Date(now - 160).toISOString(), end_time: new Date(now - 80).toISOString(), status: 'ok', attributes: { 'db.system': 'postgresql', 'db.statement': 'SELECT * FROM users LIMIT 100' } },
+                        { span_id: 'span-4', parent_span_id: 'span-1', name: 'cache.check', service_name: 'api-gateway', kind: 'client', start_time: new Date(now - 195).toISOString(), end_time: new Date(now - 185).toISOString(), status: 'ok', attributes: { 'cache.hit': 'false' } }
+                    ]
+                };
+            },
+
+            generateLogs() {
+                const now = Date.now();
+                const levels = ['info', 'info', 'info', 'warn', 'error', 'info', 'debug'];
+                const messages = [
+                    'Request processed successfully',
+                    'User authentication completed',
+                    'Database connection established',
+                    'High memory usage detected: 85%',
+                    'Failed to connect to payment gateway: timeout',
+                    'Cache hit ratio: 94.2%',
+                    'Starting health check routine',
+                    'Order #12345 created successfully',
+                    'Rate limit exceeded for client 192.168.1.100',
+                    'Retrying failed request (attempt 2/3)'
+                ];
+                return {
+                    entries: Array.from({ length: 20 }, (_, i) => ({
+                        timestamp: new Date(now - i * 30000).toISOString(),
+                        level: levels[i % levels.length],
+                        service: this.services[i % this.services.length],
+                        message: messages[i % messages.length],
+                        trace_id: i % 4 === 0 ? `trace-demo-${i}` : null
+                    }))
+                };
+            },
+
+            generateIncidents() {
+                const now = Date.now();
+                return [
+                    { id: 'inc-1', title: 'High error rate on payment-service', status: 'triggered', severity: 'critical', service: 'payment-service', created_at: new Date(now - 300000).toISOString(), source: 'alerting' },
+                    { id: 'inc-2', title: 'Database connection pool exhausted', status: 'acknowledged', severity: 'high', service: 'user-service', created_at: new Date(now - 1800000).toISOString(), assigned_to: 'alice', source: 'anomaly' },
+                    { id: 'inc-3', title: 'Elevated latency on search queries', status: 'resolved', severity: 'medium', service: 'search-service', created_at: new Date(now - 7200000).toISOString(), source: 'slo' },
+                    { id: 'inc-4', title: 'SSL certificate expiring in 7 days', status: 'triggered', severity: 'low', service: 'api-gateway', created_at: new Date(now - 86400000).toISOString(), source: 'synthetics' }
+                ];
+            },
+
+            generateIncidentStats() {
+                return { active_incidents: 2, triggered_count: 2, acknowledged_count: 1 };
+            },
+
+            generateDeployments() {
+                const now = Date.now();
+                return [
+                    { id: 'd1', service: 'api-gateway', version: 'v2.4.1', environment: 'prod', status: 'success', timestamp: new Date(now - 3600000).toISOString(), user: 'alice', commit_sha: 'a1b2c3d', duration_ms: 45000 },
+                    { id: 'd2', service: 'user-service', version: 'v1.8.0', environment: 'prod', status: 'success', timestamp: new Date(now - 7200000).toISOString(), user: 'bob', commit_sha: 'e4f5g6h', duration_ms: 32000 },
+                    { id: 'd3', service: 'payment-service', version: 'v3.1.2', environment: 'staging', status: 'failed', timestamp: new Date(now - 14400000).toISOString(), user: 'charlie', commit_sha: 'i7j8k9l', duration_ms: 120000 },
+                    { id: 'd4', service: 'order-service', version: 'v2.0.0', environment: 'prod', status: 'success', timestamp: new Date(now - 86400000).toISOString(), user: 'alice', commit_sha: 'm0n1o2p', duration_ms: 55000 },
+                    { id: 'd5', service: 'notification-service', version: 'v1.2.3', environment: 'prod', status: 'rolled_back', timestamp: new Date(now - 172800000).toISOString(), user: 'bob', commit_sha: 'q3r4s5t', duration_ms: 28000 }
+                ];
+            },
+
+            generateDeployStats() {
+                return { total_deployments: 47, deploys_today: 3, deploys_this_week: 12, success_rate: 94.5, recent_failures: 1 };
+            },
+
+            generateSLOs() {
+                return [
+                    { slo: { id: 'slo-1', name: 'API Availability', target: 99.9, window: '30d', type: 'availability' }, state: { status: 'OK', current_value: 99.94, budget_used_pct: 42, budget_remaining: 8.2 } },
+                    { slo: { id: 'slo-2', name: 'Checkout Latency P95', target: 99.0, window: '7d', type: 'latency' }, state: { status: 'WARNING', current_value: 98.7, budget_used_pct: 78, budget_remaining: 2.1 } },
+                    { slo: { id: 'slo-3', name: 'Search Error Rate', target: 99.5, window: '30d', type: 'error_rate' }, state: { status: 'OK', current_value: 99.82, budget_used_pct: 23, budget_remaining: 15.4 } },
+                    { slo: { id: 'slo-4', name: 'Payment Success Rate', target: 99.95, window: '24h', type: 'availability' }, state: { status: 'CRITICAL', current_value: 99.21, budget_used_pct: 156, budget_remaining: -2.8 } }
+                ];
+            },
+
+            generateSynthetics() {
+                return [
+                    { id: 's1', name: 'Homepage Health', url: 'https://app.example.com/health', status: 'passing', last_latency_ms: 124 },
+                    { id: 's2', name: 'API Status', url: 'https://api.example.com/status', status: 'passing', last_latency_ms: 45 },
+                    { id: 's3', name: 'Login Flow', url: 'https://app.example.com/login', status: 'failing', last_latency_ms: 5230 },
+                    { id: 's4', name: 'Checkout Process', url: 'https://app.example.com/checkout', status: 'passing', last_latency_ms: 890 }
+                ];
+            },
+
+            generateFlameGraph() {
+                return {
+                    name: 'root',
+                    value: 10000,
+                    children: [
+                        { name: 'main.handleRequest', value: 4500, children: [
+                            { name: 'http.ServeHTTP', value: 3800, children: [
+                                { name: 'json.Marshal', value: 1200, children: [] },
+                                { name: 'db.Query', value: 2100, children: [
+                                    { name: 'sql.QueryContext', value: 1800, children: [
+                                        { name: 'runtime.gcBgMarkWorker', value: 400, children: [] }
+                                    ]}
+                                ]}
+                            ]},
+                            { name: 'middleware.Auth', value: 600, children: [] }
+                        ]},
+                        { name: 'runtime.schedule', value: 2000, children: [
+                            { name: 'runtime.findrunnable', value: 1200, children: [] },
+                            { name: 'runtime.gcDrain', value: 700, children: [] }
+                        ]},
+                        { name: 'net.(*netFD).Read', value: 1500, children: [
+                            { name: 'syscall.read', value: 1400, children: [
+                                { name: '[kernel]', value: 800, children: [] }
+                            ]}
+                        ]},
+                        { name: 'main.processQueue', value: 2000, children: [
+                            { name: 'encoding/json.Unmarshal', value: 900, children: [] },
+                            { name: 'kafka.Consume', value: 1000, children: [] }
+                        ]}
+                    ]
+                };
+            },
+
+            generateAnomalies() {
+                const now = Date.now();
+                return [
+                    { metric_name: 'payment_service.latency_p99', value: 450.5, score: 0.92, is_critical: true, timestamp: new Date(now - 120000).toISOString(), reason: 'Value 3.2x above normal baseline' },
+                    { metric_name: 'api_gateway.error_rate', value: 2.4, score: 0.78, is_critical: false, timestamp: new Date(now - 300000).toISOString(), reason: 'Unusual spike detected' },
+                    { metric_name: 'user_service.memory_usage', value: 87.3, score: 0.65, is_critical: false, timestamp: new Date(now - 600000).toISOString(), reason: 'Gradual increase over 30m' },
+                    { metric_name: 'search_service.query_count', value: 12500, score: 0.45, is_critical: false, timestamp: new Date(now - 1800000).toISOString(), reason: 'Higher than expected for this time' }
+                ];
+            },
+
+            generateAnomalyStats() {
+                return { critical_count: 1, warning_count: 2, total_anomalies: 4, metrics_tracked: 127 };
+            },
+
+            generateOnCallSchedules() {
+                return [
+                    { id: 'oc1', name: 'Platform Team', rotation_type: 'weekly', users: [
+                        { user_id: 'u1', name: 'Alice Chen', email: 'alice@example.com' },
+                        { user_id: 'u2', name: 'Bob Smith', email: 'bob@example.com' },
+                        { user_id: 'u3', name: 'Charlie Davis', email: 'charlie@example.com' }
+                    ]},
+                    { id: 'oc2', name: 'Database Team', rotation_type: 'daily', users: [
+                        { user_id: 'u4', name: 'Diana Lee', email: 'diana@example.com' },
+                        { user_id: 'u5', name: 'Eve Wilson', email: 'eve@example.com' }
+                    ]}
+                ];
+            },
+
+            generateAlerts() {
+                const now = Date.now();
+                return [
+                    { name: 'HighErrorRate', state: 'firing', severity: 'critical', starts_at: new Date(now - 600000).toISOString(), labels: { service: 'payment-service', env: 'prod' }, annotations: { summary: 'Error rate above 5%' } },
+                    { name: 'HighLatency', state: 'firing', severity: 'warning', starts_at: new Date(now - 1200000).toISOString(), labels: { service: 'search-service', env: 'prod' }, annotations: { summary: 'P99 latency above 500ms' } }
+                ];
+            },
+
+            generateAlertingStatus() {
+                return { firing_alerts: 2, pending_alerts: 1, active_silences: 0, total_rules: 24 };
+            },
+
+            generateCurrentOnCall() {
+                return { 'Platform Team': 'Alice Chen', 'Database Team': 'Diana Lee' };
+            },
+
+            generatePatterns() {
+                const now = Date.now();
+                return {
+                    stats: { total_patterns: 12, total_matches: 45230, matches_last_hour: 892, new_patterns_today: 3 },
+                    patterns: [
+                        { signature: 'Error connecting to database: connection refused', level: 'error', service: 'user-service', count: 1247, count_last_hr: 45, trend: 'increasing', last_seen: new Date(now - 60000).toISOString(), examples: ['Error connecting to database: connection refused at 10.0.0.5:5432'] },
+                        { signature: 'Request completed successfully in {duration}ms', level: 'info', service: 'api-gateway', count: 28934, count_last_hr: 523, trend: 'stable', last_seen: new Date(now - 5000).toISOString(), examples: ['Request completed successfully in 45ms'] },
+                        { signature: 'Rate limit exceeded for client {ip}', level: 'warn', service: 'api-gateway', count: 892, count_last_hr: 67, trend: 'increasing', last_seen: new Date(now - 120000).toISOString(), examples: ['Rate limit exceeded for client 192.168.1.100'] },
+                        { signature: 'Cache miss for key {key}', level: 'debug', service: 'search-service', count: 5621, count_last_hr: 234, trend: 'stable', last_seen: new Date(now - 30000).toISOString(), examples: ['Cache miss for key user:12345'] },
+                        { signature: 'Payment processed: {amount} {currency}', level: 'info', service: 'payment-service', count: 3456, count_last_hr: 89, trend: 'decreasing', last_seen: new Date(now - 180000).toISOString(), examples: ['Payment processed: 99.99 USD'] },
+                        { signature: 'New user registered: {email}', level: 'info', service: 'auth-service', count: 234, count_last_hr: 12, trend: 'new', last_seen: new Date(now - 300000).toISOString(), examples: ['New user registered: user@example.com'] }
+                    ]
+                };
+            },
+
+            generateCatalogServices() {
+                return [
+                    { id: 'svc-1', name: 'api-gateway', display_name: 'API Gateway', description: 'Main entry point for all API requests', tier: 'critical', health: 'healthy', team_name: 'Platform', repo_url: 'https://github.com/example/api-gateway', docs_url: 'https://docs.example.com/api' },
+                    { id: 'svc-2', name: 'user-service', display_name: 'User Service', description: 'User management and authentication', tier: 'critical', health: 'degraded', team_name: 'Identity', repo_url: 'https://github.com/example/user-service' },
+                    { id: 'svc-3', name: 'payment-service', display_name: 'Payment Service', description: 'Payment processing and billing', tier: 'critical', health: 'unhealthy', team_name: 'Payments', runbook_url: 'https://runbooks.example.com/payments' },
+                    { id: 'svc-4', name: 'notification-service', display_name: 'Notification Service', description: 'Email, SMS, and push notifications', tier: 'high', health: 'healthy', team_name: 'Platform' },
+                    { id: 'svc-5', name: 'search-service', display_name: 'Search Service', description: 'Full-text search and indexing', tier: 'medium', health: 'healthy', team_name: 'Search' },
+                    { id: 'svc-6', name: 'inventory-service', display_name: 'Inventory Service', description: 'Product inventory management', tier: 'high', health: 'healthy', team_name: 'Commerce' }
+                ];
+            },
+
+            generateCatalogStats() {
+                return { total: 6, critical: 3, healthy: 4, unhealthy: 1, degraded: 1 };
+            },
+
+            generateCatalogTeams() {
+                return [
+                    { id: 't1', name: 'Platform', member_count: 8 },
+                    { id: 't2', name: 'Identity', member_count: 5 },
+                    { id: 't3', name: 'Payments', member_count: 6 },
+                    { id: 't4', name: 'Search', member_count: 4 },
+                    { id: 't5', name: 'Commerce', member_count: 7 }
+                ];
+            },
+
+            generateCorrelations() {
+                const now = Date.now();
+                return {
+                    correlations: [
+                        { deployment: { id: 'd1', service: 'payment-service', version: 'v3.1.2' }, incident: { id: 'inc-1', title: 'High error rate' }, confidence: 0.89, time_delta: 300000, reason: 'Error rate spiked 5 minutes after deploy' },
+                        { deployment: { id: 'd2', service: 'user-service', version: 'v1.8.0' }, incident: { id: 'inc-2', title: 'Database connection issues' }, confidence: 0.72, time_delta: 600000, reason: 'DB connections increased 10 minutes after deploy' }
+                    ]
+                };
+            },
+
+            generateServiceTimeline() {
+                const now = Date.now();
+                return {
+                    events: [
+                        { type: 'deploy', timestamp: new Date(now - 3600000).toISOString(), data: { version: 'v2.4.1' } },
+                        { type: 'error_spike', timestamp: new Date(now - 3300000).toISOString(), data: { error_rate: 5.2 } },
+                        { type: 'incident', timestamp: new Date(now - 3000000).toISOString(), data: { title: 'High error rate detected' } },
+                        { type: 'metric_anomaly', timestamp: new Date(now - 2700000).toISOString(), data: { metric: 'latency_p99', value: 450 } }
+                    ],
+                    total_events: 4,
+                    error_traces: 23
+                };
+            },
+
+            generateClusterInfo() {
+                return {
+                    enabled: true,
+                    node_count: 3,
+                    node_id: 'node-local-001',
+                    gossip_addr: '10.0.0.1:7946',
+                    local_node: { id: 'node-local-001', hostname: 'dogwatch-1' }
+                };
+            },
+
+            generateClusterNodes() {
+                const now = Date.now();
+                return [
+                    { id: 'node-local-001', hostname: 'dogwatch-1', address: '10.0.0.1:9999', version: '1.0.0', state: 'alive', started_at: new Date(now - 86400000).toISOString(), cpu_percent: 45.2, mem_percent: 62.1, active_incidents: 2 },
+                    { id: 'node-002', hostname: 'dogwatch-2', address: '10.0.0.2:9999', version: '1.0.0', state: 'alive', started_at: new Date(now - 172800000).toISOString(), cpu_percent: 32.8, mem_percent: 58.4, active_incidents: 1 },
+                    { id: 'node-003', hostname: 'dogwatch-3', address: '10.0.0.3:9999', version: '1.0.0', state: 'alive', started_at: new Date(now - 259200000).toISOString(), cpu_percent: 28.1, mem_percent: 54.9, active_incidents: 0 }
+                ];
+            },
+
+            generateHistoryData(durationMs) {
+                const now = Date.now();
+                const points = 60;
+                const interval = durationMs / points;
+                const data = [];
+                let cpuBase = 25 + Math.random() * 20;
+                let memBase = 55 + Math.random() * 15;
+                for (let i = 0; i < points; i++) {
+                    cpuBase += (Math.random() - 0.5) * 8;
+                    memBase += (Math.random() - 0.5) * 3;
+                    cpuBase = Math.max(5, Math.min(95, cpuBase));
+                    memBase = Math.max(40, Math.min(90, memBase));
+                    data.push({
+                        timestamp: new Date(now - durationMs + i * interval).toISOString(),
+                        cpu_percent: cpuBase,
+                        mem_percent: memBase
+                    });
+                }
+                return data;
+            }
+        };
+
         // Data fetching
         function updateSystemMetrics() {
             fetch('/api/system').then(r => r.json()).then(d => {
@@ -3497,8 +3808,17 @@
         function updateServiceMap() {
             fetch('/api/servicemap').then(r => r.json()).then(d => {
                 svcMapData = d || { nodes: [], links: [] };
+                // Use demo data if empty and demo mode enabled
+                if (DemoData.enabled && (!svcMapData.nodes || svcMapData.nodes.length === 0)) {
+                    svcMapData = DemoData.generateServiceMap();
+                }
                 renderServiceMap();
-            }).catch(() => {});
+            }).catch(() => {
+                if (DemoData.enabled) {
+                    svcMapData = DemoData.generateServiceMap();
+                    renderServiceMap();
+                }
+            });
         }
 
         function filterServiceMap() {
@@ -3983,24 +4303,36 @@
         }
 
         function loadChartData(dur) {
+            const durMs = dur.includes('h') ? parseInt(dur)*3600000 : parseInt(dur)*60000;
             fetch(`/api/history/system?duration=${dur}`).then(r => r.json()).then(data => {
+                // Use demo data if empty and demo mode enabled
+                if ((!data?.length) && DemoData.enabled) {
+                    data = DemoData.generateHistoryData(durMs);
+                }
                 if (!data?.length) return;
-                const now = Date.now();
-                const durMs = dur.includes('h') ? parseInt(dur)*3600000 : parseInt(dur)*60000;
+                updateCharts(data, durMs);
+            }).catch(() => {
+                if (DemoData.enabled) {
+                    const data = DemoData.generateHistoryData(durMs);
+                    updateCharts(data, durMs);
+                }
+            });
+        }
 
-                if (cpuChart) {
-                    cpuChart.data.datasets[0].data = data.map(d => ({ x: new Date(d.timestamp), y: d.cpu_percent }));
-                    cpuChart.options.scales.x.min = now - durMs;
-                    cpuChart.options.scales.x.max = now;
-                    cpuChart.update('none');
-                }
-                if (memChart) {
-                    memChart.data.datasets[0].data = data.map(d => ({ x: new Date(d.timestamp), y: d.mem_percent }));
-                    memChart.options.scales.x.min = now - durMs;
-                    memChart.options.scales.x.max = now;
-                    memChart.update('none');
-                }
-            }).catch(() => {});
+        function updateCharts(data, durMs) {
+            const now = Date.now();
+            if (cpuChart) {
+                cpuChart.data.datasets[0].data = data.map(d => ({ x: new Date(d.timestamp), y: d.cpu_percent }));
+                cpuChart.options.scales.x.min = now - durMs;
+                cpuChart.options.scales.x.max = now;
+                cpuChart.update('none');
+            }
+            if (memChart) {
+                memChart.data.datasets[0].data = data.map(d => ({ x: new Date(d.timestamp), y: d.mem_percent }));
+                memChart.options.scales.x.min = now - durMs;
+                memChart.options.scales.x.max = now;
+                memChart.update('none');
+            }
         }
 
         // Traces
@@ -4028,6 +4360,10 @@
                 const list = document.getElementById('trace-list');
                 if (!list) return;
 
+                // Use demo data if empty and demo mode enabled
+                if ((!traces?.length) && DemoData.enabled) {
+                    traces = DemoData.generateTraces();
+                }
                 if (!traces?.length) {
                     list.innerHTML = '<div class="empty-state">No traces yet. Configure OTLP export to http://localhost:9999/v1/traces</div>';
                     return;
@@ -4068,6 +4404,10 @@
             if (!detail) return;
 
             fetch(`/api/traces/${traceId}`).then(r => r.json()).then(trace => {
+                // Use demo data if empty and demo mode enabled
+                if ((!trace?.spans?.length) && DemoData.enabled) {
+                    trace = DemoData.generateTraceDetail(traceId);
+                }
                 if (!trace?.spans?.length) {
                     detail.innerHTML = '<div class="no-trace-selected"><div class="no-trace-selected-icon">🔍</div>No spans found</div>';
                     return;
@@ -4078,7 +4418,15 @@
                 traceServiceFilter = null;
                 renderWaterfall(detail, trace);
             }).catch(() => {
-                detail.innerHTML = '<div class="no-trace-selected"><div class="no-trace-selected-icon">⚠️</div>Failed to load trace</div>';
+                if (DemoData.enabled) {
+                    const trace = DemoData.generateTraceDetail(traceId);
+                    currentTraceData = trace;
+                    selectedSpanId = null;
+                    traceServiceFilter = null;
+                    renderWaterfall(detail, trace);
+                } else {
+                    detail.innerHTML = '<div class="no-trace-selected"><div class="no-trace-selected-icon">⚠️</div>Failed to load trace</div>';
+                }
             });
         }
 
@@ -4399,12 +4747,22 @@
 
         function updateFlameGraph() {
             fetch('/api/flamegraph').then(r => r.json()).then(data => {
+                // Use demo data if empty and demo mode enabled
+                if ((!data || !data.children || data.children.length === 0) && DemoData.enabled) {
+                    data = DemoData.generateFlameGraph();
+                }
                 flameData = data;
                 flameZoomStack = [];
                 renderFlameGraph();
             }).catch(() => {
-                const el = document.getElementById('flamegraph');
-                if (el) el.innerHTML = '<div class="flamegraph-empty"><div class="flamegraph-empty-icon">📊</div>Profiler unavailable</div>';
+                if (DemoData.enabled) {
+                    flameData = DemoData.generateFlameGraph();
+                    flameZoomStack = [];
+                    renderFlameGraph();
+                } else {
+                    const el = document.getElementById('flamegraph');
+                    if (el) el.innerHTML = '<div class="flamegraph-empty"><div class="flamegraph-empty-icon">📊</div>Profiler unavailable</div>';
+                }
             });
         }
 
@@ -5066,7 +5424,11 @@
                 .then(result => {
                     const list = document.getElementById('logs-list');
                     if (!list) return;
-                    const entries = result?.entries || [];
+                    let entries = result?.entries || [];
+                    // Use demo data if empty and demo mode enabled
+                    if (!entries.length && DemoData.enabled) {
+                        entries = DemoData.generateLogs().entries;
+                    }
                     if (!entries.length) {
                         list.innerHTML = '<div class="empty-state">No logs found</div>';
                         return;
@@ -5267,34 +5629,47 @@
         // Synthetics functions
         function loadSynthetics() {
             fetch('/api/synthetics/checks')
-                .then(r => r.json())
+                .then(r => r.ok ? r.json() : Promise.reject('API error'))
                 .then(checks => {
                     const list = document.getElementById('synthetics-list');
                     if (!list) return;
 
+                    // Use demo data if empty and demo mode enabled
+                    if (!checks?.length && DemoData.enabled) {
+                        checks = DemoData.generateSynthetics();
+                    }
                     if (!checks?.length) {
                         list.innerHTML = '<div class="empty-state">No synthetic checks configured. Click "+ New" to create one.</div>';
                         return;
                     }
 
-                    list.innerHTML = checks.map(c => {
-                        const statusClass = (c.status || 'unknown').toLowerCase();
-                        const latency = c.last_latency_ms ? formatLatency(c.last_latency_ms) : '-';
-                        return `<div class="synth-item">
-                            <div class="synth-info">
-                                <div class="synth-name">${escapeHtml(c.name)}</div>
-                                <div class="synth-url">${escapeHtml(c.url)}</div>
-                            </div>
-                            <span class="synth-latency">${latency}</span>
-                            <span class="synth-status ${statusClass}">${c.status || 'unknown'}</span>
-                            <div class="synth-actions">
-                                <button class="btn" onclick="runSynthetic('${c.id}')" title="Run Now">Run</button>
-                                <button class="btn" onclick="deleteSynthetic('${c.id}')" title="Delete">X</button>
-                            </div>
-                        </div>`;
-                    }).join('');
+                    renderSyntheticsList(list, checks);
                 })
-                .catch(() => {});
+                .catch(() => {
+                    if (DemoData.enabled) {
+                        const list = document.getElementById('synthetics-list');
+                        if (list) renderSyntheticsList(list, DemoData.generateSynthetics());
+                    }
+                });
+        }
+
+        function renderSyntheticsList(list, checks) {
+            list.innerHTML = checks.map(c => {
+                const statusClass = (c.status || 'unknown').toLowerCase();
+                const latency = c.last_latency_ms ? formatLatency(c.last_latency_ms) : '-';
+                return `<div class="synth-item">
+                    <div class="synth-info">
+                        <div class="synth-name">${escapeHtml(c.name)}</div>
+                        <div class="synth-url">${escapeHtml(c.url)}</div>
+                    </div>
+                    <span class="synth-latency">${latency}</span>
+                    <span class="synth-status ${statusClass}">${c.status || 'unknown'}</span>
+                    <div class="synth-actions">
+                        <button class="btn" onclick="runSynthetic('${c.id}')" title="Run Now">Run</button>
+                        <button class="btn" onclick="deleteSynthetic('${c.id}')" title="Delete">X</button>
+                    </div>
+                </div>`;
+            }).join('');
         }
 
         function showCreateSynthetic() {
@@ -5430,64 +5805,53 @@
 
         function loadSLOs() {
             fetch('/api/slos')
-                .then(r => r.json())
+                .then(r => r.ok ? r.json() : Promise.reject('API error'))
                 .then(slos => {
                     const list = document.getElementById('slos-list');
                     if (!list) return;
 
+                    // Use demo data if empty and demo mode enabled
+                    if (!slos?.length && DemoData.enabled) {
+                        slos = DemoData.generateSLOs();
+                    }
                     if (!slos?.length) {
                         list.innerHTML = '<div class="empty-state">No SLOs configured. Click "+ New" to create one.</div>';
                         return;
                     }
-
-                    list.innerHTML = slos.map(item => {
-                        const slo = item.slo;
-                        const state = item.state || {};
-                        const statusClass = (state.status || 'no_data').toLowerCase().replace(' ', '_');
-                        const currentValue = state.current_value?.toFixed(2) || '-';
-                        const target = slo.target?.toFixed(1) || '-';
-                        const budgetUsed = state.budget_used_pct || 0;
-                        const budgetRemaining = state.budget_remaining?.toFixed(1) || '-';
-
-                        const valueClass = state.current_value >= slo.target ? 'good' :
-                                          state.current_value >= slo.target - 1 ? 'warn' : 'bad';
-                        const budgetClass = budgetUsed < 50 ? 'healthy' : budgetUsed < 80 ? 'warning' : 'critical';
-
-                        return `<div class="slo-item">
-                            <div class="slo-header">
-                                <span class="slo-name">${escapeHtml(slo.name)}</span>
-                                <div style="display:flex;align-items:center;gap:0.5rem;">
-                                    <span class="slo-status ${statusClass}">${state.status || 'NO DATA'}</span>
-                                    <button class="btn" onclick="deleteSLO('${slo.id}')" style="padding:0.15rem 0.3rem;">X</button>
-                                </div>
-                            </div>
-                            <div class="slo-metrics">
-                                <div class="slo-metric">
-                                    <div class="slo-metric-value ${valueClass}">${currentValue}%</div>
-                                    <div class="slo-metric-label">Current</div>
-                                </div>
-                                <div class="slo-metric">
-                                    <div class="slo-metric-value">${target}%</div>
-                                    <div class="slo-metric-label">Target</div>
-                                </div>
-                                <div class="slo-metric">
-                                    <div class="slo-metric-value">${slo.window}</div>
-                                    <div class="slo-metric-label">Window</div>
-                                </div>
-                            </div>
-                            <div class="slo-budget">
-                                <div class="slo-budget-bar">
-                                    <div class="slo-budget-fill ${budgetClass}" style="width:${Math.min(budgetUsed, 100)}%"></div>
-                                </div>
-                                <div class="slo-budget-text">
-                                    <span>Error Budget: ${budgetRemaining} min remaining</span>
-                                    <span>${budgetUsed.toFixed(1)}% used</span>
-                                </div>
-                            </div>
-                        </div>`;
-                    }).join('');
                 })
-                .catch(() => {});
+                .catch(() => {
+                    if (DemoData.enabled) {
+                        const list = document.getElementById('slos-list');
+                        if (!list) return;
+                        const slos = DemoData.generateSLOs();
+                        list.innerHTML = slos.map(item => {
+                            const slo = item.slo;
+                            const state = item.state || {};
+                            const statusClass = (state.status || 'no_data').toLowerCase().replace(' ', '_');
+                            const currentValue = state.current_value?.toFixed(2) || '-';
+                            const target = slo.target?.toFixed(1) || '-';
+                            const budgetUsed = state.budget_used_pct || 0;
+                            const budgetRemaining = state.budget_remaining?.toFixed(1) || '-';
+                            const valueClass = state.current_value >= slo.target ? 'good' : state.current_value >= slo.target - 1 ? 'warn' : 'bad';
+                            const budgetClass = budgetUsed < 50 ? 'healthy' : budgetUsed < 80 ? 'warning' : 'critical';
+                            return `<div class="slo-item">
+                                <div class="slo-header">
+                                    <span class="slo-name">${escapeHtml(slo.name)}</span>
+                                    <span class="slo-status ${statusClass}">${state.status || 'NO DATA'}</span>
+                                </div>
+                                <div class="slo-metrics">
+                                    <div class="slo-metric"><div class="slo-metric-value ${valueClass}">${currentValue}%</div><div class="slo-metric-label">Current</div></div>
+                                    <div class="slo-metric"><div class="slo-metric-value">${target}%</div><div class="slo-metric-label">Target</div></div>
+                                    <div class="slo-metric"><div class="slo-metric-value">${slo.window}</div><div class="slo-metric-label">Window</div></div>
+                                </div>
+                                <div class="slo-budget">
+                                    <div class="slo-budget-bar"><div class="slo-budget-fill ${budgetClass}" style="width:${Math.min(budgetUsed, 100)}%"></div></div>
+                                    <div class="slo-budget-text"><span>Error Budget: ${budgetRemaining} min remaining</span><span>${budgetUsed.toFixed(1)}% used</span></div>
+                                </div>
+                            </div>`;
+                        }).join('');
+                    }
+                });
         }
 
         function showCreateSLO() {
@@ -5613,6 +5977,10 @@
             fetch(`/api/logs/patterns?filter=${filter}&limit=20`)
                 .then(r => r.json())
                 .then(data => {
+                    // Use demo data if empty and demo mode enabled
+                    if (DemoData.enabled && (!data?.patterns || data.patterns.length === 0)) {
+                        data = DemoData.generatePatterns();
+                    }
                     const stats = data.stats || {};
                     const patterns = data.patterns || [];
 
@@ -5784,11 +6152,19 @@
                 .then(r => r.json())
                 .then(data => {
                     if (!Array.isArray(data)) data = [];
+                    // Use demo data if empty and demo mode enabled
+                    if (!data.length && DemoData.enabled) {
+                        data = DemoData.generateDeployments();
+                    }
 
                     // Load stats
                     fetch('/api/deploys/stats')
                         .then(r => r.json())
                         .then(stats => {
+                            // Use demo stats if empty
+                            if (DemoData.enabled && !stats?.total_deployments) {
+                                stats = DemoData.generateDeployStats();
+                            }
                             const summaryEl = document.getElementById('deploy-summary');
                             if (summaryEl) {
                                 summaryEl.innerHTML = `
@@ -5815,7 +6191,21 @@
                                 `;
                             }
                         })
-                        .catch(() => {});
+                        .catch(() => {
+                            if (DemoData.enabled) {
+                                const stats = DemoData.generateDeployStats();
+                                const summaryEl = document.getElementById('deploy-summary');
+                                if (summaryEl) {
+                                    summaryEl.innerHTML = `
+                                        <div class="deploy-stat"><span class="deploy-stat-value">${stats.total_deployments}</span><span class="deploy-stat-label">Total</span></div>
+                                        <div class="deploy-stat"><span class="deploy-stat-value">${stats.deploys_today}</span><span class="deploy-stat-label">Today</span></div>
+                                        <div class="deploy-stat"><span class="deploy-stat-value">${stats.deploys_this_week}</span><span class="deploy-stat-label">This Week</span></div>
+                                        <div class="deploy-stat"><span class="deploy-stat-value" style="color:#00ba7c">${stats.success_rate.toFixed(0)}%</span><span class="deploy-stat-label">Success Rate</span></div>
+                                        <div class="deploy-stat"><span class="deploy-stat-value" style="color:${stats.recent_failures > 0 ? '#f4212e' : '#71767b'}">${stats.recent_failures}</span><span class="deploy-stat-label">Recent Failures</span></div>
+                                    `;
+                                }
+                            }
+                        });
 
                     // Update list
                     const list = document.getElementById('deployments-list');
@@ -6095,21 +6485,37 @@
         // Incident functions
         function loadIncidents() {
             fetch('/api/incidents?status=all&limit=20')
-                .then(r => r.json())
+                .then(r => r.ok ? r.json() : Promise.reject('API error'))
                 .then(incidents => {
                     // Load stats
                     fetch('/api/incidents/stats')
                         .then(r => r.json())
                         .then(stats => {
+                            // Use demo stats if empty
+                            if (DemoData.enabled && !stats?.active_incidents && !stats?.triggered_count) {
+                                stats = DemoData.generateIncidentStats();
+                            }
                             document.getElementById('inc-active').textContent = stats.active_incidents || 0;
                             document.getElementById('inc-triggered').textContent = stats.triggered_count || 0;
                             document.getElementById('inc-acked').textContent = stats.acknowledged_count || 0;
+                        })
+                        .catch(() => {
+                            if (DemoData.enabled) {
+                                const stats = DemoData.generateIncidentStats();
+                                document.getElementById('inc-active').textContent = stats.active_incidents || 0;
+                                document.getElementById('inc-triggered').textContent = stats.triggered_count || 0;
+                                document.getElementById('inc-acked').textContent = stats.acknowledged_count || 0;
+                            }
                         });
 
                     // Load on-call
                     fetch('/api/oncall/current')
                         .then(r => r.json())
                         .then(oncall => {
+                            // Use demo on-call if empty
+                            if (DemoData.enabled && (!oncall || Object.keys(oncall).length === 0)) {
+                                oncall = DemoData.generateCurrentOnCall();
+                            }
                             const display = document.getElementById('oncall-display');
                             if (display) {
                                 const names = Object.values(oncall).filter(v => v);
@@ -6117,7 +6523,24 @@
                                     display.innerHTML = `<span class="oncall-badge">${escapeHtml(names[0])}</span>`;
                                 }
                             }
+                        })
+                        .catch(() => {
+                            if (DemoData.enabled) {
+                                const oncall = DemoData.generateCurrentOnCall();
+                                const display = document.getElementById('oncall-display');
+                                if (display) {
+                                    const names = Object.values(oncall).filter(v => v);
+                                    if (names.length > 0) {
+                                        display.innerHTML = `<span class="oncall-badge">${escapeHtml(names[0])}</span>`;
+                                    }
+                                }
+                            }
                         });
+
+                    // Use demo data if empty and demo mode enabled
+                    if ((!incidents || incidents.length === 0) && DemoData.enabled) {
+                        incidents = DemoData.generateIncidents();
+                    }
 
                     const list = document.getElementById('incidents-list');
                     if (!list) return;
@@ -6154,8 +6577,32 @@
                     }).join('');
                 })
                 .catch(() => {
-                    const list = document.getElementById('incidents-list');
-                    if (list) list.innerHTML = '<div class="empty-state">Incidents not available</div>';
+                    if (DemoData.enabled) {
+                        // Load demo stats
+                        const stats = DemoData.generateIncidentStats();
+                        document.getElementById('inc-active').textContent = stats.active_incidents || 0;
+                        document.getElementById('inc-triggered').textContent = stats.triggered_count || 0;
+                        document.getElementById('inc-acked').textContent = stats.acknowledged_count || 0;
+                        // Load demo on-call
+                        const oncall = DemoData.generateCurrentOnCall();
+                        const display = document.getElementById('oncall-display');
+                        if (display) {
+                            const names = Object.values(oncall).filter(v => v);
+                            if (names.length > 0) display.innerHTML = `<span class="oncall-badge">${escapeHtml(names[0])}</span>`;
+                        }
+                        // Load demo incidents
+                        const list = document.getElementById('incidents-list');
+                        if (list) {
+                            const incidents = DemoData.generateIncidents();
+                            list.innerHTML = incidents.map(inc => {
+                                const relTime = formatRelativeTime(new Date(inc.created_at));
+                                return `<div class="incident-item"><div class="incident-severity ${inc.severity || 'medium'}"></div><div class="incident-info"><div class="incident-header"><span class="incident-title">${escapeHtml(inc.title)}</span><span class="incident-status ${inc.status}">${inc.status}</span></div><div class="incident-meta"><span class="incident-time">${relTime}</span>${inc.service ? `<span class="incident-source">${escapeHtml(inc.service)}</span>` : ''}</div></div></div>`;
+                            }).join('');
+                        }
+                    } else {
+                        const list = document.getElementById('incidents-list');
+                        if (list) list.innerHTML = '<div class="empty-state">Incidents not available</div>';
+                    }
                 });
         }
 
@@ -6522,6 +6969,11 @@
 
                     if (!enabledEl) return;
 
+                    // Use demo data if not enabled and demo mode is on
+                    if (!info.enabled && DemoData.enabled) {
+                        info = DemoData.generateClusterInfo();
+                    }
+
                     if (!info.enabled) {
                         enabledEl.textContent = 'Disabled';
                         enabledEl.style.color = '#71767b';
@@ -6540,10 +6992,12 @@
                         localEl.textContent = `This node: ${info.local_node.id} (${info.gossip_addr})`;
                     }
 
-                    // Load node list
-                    return fetch('/api/cluster/nodes');
+                    // Load node list (or use demo data)
+                    if (DemoData.enabled) {
+                        return Promise.resolve(DemoData.generateClusterNodes());
+                    }
+                    return fetch('/api/cluster/nodes').then(r => r.json());
                 })
-                .then(r => r ? r.json() : null)
                 .then(nodes => {
                     if (!nodes) return;
 
@@ -6556,10 +7010,12 @@
                     }
 
                     // Get local node ID for comparison
-                    let localNodeId = '';
-                    fetch('/api/cluster').then(r => r.json()).then(info => {
-                        localNodeId = info.node_id || '';
-                    });
+                    let localNodeId = DemoData.enabled ? 'node-local-001' : '';
+                    if (!DemoData.enabled) {
+                        fetch('/api/cluster').then(r => r.json()).then(info => {
+                            localNodeId = info.node_id || '';
+                        });
+                    }
 
                     nodesListEl.innerHTML = nodes.map(node => {
                         const isLocal = node.id === localNodeId || (node.hostname && node.hostname === location.hostname);
@@ -7085,6 +7541,12 @@
                 fetch('/api/catalog/teams').then(r => r.json())
             ])
             .then(([services, stats, teams]) => {
+                // Use demo data if empty and demo mode enabled
+                if (DemoData.enabled && (!services || services.length === 0)) {
+                    services = DemoData.generateCatalogServices();
+                    stats = DemoData.generateCatalogStats();
+                    teams = DemoData.generateCatalogTeams();
+                }
                 catalogServices = services || [];
                 catalogTeams = teams || [];
 
@@ -7518,8 +7980,12 @@
 
             // Load deploy-incident correlations
             fetch(`/api/correlate/deploy-incidents?since=${timeRange}`)
-                .then(r => r.json())
+                .then(r => r.ok ? r.json() : Promise.reject('API error'))
                 .then(data => {
+                    // Use demo data if empty and demo mode enabled
+                    if (DemoData.enabled && (!data?.correlations || data.correlations.length === 0)) {
+                        data = DemoData.generateCorrelations();
+                    }
                     correlationData.correlations = data.correlations || [];
 
                     const countEl = document.getElementById('corr-deploy-incidents');
@@ -7535,7 +8001,18 @@
                         }
                     }
                 })
-                .catch(err => console.error('Error loading correlations:', err));
+                .catch(err => {
+                    if (DemoData.enabled) {
+                        const data = DemoData.generateCorrelations();
+                        correlationData.correlations = data.correlations || [];
+                        const countEl = document.getElementById('corr-deploy-incidents');
+                        const listEl = document.getElementById('corr-deploy-list');
+                        if (countEl) countEl.textContent = correlationData.correlations.length;
+                        if (listEl) listEl.innerHTML = correlationData.correlations.map(corr => renderCorrelation(corr)).join('');
+                    } else {
+                        console.error('Error loading correlations:', err);
+                    }
+                });
 
             // Load services for dropdown
             fetch('/api/catalog/services')
@@ -8121,22 +8598,38 @@
         function loadAnomalies() {
             // Load stats
             fetch('/api/anomaly/stats')
-                .then(r => r.json())
+                .then(r => r.ok ? r.json() : Promise.reject('API error'))
                 .then(stats => {
+                    // Use demo stats if empty
+                    if (DemoData.enabled && !stats?.total_anomalies && !stats?.metrics_tracked) {
+                        stats = DemoData.generateAnomalyStats();
+                    }
                     document.getElementById('anomaly-critical').textContent = stats.critical_count || 0;
                     document.getElementById('anomaly-warning').textContent = stats.warning_count || 0;
                     document.getElementById('anomaly-total').textContent = stats.total_anomalies || 0;
                     document.getElementById('anomaly-metrics').textContent = stats.metrics_tracked || 0;
                 })
-                .catch(() => {});
+                .catch(() => {
+                    if (DemoData.enabled) {
+                        const stats = DemoData.generateAnomalyStats();
+                        document.getElementById('anomaly-critical').textContent = stats.critical_count;
+                        document.getElementById('anomaly-warning').textContent = stats.warning_count;
+                        document.getElementById('anomaly-total').textContent = stats.total_anomalies;
+                        document.getElementById('anomaly-metrics').textContent = stats.metrics_tracked;
+                    }
+                });
 
             // Load recent anomalies
             fetch('/api/anomaly/recent?limit=20')
-                .then(r => r.json())
+                .then(r => r.ok ? r.json() : Promise.reject('API error'))
                 .then(anomalies => {
                     const list = document.getElementById('anomaly-list');
                     if (!list) return;
 
+                    // Use demo data if empty and demo mode enabled
+                    if ((!anomalies || anomalies.length === 0) && DemoData.enabled) {
+                        anomalies = DemoData.generateAnomalies();
+                    }
                     if (!anomalies || anomalies.length === 0) {
                         list.innerHTML = '<div class="empty-state">No anomalies detected. System is healthy!</div>';
                         return;
@@ -8163,8 +8656,19 @@
                     }).join('');
                 })
                 .catch(() => {
-                    const list = document.getElementById('anomaly-list');
-                    if (list) list.innerHTML = '<div class="empty-state">Anomaly detection not available</div>';
+                    if (DemoData.enabled) {
+                        const list = document.getElementById('anomaly-list');
+                        if (!list) return;
+                        const anomalies = DemoData.generateAnomalies();
+                        list.innerHTML = anomalies.map(a => {
+                            const severity = a.is_critical ? 'critical' : (a.score > 0.7 ? 'warning' : 'info');
+                            const relTime = formatRelativeTime(new Date(a.timestamp));
+                            return `<div class="anomaly-item"><div class="anomaly-severity ${severity}"></div><div class="anomaly-info"><div class="anomaly-metric">${escapeHtml(a.metric_name)}</div><div class="anomaly-meta"><span>${relTime}</span><span>Value: ${a.value?.toFixed(2)}</span><span class="anomaly-score">${(a.score * 100).toFixed(0)}%</span></div>${a.reason ? `<div style="font-size:0.7rem;color:#71767b;">${escapeHtml(a.reason)}</div>` : ''}</div></div>`;
+                        }).join('');
+                    } else {
+                        const list = document.getElementById('anomaly-list');
+                        if (list) list.innerHTML = '<div class="empty-state">Anomaly detection not available</div>';
+                    }
                 });
         }
 
@@ -8172,22 +8676,38 @@
         function loadAlerts() {
             // Load status
             fetch('/api/alerting/status')
-                .then(r => r.json())
+                .then(r => r.ok ? r.json() : Promise.reject('API error'))
                 .then(status => {
+                    // Use demo stats if empty
+                    if (DemoData.enabled && !status?.firing_alerts && !status?.total_rules) {
+                        status = DemoData.generateAlertingStatus();
+                    }
                     document.getElementById('alerts-firing').textContent = status.firing_alerts || 0;
                     document.getElementById('alerts-pending').textContent = status.pending_alerts || 0;
                     document.getElementById('alerts-silenced').textContent = status.active_silences || 0;
                     document.getElementById('alerts-rules').textContent = status.total_rules || 0;
                 })
-                .catch(() => {});
+                .catch(() => {
+                    if (DemoData.enabled) {
+                        const status = DemoData.generateAlertingStatus();
+                        document.getElementById('alerts-firing').textContent = status.firing_alerts;
+                        document.getElementById('alerts-pending').textContent = status.pending_alerts;
+                        document.getElementById('alerts-silenced').textContent = status.active_silences;
+                        document.getElementById('alerts-rules').textContent = status.total_rules;
+                    }
+                });
 
             // Load firing alerts
             fetch('/api/alerting/alerts?state=firing')
-                .then(r => r.json())
+                .then(r => r.ok ? r.json() : Promise.reject('API error'))
                 .then(alerts => {
                     const content = document.getElementById('alerting-alerts-content');
                     if (!content) return;
 
+                    // Use demo data if empty and demo mode enabled
+                    if ((!alerts || alerts.length === 0) && DemoData.enabled) {
+                        alerts = DemoData.generateAlerts();
+                    }
                     if (!alerts || alerts.length === 0) {
                         content.innerHTML = '<div class="empty-state">No firing alerts. All clear!</div>';
                         return;
@@ -8222,8 +8742,19 @@
                     }).join('');
                 })
                 .catch(() => {
-                    const content = document.getElementById('alerting-alerts-content');
-                    if (content) content.innerHTML = '<div class="empty-state">Alerting not available</div>';
+                    if (DemoData.enabled) {
+                        const content = document.getElementById('alerting-alerts-content');
+                        if (!content) return;
+                        const alerts = DemoData.generateAlerts();
+                        content.innerHTML = alerts.map(alert => {
+                            const relTime = formatRelativeTime(new Date(alert.starts_at));
+                            const labels = Object.entries(alert.labels || {}).map(([k, v]) => `<span class="alert-label">${escapeHtml(k)}=${escapeHtml(v)}</span>`).join('');
+                            return `<div class="alert-item"><div class="alert-severity ${alert.severity || 'warning'}"></div><div class="alert-info"><div class="alert-name">${escapeHtml(alert.name)}</div><div class="alert-summary">${escapeHtml(alert.annotations?.summary || '')}</div><div class="alert-meta"><span>${relTime}</span></div>${labels ? `<div class="alert-labels">${labels}</div>` : ''}</div></div>`;
+                        }).join('');
+                    } else {
+                        const content = document.getElementById('alerting-alerts-content');
+                        if (content) content.innerHTML = '<div class="empty-state">Alerting not available</div>';
+                    }
                 });
 
             // Load rules
@@ -8645,6 +9176,11 @@
             fetch('/api/oncall/schedules')
                 .then(r => r.json())
                 .then(schedules => {
+                    // Use demo data if empty and demo mode enabled
+                    if ((!schedules || schedules.length === 0) && DemoData.enabled) {
+                        schedules = DemoData.generateOnCallSchedules();
+                    }
+
                     document.getElementById('oncall-schedules-count').textContent = schedules?.length || 0;
 
                     const list = document.getElementById('oncall-schedules-list');
