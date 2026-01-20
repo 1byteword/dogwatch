@@ -1492,6 +1492,129 @@ dogwatch binary
 
 ---
 
+## Security Audit
+
+### Current Security Status: ⚠️ NEEDS WORK
+
+The codebase has some good practices but several gaps that need addressing before production use.
+
+### ✅ What's Good
+
+| Area | Status | Details |
+|------|--------|---------|
+| **Password Hashing** | ✅ Secure | bcrypt with cost 12 |
+| **JWT Implementation** | ✅ Decent | HMAC-SHA256, token revocation, expiry checks |
+| **SQL Injection** | ✅ Mostly Safe | Parameterized queries with `?` placeholders |
+| **XSS in Templates** | ✅ Safe | Uses `html/template` with auto-escaping |
+| **Rate Limiting** | ✅ Good | Memory-bounded, cleanup goroutine |
+| **RBAC** | ✅ Good | Role hierarchy, permission checks |
+| **Session Management** | ✅ Decent | Secure random tokens, expiry |
+| **API Key Hashing** | ✅ Good | SHA-256 hashed before storage |
+
+### ❌ Critical Issues
+
+#### 1. No CSRF Protection
+```
+Status: MISSING
+Risk: HIGH
+
+Any site can make authenticated requests on behalf of logged-in users.
+
+Fix needed:
+- Add CSRF tokens to all state-changing forms
+- Validate Origin/Referer headers
+- Use SameSite=Strict cookies
+```
+
+#### 2. No Security Headers
+```
+Status: MISSING
+Risk: MEDIUM-HIGH
+
+Missing headers:
+- Content-Security-Policy
+- X-Frame-Options
+- X-Content-Type-Options
+- Strict-Transport-Security
+- X-XSS-Protection (legacy but still useful)
+
+Fix:
+func SecurityHeaders(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Header().Set("X-Frame-Options", "DENY")
+        w.Header().Set("X-Content-Type-Options", "nosniff")
+        w.Header().Set("X-XSS-Protection", "1; mode=block")
+        w.Header().Set("Content-Security-Policy", "default-src 'self'")
+        w.Header().Set("Strict-Transport-Security", "max-age=31536000")
+        next.ServeHTTP(w, r)
+    })
+}
+```
+
+#### 3. TLS Certificate Verification Disabled
+```
+Location: internal/notify/webhook.go:108
+Status: DANGEROUS
+
+InsecureSkipVerify: true allows MITM attacks on webhook notifications.
+
+Fix: Make configurable, default to secure. Only allow in dev/test.
+```
+
+#### 4. No Request Body Size Limits
+```
+Status: MISSING
+Risk: MEDIUM
+
+Large request bodies can cause OOM.
+
+Fix: r.Body = http.MaxBytesReader(w, r.Body, 10*1024*1024) // 10MB
+```
+
+### ⚠️ Medium Issues
+
+| Issue | Location | Risk | Fix |
+|-------|----------|------|-----|
+| JWT secret random if not set | sso_handlers.go | Medium | Refuse to start without explicit secret |
+| Session cookie settings unverified | - | Medium | Ensure HttpOnly, Secure, SameSite=Strict |
+| Minimal input validation | API handlers | Medium | Add go-playground/validator |
+| Error info leakage | Various | Low | Sanitize error messages |
+| No account lockout | auth.go | Medium | Lock after N failed attempts |
+
+### 📋 Security Hardening Checklist
+
+**Before Beta:**
+- [ ] Add CSRF protection
+- [ ] Add security headers middleware
+- [ ] Fix InsecureSkipVerify defaults
+- [ ] Add request body size limits
+- [ ] Audit session cookie settings
+- [ ] Add input validation
+
+**Before Production:**
+- [ ] Professional security audit
+- [ ] Penetration testing
+- [ ] `govulncheck ./...` for dependency vulnerabilities
+- [ ] Rate limit auth endpoints specifically
+- [ ] Account lockout after failed attempts
+- [ ] Audit logging for security events
+
+**For Enterprise:**
+- [ ] SOC 2 compliance review
+- [ ] Encryption at rest
+- [ ] Key rotation
+- [ ] IP allowlisting
+- [ ] MFA support
+- [ ] Session invalidation on password change
+
+### Security Score: 6/10
+
+**Good foundation, but not production-ready without fixes.**
+
+The bcrypt, JWT, and RBAC implementations are solid. Main gaps are web security basics (CSRF, headers) that are straightforward to fix (~2-3 days of work).
+
+---
+
 ## Engineering Cost Estimates
 
 Reality check: What does it actually take to build these features?
@@ -2413,9 +2536,3936 @@ dogwatch rollback --to v0.9.0
 
 ---
 
-## What Pixie Did (That We're Not Doing)
+## Future-Facing Assessment (2024-2026)
 
-Pixie was acquired by New Relic for ~$200M just **2 months** after public launch. Here's what made them special:
+This section analyzes: (1) What competitors offer that we don't, (2) Whether we're positioned for future trends, (3) Modern pain points we could address.
+
+### What Competitors Have That We Don't
+
+#### 1. AI/ML-Powered Features (CRITICAL GAP)
+
+This is the biggest gap. Every major platform now has AI:
+
+| Platform | AI Feature | What It Does |
+|----------|-----------|--------------|
+| **Datadog** | Watchdog | Automatic anomaly detection, root cause analysis, correlation |
+| **Dynatrace** | Davis AI | Causal AI, automatic problem detection, topology-aware |
+| **New Relic** | AI Ops | LLM-powered queries, intelligent alerts, auto-insights |
+| **Splunk** | AI Assistant | Natural language queries, pattern detection |
+| **Honeycomb** | Query Assistant | LLM helps write queries, explains results |
+
+**What they offer:**
+```
+User: "Why is checkout slow?"
+
+AI: "Checkout latency increased 340% at 14:32.
+     Root cause: PostgreSQL query on orders table taking 2.3s (usually 45ms).
+     Correlation: New deployment (v2.4.1) at 14:30 added new JOIN.
+     Impact: 12% of users seeing >3s load times.
+     Suggested fix: Add index on orders.user_id"
+```
+
+**Our current state:** Zero AI. Manual investigation only.
+
+**What we SHOULD do:**
+```
+Phase 1 (Now): Statistical anomaly detection
+- Standard deviation alerts ("3σ from baseline")
+- Rate-of-change detection
+- No ML training needed
+
+Phase 2 (6 months): BubbleUp on steroids
+- Automatic dimension analysis
+- "Top changes in last hour"
+- Still rule-based, feels like AI
+
+Phase 3 (12 months): LLM integration
+- Natural language → query translation
+- "Explain this trace" → structured summary
+- Use Claude/GPT API (not custom ML)
+```
+
+**Honest take:** Skip custom ML (expensive, unreliable). Use LLM APIs for natural language. Focus on deterministic "AI-like" features (BubbleUp, change correlation) that are reliable.
+
+---
+
+#### 2. Real User Monitoring (RUM)
+
+**What competitors have:**
+- Browser JavaScript SDK
+- Core Web Vitals (LCP, FID, CLS)
+- User session tracking
+- Error tracking with stack traces
+- Rage click detection
+- Session replay (some)
+
+**Example from Datadog:**
+```
+Session: user@example.com
+├── Page Load: /checkout (LCP: 2.3s ⚠️)
+│   └── Long Task: payment.js blocking for 450ms
+├── Click: "Submit Order" → 500 error
+│   └── Stack trace: TypeError at checkout.js:142
+└── Rage clicks detected on "Retry" button (7 clicks)
+```
+
+**Our position:** We explicitly said "integrate with Sentry/LogRocket" - this is correct.
+
+**Why not build it:**
+- Completely different tech (JavaScript SDK vs eBPF)
+- Sentry/LogRocket are excellent and cheap
+- Would distract from core value prop
+- Browser observability ≠ backend observability
+
+**What we SHOULD do:**
+- Correlation hooks: Link RUM session ID to backend traces
+- Error forwarding: Accept error webhooks from Sentry
+- Dashboard embedding: Show Sentry/LogRocket widgets
+
+---
+
+#### 3. Mobile Observability
+
+**What competitors have:**
+- iOS/Android SDKs
+- Crash reporting
+- Network request tracing
+- App startup time
+- Battery/memory impact
+
+**Example from New Relic:**
+```
+App: MyApp iOS
+├── Crashes: 47 (0.3% of sessions)
+│   └── Top: NSInvalidArgumentException in CheckoutVC
+├── Network: 2.1s avg API latency
+│   └── Slow: /api/products (3.4s on 3G)
+├── Launch: 1.8s cold start
+└── Battery: Network layer using 12% of battery
+```
+
+**Our position:** Not applicable to our value prop.
+
+**Why not build it:**
+- Mobile is completely different domain
+- Crashlytics (Firebase) is free and excellent
+- eBPF doesn't exist on mobile
+- Would require dedicated mobile engineers
+
+**What we SHOULD do:**
+- Accept mobile app traces (OTLP)
+- Show mobile → backend correlation
+- Integrate with Crashlytics/Sentry for crash data
+
+---
+
+#### 4. Browser-Based Synthetic Monitoring
+
+**What we have:** HTTP/TCP checks from our servers.
+
+**What competitors have:**
+```
+Synthetic Browser Test: "Checkout Flow"
+1. Navigate to https://shop.example.com
+2. Click "Add to Cart" on product #123
+3. Assert cart shows 1 item
+4. Click "Checkout"
+5. Fill form with test data
+6. Click "Place Order"
+7. Assert confirmation page shows order number
+
+Run from: US-East, US-West, EU-West, APAC
+Frequency: Every 5 minutes
+Screenshot on failure: Yes
+Video recording: Yes
+```
+
+**What this requires:**
+- Headless Chrome (Playwright/Puppeteer)
+- Global PoP infrastructure
+- Video/screenshot storage
+- DOM interaction scripting
+
+**Our position:** Partial gap.
+
+**What we SHOULD do:**
+```yaml
+# Phase 1 (Now): API-level multi-step
+synthetics:
+  - name: checkout-flow
+    type: api
+    steps:
+      - request:
+          method: POST
+          url: /api/cart/add
+          body: {product_id: 123}
+        assertions:
+          - status_code: 200
+      - request:
+          method: POST
+          url: /api/checkout
+          body: {cart_id: "{{steps[0].response.cart_id}}"}
+        assertions:
+          - status_code: 200
+          - body_contains: order_id
+
+# Phase 2 (Later): Playwright integration
+  - name: visual-checkout
+    type: browser
+    script: |
+      await page.goto('https://shop.example.com');
+      await page.click('[data-test="add-cart"]');
+      await expect(page.locator('.cart-count')).toHaveText('1');
+```
+
+**Honest assessment:** Multi-step API is enough for most users. Browser synthetics are nice-to-have.
+
+---
+
+#### 5. CI/CD Pipeline Observability
+
+**What competitors have:**
+- GitHub Actions integration
+- GitLab CI metrics
+- Deployment tracking
+- Build time optimization
+- Test flakiness detection
+
+**Example from Datadog:**
+```
+Pipeline: main.yml (Run #4521)
+├── Build: 3m 24s (↑12% from baseline)
+│   └── Slow step: npm install (2m 10s)
+├── Test: 8m 12s
+│   └── Flaky: checkout.test.js (failed 3/10 runs)
+├── Deploy: 45s
+└── Total: 12m 21s
+
+Deployed: v2.4.1 → production
+Services affected: api, worker, web
+```
+
+**Our position:** We have deployment markers but not pipeline visibility.
+
+**What we SHOULD do:**
+```yaml
+# Deployment events (we have this)
+POST /api/events/deploy
+{
+  "version": "v2.4.1",
+  "service": "api",
+  "commit": "abc123",
+  "pipeline_url": "https://github.com/..."
+}
+
+# Pipeline metrics (add this)
+POST /api/pipelines/run
+{
+  "pipeline": "main.yml",
+  "run_id": 4521,
+  "status": "success",
+  "duration_ms": 741000,
+  "stages": [
+    {"name": "build", "duration_ms": 204000},
+    {"name": "test", "duration_ms": 492000},
+    {"name": "deploy", "duration_ms": 45000}
+  ]
+}
+```
+
+Priority: Medium. Nice for correlation but not core.
+
+---
+
+#### 6. Cloud Cost Correlation
+
+**What competitors have:**
+- AWS/GCP/Azure spend data
+- Cost per service/team
+- Right-sizing recommendations
+- Idle resource detection
+- FinOps integration
+
+**Example from CloudHealth/Datadog:**
+```
+Service: payment-api
+├── Compute: $4,230/month (12 × m5.xlarge)
+│   └── Utilization: 23% avg → Recommend: 6 × m5.large ($2,115)
+├── Database: $890/month (RDS r5.large)
+│   └── Utilization: 67% → Appropriate
+├── Network: $340/month
+└── Total: $5,460/month
+
+Savings opportunity: $2,115/month (39%)
+```
+
+**Our position:** We don't have cloud billing integration.
+
+**Why it matters:**
+- Cost is #1 pain point (we know this)
+- Showing "your infra costs X" + "your observability costs Y" = complete picture
+- FinOps teams are a growing buyer
+
+**What we SHOULD do:**
+```yaml
+# Phase 1: Manual cost tags
+services:
+  payment-api:
+    cost_allocation:
+      monthly_estimate: 5460
+      team: payments
+      cost_center: CC-1234
+
+# Phase 2: Cloud provider integration
+cloud_costs:
+  aws:
+    role_arn: arn:aws:iam::123456789:role/dogwatch-costs
+    tag_mapping:
+      service: "app:service"
+      team: "team"
+    sync_interval: 24h
+```
+
+Priority: High. Aligns with our cost-conscious positioning.
+
+---
+
+#### 7. IDE Integration
+
+**What competitors have:**
+- VS Code extension
+- IntelliJ plugin
+- "See traces for this function"
+- "View logs for this file"
+- CodeLens annotations
+
+**Example from Rookout/Datadog:**
+```
+// In VS Code, you see:
+function processOrder(order) {  // 🔴 2 errors in last hour
+    const user = getUser(order.userId);  // ⚡ p99: 234ms
+    const payment = chargeCard(user.card);  // 💸 12 traces
+    // ...
+}
+
+// Click annotation → Opens Datadog with filtered traces
+```
+
+**Our position:** Zero IDE integration.
+
+**What we SHOULD do:**
+```
+Phase 1 (Quick win): VS Code extension
+- Show recent errors/logs for current file
+- Jump to traces for selected function
+- Link to dashboard from code
+
+vs-code-extension/
+├── src/
+│   ├── extension.ts      # Main entry
+│   ├── traces.ts         # Fetch traces for file/function
+│   ├── codelens.ts       # Show annotations
+│   └── sidebar.ts        # Live tail panel
+└── package.json
+```
+
+Priority: Medium-high. Developer experience differentiator.
+
+---
+
+#### 8. SIEM / Security Convergence
+
+**What competitors have:**
+- Security event correlation
+- Threat detection from observability data
+- CSPM (Cloud Security Posture Management)
+- RASP (Runtime Application Security)
+
+**Example from Datadog Security:**
+```
+THREAT DETECTED
+├── Attack: SQL Injection attempt
+├── Target: /api/users?id=1'; DROP TABLE users;--
+├── Source: 192.168.1.100 (known scanner)
+├── Action: Blocked by WAF
+├── Related: 47 similar attempts in last hour
+└── Response: Auto-blocked IP for 24h
+```
+
+**Our position:** We have basic container security (shell-in-container). Missing broader security.
+
+**What we SHOULD do:**
+```yaml
+# Leverage what we see via eBPF
+security:
+  detection_rules:
+    - name: sql_injection_attempt
+      condition: |
+        http.path contains "'" OR
+        http.path contains "--" OR
+        http.path contains "UNION SELECT"
+      severity: high
+
+    - name: unusual_outbound
+      condition: |
+        network.destination NOT IN service.baseline.destinations
+        AND network.destination.is_public
+      severity: medium
+
+    - name: sensitive_file_access
+      condition: |
+        file.path matches "/etc/passwd|/etc/shadow|.ssh/id_rsa"
+      severity: critical
+
+  integrations:
+    - type: siem
+      target: splunk
+      forward_severity: high+
+```
+
+Priority: Medium. We already see the data - just need detection rules.
+
+---
+
+### Are We Future-Facing Enough?
+
+Evaluating against major trends for 2024-2026:
+
+#### Trend 1: LLM-Powered Observability ⚠️ GAP
+
+**The trend:** Every vendor is adding "Ask AI about your system."
+
+**Where it's going:**
+```
+2024: "Why is my app slow?" → AI suggests queries
+2025: "Fix the problem" → AI generates runbooks, auto-remediates
+2026: "Prevent this from happening" → AI predicts issues before they occur
+```
+
+**Our position:** No AI capabilities.
+
+**Recommendation:**
+```python
+# Don't build ML. Use LLM APIs.
+# Example integration:
+
+def ask_claude(question: str, context: dict) -> str:
+    """Use Claude to answer observability questions."""
+
+    prompt = f"""
+    You are an observability assistant for dogwatch.
+
+    Current context:
+    - Active alerts: {context['alerts']}
+    - Recent deployments: {context['deploys']}
+    - Top errors: {context['errors']}
+    - Slow endpoints: {context['slow_endpoints']}
+
+    User question: {question}
+
+    Provide a concise, actionable answer.
+    """
+
+    response = anthropic.messages.create(
+        model="claude-sonnet-4-20250514",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.content[0].text
+```
+
+**Timeline:** Add basic LLM integration in Phase 3 (after core stability).
+
+---
+
+#### Trend 2: Platform Engineering / Internal Developer Platforms ✅ ALIGNED
+
+**The trend:** Platform teams building self-service infrastructure.
+
+**Key platforms:**
+- Backstage (Spotify's IDP)
+- Port (SaaS IDP)
+- Humanitec
+- Cortex
+
+**Where it's going:**
+```
+Developer Portal
+├── Service Catalog (← We have this!)
+├── Templates ("Create new service")
+├── Documentation
+├── Observability (← We go here!)
+│   ├── Health status
+│   ├── Dependencies
+│   ├── SLOs
+│   └── On-call
+└── Infrastructure
+```
+
+**Our position:** Good! Service Catalog is exactly what platform teams need.
+
+**Recommendation:**
+```yaml
+# Add Backstage integration
+integrations:
+  backstage:
+    enabled: true
+    catalog_sync: true  # Sync services to Backstage
+    annotations:
+      health_url: "https://dogwatch.internal/api/services/{name}/health"
+      dashboard_url: "https://dogwatch.internal/d/{name}"
+```
+
+---
+
+#### Trend 3: OpenTelemetry Becoming Default ✅ ALIGNED
+
+**The trend:** OTel is the standard. Everything speaks OTLP.
+
+**Adoption:**
+- All major cloud providers support OTel export
+- All major APM vendors accept OTLP
+- OTel Collector is default for most new setups
+
+**Our position:** Good. We have OTLP planned as P0.
+
+**Recommendation:** Ship OTLP receiver before anything else that accepts external data.
+
+---
+
+#### Trend 4: FinOps / Cost Management ✅ ALIGNED
+
+**The trend:** Observability + Cost in one place.
+
+**Players:**
+- CloudHealth, Kubecost, CAST AI (cost)
+- Datadog, New Relic (observability + cost)
+- Converging into single platforms
+
+**Our position:** Cost Intelligence is our #2 killer feature. Perfectly aligned.
+
+**Recommendation:** Add cloud cost import (AWS Cost Explorer, GCP Billing) to complete the picture.
+
+---
+
+#### Trend 5: GitOps / Configuration as Code ⚠️ PARTIAL
+
+**The trend:** Everything in Git, including observability config.
+
+**What this means:**
+```yaml
+# alerts/production/api-alerts.yaml
+apiVersion: dogwatch/v1
+kind: Alert
+metadata:
+  name: api-error-rate
+  labels:
+    team: api-team
+spec:
+  query: rate(http_errors{service="api"}[5m]) > 0.05
+  for: 5m
+  channels: [slack-api-team]
+
+# Managed by ArgoCD / Flux
+# Changes trigger PRs, reviews, audit trail
+```
+
+**Our position:** We have config files but no Git-native workflow.
+
+**Recommendation:**
+```yaml
+# Add these capabilities:
+config:
+  source: git
+  repository: https://github.com/myorg/dogwatch-config
+  branch: main
+  sync_interval: 60s
+  webhook_secret: ${GITHUB_WEBHOOK_SECRET}
+
+# On change:
+# 1. Validate config
+# 2. Show diff in UI
+# 3. Apply with rollback capability
+```
+
+---
+
+#### Trend 6: Sustainability / Green Software ⚠️ NOT ADDRESSED
+
+**The trend:** Carbon footprint of software becoming a metric.
+
+**What's emerging:**
+- Cloud Carbon Footprint (open source)
+- AWS Customer Carbon Footprint Tool
+- GCP Carbon Sense
+- "Carbon cost per request"
+
+**Example:**
+```
+Service: api-gateway
+├── Compute: 1.2 kWh/day → 0.48 kg CO2/day
+├── Network: 0.3 kWh/day → 0.12 kg CO2/day
+├── Storage: 0.1 kWh/day → 0.04 kg CO2/day
+└── Total: 0.64 kg CO2/day (234 kg CO2/year)
+
+Compared to: 35 miles of driving
+```
+
+**Our position:** Not addressed at all.
+
+**Recommendation:** Future nice-to-have. Not core value prop. Could add carbon estimate to cost calculator later.
+
+---
+
+#### Trend 7: WebAssembly for Extensibility ⚠️ OPPORTUNITY
+
+**The trend:** Wasm as the universal plugin/extension runtime.
+
+**Where Wasm is being used in observability:**
+
+| Project | Wasm Use Case |
+|---------|---------------|
+| **OTel Collector** | Custom processors, transforms |
+| **Envoy Proxy** | Custom filters, auth, observability |
+| **Tremor** | User-defined data processing pipelines |
+| **Vector** | Custom transforms and conditions |
+| **Fluent Bit** | Plugin system for filters/outputs |
+
+**Why Wasm matters for us:**
+
+```
+Problem: Users want custom behavior
+- "I need to redact SSNs in a specific format"
+- "I want to enrich logs with data from our internal API"
+- "I need custom sampling logic for our use case"
+
+Old solution: Fork the code, maintain forever
+New solution: Write a Wasm plugin, drop it in
+
+┌─────────────────────────────────────────────────────────┐
+│                    dogwatch                              │
+├─────────────────────────────────────────────────────────┤
+│  Data Pipeline                                           │
+│  ┌────────┐   ┌────────────┐   ┌────────────┐           │
+│  │ Ingest │──▶│ Wasm Plugins│──▶│  Storage   │           │
+│  └────────┘   └────────────┘   └────────────┘           │
+│                     │                                    │
+│               ┌─────┴─────┐                              │
+│               ▼           ▼                              │
+│          user1.wasm  user2.wasm                          │
+│          (PII redact) (enrich)                           │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Concrete Wasm use cases for dogwatch:**
+
+1. **Custom Protocol Parsers**
+```rust
+// user writes in Rust, compiles to Wasm
+#[no_mangle]
+pub fn parse_proprietary_protocol(data: &[u8]) -> ParsedMessage {
+    // Parse company's internal RPC format
+    // Return structured data dogwatch can trace
+}
+```
+
+2. **PII Detection & Redaction**
+```rust
+#[no_mangle]
+pub fn redact_pii(log_line: &str) -> String {
+    // Company-specific PII patterns
+    // SSN format, internal ID format, etc.
+    log_line
+        .replace_regex(r"\d{3}-\d{2}-\d{4}", "[SSN]")
+        .replace_regex(r"EMP-\d{6}", "[EMPLOYEE_ID]")
+}
+```
+
+3. **Custom Sampling Decisions**
+```rust
+#[no_mangle]
+pub fn should_sample(span: &Span) -> bool {
+    // Company-specific logic
+    // "Always keep traces from VIP customers"
+    // "Sample 100% of traces over $1000"
+    span.attributes.get("customer.tier") == "enterprise" ||
+    span.attributes.get("order.value").unwrap_or(0) > 1000
+}
+```
+
+4. **Data Enrichment**
+```rust
+#[no_mangle]
+pub fn enrich(event: &mut Event) {
+    // Add business context from internal systems
+    let user_id = event.get("user_id");
+    let user_info = lookup_user_cache(user_id);
+    event.set("user.tier", user_info.tier);
+    event.set("user.region", user_info.region);
+}
+```
+
+5. **Custom Alerting Conditions**
+```rust
+#[no_mangle]
+pub fn evaluate_alert(metrics: &MetricWindow) -> bool {
+    // Complex business logic
+    // "Alert if error rate > 5% AND it's business hours AND revenue > $10k/hr"
+    let error_rate = metrics.get("error_rate");
+    let is_business_hours = is_between(9, 17);
+    let hourly_revenue = metrics.get("revenue_per_hour");
+
+    error_rate > 0.05 && is_business_hours && hourly_revenue > 10000.0
+}
+```
+
+**Implementation approach:**
+
+```yaml
+# dogwatch.yaml
+plugins:
+  wasm:
+    enabled: true
+    sandbox:
+      memory_limit: 64MB
+      timeout: 100ms
+      capabilities: [http_client, kv_store]  # Explicitly granted
+
+    modules:
+      - name: pii-redactor
+        path: /etc/dogwatch/plugins/pii.wasm
+        hook: log_transform
+
+      - name: custom-sampler
+        path: /etc/dogwatch/plugins/sampler.wasm
+        hook: trace_sample
+
+      - name: proprietary-parser
+        path: /etc/dogwatch/plugins/parser.wasm
+        hook: protocol_parse
+        protocols: [mycompany-rpc]
+```
+
+**Why Wasm specifically:**
+
+| Approach | Problem |
+|----------|---------|
+| **Lua scripts** | Slow, no type safety, security concerns |
+| **Go plugins** | Must match exact Go version, platform-specific |
+| **gRPC plugins** | Network overhead, complexity |
+| **Fork the code** | Maintenance nightmare |
+| **Wasm** | Fast, sandboxed, polyglot, portable ✅ |
+
+**Technical requirements:**
+
+```go
+// Wasm runtime integration
+import "github.com/tetratelabs/wazero"
+
+type WasmPlugin struct {
+    runtime wazero.Runtime
+    module  wazero.CompiledModule
+
+    // Resource limits
+    memoryLimit uint32
+    timeout     time.Duration
+}
+
+func (p *WasmPlugin) Execute(input []byte) ([]byte, error) {
+    ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
+    defer cancel()
+
+    // Instantiate with memory limits
+    instance, err := p.runtime.InstantiateModule(ctx, p.module,
+        wazero.NewModuleConfig().
+            WithMemoryLimitPages(p.memoryLimit / 65536))
+    if err != nil {
+        return nil, err
+    }
+    defer instance.Close(ctx)
+
+    // Call the exported function
+    fn := instance.ExportedFunction("process")
+    results, err := fn.Call(ctx, ...)
+    return results, err
+}
+```
+
+**Competitive advantage:**
+
+```
+Datadog: No user-defined processing. You get what they give you.
+Grafana: Lua in Loki, limited. No Wasm.
+Vector:  Has Wasm, but it's a separate tool.
+Us:      Built-in Wasm = "observability your way, safely"
+
+Marketing: "Your rules. Your logic. Your observability."
+```
+
+**Roadmap:**
+
+| Phase | What | Priority |
+|-------|------|----------|
+| 1 | Log transform plugins | P2 |
+| 2 | Custom sampling plugins | P2 |
+| 3 | Protocol parser plugins | P2 |
+| 4 | Alert condition plugins | P3 |
+| 5 | Full pipeline customization | P3 |
+
+**Recommendation:** This is a real differentiator. Plan for Phase 2-3 (after core stability). Use wazero (pure Go, no CGO) for the runtime.
+
+---
+
+#### Trend 8: Observability as Code / Terraform Integration ⚠️ PARTIAL
+
+**The trend:** Managing observability alongside infrastructure.
+
+**What this means:**
+```hcl
+# terraform/monitoring.tf
+resource "dogwatch_dashboard" "api" {
+  name = "API Overview"
+
+  panel {
+    title = "Request Rate"
+    query = "rate(http_requests_total{service=\"api\"}[5m])"
+  }
+}
+
+resource "dogwatch_alert" "error_rate" {
+  name      = "High Error Rate"
+  query     = "http_errors / http_requests > 0.05"
+  threshold = 0.05
+  channels  = [dogwatch_channel.slack.id]
+}
+
+resource "dogwatch_slo" "availability" {
+  name   = "API Availability"
+  target = 99.9
+
+  indicator {
+    good  = "http_status < 500"
+    total = "http_requests"
+  }
+}
+```
+
+**Why it matters:**
+- Infrastructure team already uses Terraform
+- Version control for observability config
+- Review process for alert changes
+- Reproducible across environments
+
+**Our position:** No Terraform provider.
+
+**What we SHOULD build:**
+```go
+// Terraform provider for dogwatch
+// github.com/dogwatch/terraform-provider-dogwatch
+
+provider "dogwatch" {
+  endpoint = "https://dogwatch.internal:9999"
+  api_key  = var.dogwatch_api_key
+}
+
+// Resources to implement:
+// - dogwatch_dashboard
+// - dogwatch_alert
+// - dogwatch_channel
+// - dogwatch_slo
+// - dogwatch_service
+// - dogwatch_synthetic_check
+
+// Data sources:
+// - dogwatch_services (list discovered services)
+// - dogwatch_metrics (query current values)
+```
+
+Priority: **P2**. Not core, but expected by platform teams.
+
+---
+
+### Modern Pain Points We Could Address
+
+These are the problems teams are struggling with RIGHT NOW. Each pain point is analyzed in depth with specific solutions.
+
+#### Pain Point 1: Alert Fatigue ⭐ CRITICAL
+
+**The problem:**
+- Too many alerts
+- Alerts without context
+- Duplicate alerts for same issue
+- "Alert and forget" - nobody responds
+
+**Current state of art:**
+```
+Bad: 50 alerts → Team ignores all
+Good: 1 grouped alert with context → Team investigates
+
+Grouped Alert:
+"API degradation affecting checkout"
+├── 12 related alerts (4 services affected)
+├── Started: 14:32 (correlates with deploy at 14:30)
+├── Impact: 12% of users seeing errors
+├── Suggested: Rollback deploy v2.4.1
+└── [Acknowledge] [Escalate] [Rollback]
+```
+
+**What we have:** Basic alerting.
+
+**What we SHOULD build:**
+```yaml
+alerting:
+  grouping:
+    enabled: true
+    group_by: [service, environment]
+    group_wait: 30s      # Wait before sending
+    group_interval: 5m   # How often to send updates
+
+  context:
+    include_related: true     # Show related alerts
+    include_deploys: true     # Show recent deploys
+    include_changes: true     # Show config changes
+    include_impact: true      # Show user impact estimate
+
+  intelligence:
+    auto_resolve: true        # Resolve when condition clears
+    flap_detection: true      # Don't alert on flapping
+    root_cause_hint: true     # Suggest likely cause
+```
+
+Priority: **P0**. Alert fatigue is universal.
+
+---
+
+#### Pain Point 2: Tool Sprawl / Context Switching ⭐ CRITICAL
+
+**The problem:**
+```
+Incident investigation:
+1. PagerDuty (get alert)
+2. Datadog (check metrics)
+3. Splunk (search logs)
+4. Jaeger (find traces)
+5. Grafana (check dashboard)
+6. Slack (ask team)
+7. GitHub (check recent commits)
+8. AWS Console (check resources)
+
+8 tools! 15 minutes just to understand what's happening.
+```
+
+**Our position:** This is our core value prop - single pane.
+
+**What we SHOULD emphasize:**
+```
+dogwatch investigation:
+1. Alert comes in with full context
+2. See metrics, logs, traces in one view
+3. Recent deploys shown inline
+4. Related services highlighted
+5. Suggested actions provided
+
+1 tool. 2 minutes to understand.
+```
+
+**Recommendation:** Double down on the integrated experience. Every feature should reduce context switching, not add tabs.
+
+---
+
+#### Pain Point 3: Cardinality Explosions ⭐ HIGH
+
+**The problem:**
+```
+Innocent metric:
+  http_requests{user_id="..."}
+
+With 1M users = 1M time series
+Storage explodes. Queries slow. Bills spike.
+
+Team doesn't know which metric caused it.
+```
+
+**What we have:** Control Plane (cardinality analysis) planned.
+
+**What we SHOULD build:**
+```yaml
+cardinality:
+  analysis:
+    enabled: true
+    schedule: hourly
+
+  alerts:
+    - name: cardinality_spike
+      condition: series_count > previous_hour * 1.5
+      channels: [platform-team]
+
+  controls:
+    - name: limit_user_id
+      pattern: "*{user_id=*}"
+      action: drop
+      threshold: 10000 series
+
+  dashboard:
+    show_top_contributors: true
+    show_growth_trends: true
+    estimate_storage_cost: true
+```
+
+Priority: **P1**. Cardinality is how bills explode.
+
+---
+
+#### Pain Point 4: Kubernetes Complexity ⭐ HIGH
+
+**The problem:**
+```
+"The pod is crashlooping"
+
+Which pod? In which namespace? On which node?
+What's the event log? What do the logs say?
+Is it OOMKilled? Is there a liveness probe failing?
+What's the deployment history?
+```
+
+**What we have:** Container/K8s basic support.
+
+**What we SHOULD build:**
+```
+Kubernetes-native views:
+
+Cluster Overview
+├── Nodes (10/10 healthy)
+│   └── worker-1: CPU 67%, Memory 45%, 23 pods
+├── Namespaces
+│   ├── production (142 pods, 3 alerts)
+│   ├── staging (45 pods, 0 alerts)
+│   └── monitoring (12 pods, 0 alerts)
+└── Problems
+    ├── CrashLoopBackOff: api-service-abc123
+    ├── OOMKilled: worker-def456 (3 times in 1h)
+    └── Pending: batch-job-ghi789 (no resources)
+
+Pod Detail:
+├── Events: ImagePullBackOff → Running → OOMKilled → CrashLoopBackOff
+├── Resources: requests 256Mi, limits 512Mi, used 498Mi (97%)
+├── Logs: [last 100 lines, searchable]
+├── Traces: [requests handled by this pod]
+└── Previous instances: [link to logs/traces]
+```
+
+Priority: **P1**. Everyone runs K8s. Everyone struggles with observability in K8s.
+
+---
+
+#### Pain Point 5: Slow Incident Response ⭐ HIGH
+
+**The problem:**
+```
+Alert fires → 45 minutes to find root cause
+
+Time breakdown:
+- 5min: Notice alert, context switch
+- 10min: Open tools, remember how to query
+- 15min: Search for relevant data
+- 10min: Correlate across tools
+- 5min: Actually understand the problem
+```
+
+**What we SHOULD build:**
+```yaml
+# Incident auto-enrichment
+incidents:
+  auto_enrichment:
+    enabled: true
+    include:
+      - recent_deploys        # What changed?
+      - related_alerts        # What else is firing?
+      - top_errors           # What's failing?
+      - slow_queries         # What's slow?
+      - similar_incidents    # When did this happen before?
+
+  runbooks:
+    enabled: true
+    auto_suggest: true       # Based on alert type
+
+  timeline:
+    auto_build: true         # Show sequence of events
+
+# Example incident view:
+# "API Error Rate High"
+# ├── Timeline
+# │   ├── 14:30 - Deploy v2.4.1
+# │   ├── 14:32 - Error rate started increasing
+# │   ├── 14:35 - First alert fired
+# │   └── 14:36 - Database connection errors spike
+# ├── Likely cause: Deploy v2.4.1 (highest correlation)
+# ├── Similar incidents: INC-1234 (2024-01-05, same pattern)
+# └── Suggested action: Rollback deploy
+```
+
+Priority: **P0**. Reducing MTTR is measurable value.
+
+---
+
+#### Pain Point 6: Developer Experience Gap ⭐ MEDIUM
+
+**The problem:**
+```
+Ops tools built for SREs, not developers.
+Developers need:
+- "Why is MY code slow?"
+- "What's causing MY errors?"
+- "How is MY service doing?"
+
+Not:
+- "Write PromQL to query metrics"
+- "Navigate 50 dashboards"
+- "Correlate 3 tools manually"
+```
+
+**What we SHOULD build:**
+```
+Developer-centric views:
+
+My Services:
+├── api-gateway (you own this)
+│   ├── Health: 99.2% (target: 99.5%) ⚠️
+│   ├── Latency: p99 234ms (target: 200ms) ⚠️
+│   ├── Errors: 12 in last hour
+│   └── [View details] [See my changes]
+└── payment-service (you own this)
+    ├── Health: 99.9% ✅
+    └── [View details]
+
+My Recent Changes:
+├── PR #1234: "Add retry logic" (deployed 2h ago)
+│   └── Impact: Error rate -23% ✅
+└── PR #1198: "Optimize query" (deployed yesterday)
+    └── Impact: p99 latency -45% ✅
+
+My On-Call:
+├── Next shift: Tomorrow 9am - 5pm
+└── Current incidents: 0
+```
+
+Priority: **P1**. Developer adoption drives platform adoption.
+
+---
+
+#### Pain Point 7: On-Call Burnout ⭐ MEDIUM
+
+**The problem:**
+- Too many pages
+- Pages for non-actionable issues
+- No context in pages
+- Same person always on-call
+
+**Our position:** We said "integrate with PagerDuty, don't rebuild."
+
+**What we SHOULD add:**
+```yaml
+on_call:
+  integration: pagerduty
+
+  noise_reduction:
+    # Don't page for things that auto-resolve
+    min_duration: 5m
+
+    # Don't page for low-impact issues at night
+    night_mode:
+      hours: 22:00-07:00
+      severity_threshold: critical
+
+    # Group related alerts
+    grouping: true
+
+  context:
+    # Include everything needed to investigate
+    include_runbook: true
+    include_related: true
+    include_timeline: true
+
+  metrics:
+    # Track on-call health
+    pages_per_shift: true
+    mttr: true
+    false_positive_rate: true
+```
+
+Priority: **P2**. Important but PagerDuty handles core functionality.
+
+---
+
+#### Pain Point 8: Observability Data Silos ⭐ CRITICAL
+
+**The problem:**
+```
+Metrics in Prometheus
+Logs in Elasticsearch
+Traces in Jaeger
+Errors in Sentry
+Uptime in Pingdom
+Costs in CloudHealth
+
+"The dashboard shows high latency"
+"Let me check the logs... different tool, different query language"
+"Now let me find the trace... another tool, need the trace ID"
+"Was there a deploy? Check yet another system..."
+
+Result: 30 minutes to correlate what should take 30 seconds
+```
+
+**The deeper issue:**
+```
+Data exists but isn't connected:
+
+Metric: api_latency_p99 = 2.3s (high!)
+  └── Which requests? → Need to query logs
+      └── What's the trace? → Need to query traces
+          └── What changed? → Need to query deploys
+              └── Who's affected? → Need to query business data
+
+Each hop = context switch, different tool, lost time
+```
+
+**What we SHOULD build:**
+```
+One-click correlation:
+
+┌─────────────────────────────────────────────────────────────┐
+│ Metric: api_latency_p99 = 2.3s                              │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│ Related Traces (slowest):                                    │
+│ ├── trace-abc123: GET /api/orders (2.8s) - user: john@...   │
+│ ├── trace-def456: GET /api/orders (2.6s) - user: jane@...   │
+│ └── [View all 847 slow traces]                              │
+│                                                              │
+│ Related Logs:                                                │
+│ ├── 14:32:01 WARN Connection pool exhausted                  │
+│ ├── 14:32:02 ERROR Query timeout after 2000ms               │
+│ └── [View all 234 related logs]                             │
+│                                                              │
+│ Recent Changes:                                              │
+│ ├── 14:30:00 Deploy v2.4.1 (api-service)                    │
+│ └── 14:28:00 Config change: max_connections 50→25           │
+│                                                              │
+│ Likely Root Cause: Config change reduced connection pool     │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Implementation:**
+```go
+// Unified correlation engine
+type CorrelationEngine struct {
+    metrics  MetricsStore
+    logs     LogsStore
+    traces   TracesStore
+    events   EventsStore
+}
+
+func (c *CorrelationEngine) Correlate(ctx context.Context, anchor Anchor) *CorrelatedView {
+    // Time window around the anchor
+    window := TimeWindow{
+        Start: anchor.Time.Add(-5 * time.Minute),
+        End:   anchor.Time.Add(5 * time.Minute),
+    }
+
+    // Pull related data in parallel
+    var wg sync.WaitGroup
+    var traces []Trace
+    var logs []Log
+    var events []Event
+
+    wg.Add(3)
+    go func() { traces = c.traces.FindByService(anchor.Service, window); wg.Done() }()
+    go func() { logs = c.logs.FindByService(anchor.Service, window); wg.Done() }()
+    go func() { events = c.events.FindByService(anchor.Service, window); wg.Done() }()
+    wg.Wait()
+
+    // Build correlation links
+    return &CorrelatedView{
+        Anchor:       anchor,
+        RelatedTraces: rankByRelevance(traces, anchor),
+        RelatedLogs:   rankByRelevance(logs, anchor),
+        RecentEvents:  events,
+        LikelyCause:   inferCause(traces, logs, events),
+    }
+}
+```
+
+Priority: **P0**. This IS our core value prop. Every feature must strengthen correlation.
+
+---
+
+#### Pain Point 9: Cost Unpredictability ⭐ CRITICAL
+
+**The problem:**
+```
+Month 1: "Observability costs $5,000"
+Month 2: "Observability costs $12,000" 😱
+Month 3: "Observability costs $28,000" 🔥
+
+What happened?
+- New team added logging → +$3,000
+- Someone enabled debug logs → +$5,000
+- Cardinality explosion in metrics → +$8,000
+- New synthetic checks → +$2,000
+
+Nobody knew until the bill arrived.
+```
+
+**The deeper issue:**
+```
+Cost is invisible until it's a problem:
+
+Developer adds:
+  logger.debug(f"Processing order {order_id} for user {user_id}")
+
+Seems harmless. But:
+  - 1M orders/day × 365 days = 365M log lines/year
+  - At $0.10/GB ingestion = $3,650/year for ONE log line
+
+Nobody told the developer. No feedback loop.
+```
+
+**What competitors do:**
+- Datadog: Bill shock, then you scramble
+- Grafana Cloud: Complex pricing calculator
+- New Relic: Per-GB pricing, hard to predict
+
+**What we SHOULD build:**
+```
+Real-time cost visibility:
+
+┌─────────────────────────────────────────────────────────────┐
+│ Cost Intelligence Dashboard                                  │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│ Current Month (Jan 15):                                      │
+│ ├── Projected: $8,234 (at current rate)                     │
+│ ├── Budget: $6,000                                          │
+│ └── Status: ⚠️ 37% over budget                              │
+│                                                              │
+│ Top Cost Drivers:                                            │
+│ ├── payment-service logs: $2,100 (+340% vs last month)      │
+│ │   └── ⚠️ Debug logging enabled 3 days ago                 │
+│ ├── api-gateway metrics: $1,800 (cardinality: 45,000)       │
+│ │   └── ⚠️ user_id label causing explosion                  │
+│ └── synthetic checks: $890 (247 checks @ $3.60 each)        │
+│                                                              │
+│ Recommendations:                                             │
+│ ├── Disable debug logs on payment-service: -$1,800/month    │
+│ ├── Drop user_id label from metrics: -$1,200/month          │
+│ └── Reduce synthetic frequency (5m→15m): -$593/month        │
+│                                                              │
+│ If we did nothing: $12,400/month by end of month            │
+│ If we follow recommendations: $5,800/month ✅                │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Cost attribution by team:**
+```yaml
+# Config
+cost_allocation:
+  enabled: true
+  group_by: [team, service, environment]
+
+  budgets:
+    - team: payments
+      monthly_limit: 2000
+      alert_at: [80%, 100%, 120%]
+
+    - team: platform
+      monthly_limit: 3000
+      alert_at: [80%, 100%]
+
+  showback:
+    # Weekly email to team leads
+    enabled: true
+    schedule: "0 9 * * 1"  # Monday 9am
+```
+
+**Developer feedback loop:**
+```
+# In CI/CD pipeline
+$ dogwatch cost-estimate --diff HEAD~1
+
+Cost Impact of This Change:
+├── New metric: order_processing_time{user_id=*}
+│   └── Estimated: +$1,200/month (high cardinality warning!)
+├── New log statement: logger.info("Order processed")
+│   └── Estimated: +$45/month (1M events × $0.045/M)
+└── Total estimated impact: +$1,245/month
+
+⚠️ Consider: Remove user_id label or use exemplars instead
+
+[Block PR] [Approve with warning] [Ignore]
+```
+
+Priority: **P0**. Cost transparency is our #2 killer feature.
+
+---
+
+#### Pain Point 10: Compliance & Audit Gaps ⭐ HIGH
+
+**The problem:**
+```
+Auditor: "Show me who accessed production data in the last 90 days"
+Team: "Uh... we don't track that"
+
+Auditor: "Show me all configuration changes to alerting"
+Team: "We'd have to dig through git history... maybe"
+
+Auditor: "Prove this PII was never logged"
+Team: "We... can't prove a negative"
+
+Result: Failed audit, scramble to implement, 6-month remediation
+```
+
+**What enterprises need:**
+```
+1. Access audit trail
+   - Who logged in when
+   - What queries they ran
+   - What data they accessed
+   - What changes they made
+
+2. Configuration change history
+   - All changes to alerts, dashboards, settings
+   - Who made them, when, why
+   - Ability to diff and rollback
+
+3. Data governance
+   - What data contains PII
+   - Who can access it
+   - Retention policies enforced
+   - Proof of deletion
+
+4. Export for compliance tools
+   - SIEM integration
+   - GRC platform integration
+   - Audit report generation
+```
+
+**What we SHOULD build:**
+```yaml
+# Audit logging
+audit:
+  enabled: true
+  retention: 2y  # Keep audit logs longer than data
+
+  log_events:
+    - user_login
+    - user_logout
+    - query_executed
+    - dashboard_viewed
+    - alert_modified
+    - config_changed
+    - data_exported
+    - user_permission_changed
+
+  export:
+    - type: siem
+      target: splunk
+      filter: "severity >= warning"
+
+    - type: s3
+      bucket: audit-logs
+      prefix: dogwatch/
+      format: json
+
+# Example audit entry
+{
+  "timestamp": "2024-01-15T14:32:01Z",
+  "event": "query_executed",
+  "user": "john@example.com",
+  "ip": "10.0.1.50",
+  "query": "logs{service=\"payment\"} |= \"credit_card\"",
+  "result_count": 47,
+  "duration_ms": 234,
+  "data_scanned_bytes": 1048576
+}
+```
+
+**Compliance reports:**
+```
+GET /api/compliance/report?type=access&start=2024-01-01&end=2024-03-31
+
+Response:
+{
+  "report_type": "access_audit",
+  "period": "2024-Q1",
+  "summary": {
+    "total_users": 45,
+    "total_queries": 12847,
+    "unique_data_accessed": ["logs", "traces", "metrics"],
+    "pii_queries": 23,
+    "after_hours_access": 156
+  },
+  "details": [
+    {
+      "user": "john@example.com",
+      "role": "admin",
+      "queries": 892,
+      "last_access": "2024-03-31T16:42:00Z",
+      "pii_access": false
+    }
+  ]
+}
+```
+
+Priority: **P1** (P0 for enterprise sales). Required for SOC2/HIPAA customers.
+
+---
+
+#### Pain Point 11: Multi-Cloud / Hybrid Visibility ⭐ HIGH
+
+**The problem:**
+```
+Reality of modern infrastructure:
+├── AWS (us-east-1): Main workloads
+├── AWS (eu-west-1): GDPR compliance
+├── GCP: ML pipelines (better TPU pricing)
+├── Azure: Microsoft integrations
+├── On-prem: Legacy systems, data sovereignty
+└── Edge: CDN, IoT devices
+
+Each cloud has its own:
+- Monitoring tools (CloudWatch, Stackdriver, Azure Monitor)
+- Log format
+- Metric naming conventions
+- Authentication
+
+Result: No unified view. Incidents spanning clouds = nightmare.
+```
+
+**Real scenario:**
+```
+User complaint: "The app is slow"
+
+Investigation:
+1. Frontend (Cloudflare) - looks fine
+2. API Gateway (AWS) - latency spike!
+3. But it's calling ML service (GCP) - where's that data?
+4. ML service calls on-prem database - no observability there
+5. 3 hours later: on-prem network switch was flapping
+
+With unified observability: 10 minutes
+Without: 3 hours
+```
+
+**What we SHOULD build:**
+```yaml
+# Multi-environment configuration
+environments:
+  aws-prod:
+    type: aws
+    region: us-east-1
+    metrics_source: cloudwatch
+    logs_source: cloudwatch_logs
+    credentials:
+      role_arn: arn:aws:iam::123456789:role/dogwatch
+
+  gcp-ml:
+    type: gcp
+    project: ml-pipelines-prod
+    metrics_source: cloud_monitoring
+    logs_source: cloud_logging
+    credentials:
+      service_account: /etc/dogwatch/gcp-sa.json
+
+  onprem-dc:
+    type: custom
+    endpoints:
+      metrics: http://prometheus.internal:9090
+      logs: http://loki.internal:3100
+      traces: http://jaeger.internal:16686
+
+# Unified service map
+# dogwatch correlates across environments automatically:
+#
+# ┌─────────────────────────────────────────────────────────────┐
+# │                     Unified Service Map                      │
+# │                                                              │
+# │  ┌──────────┐     ┌──────────┐     ┌──────────┐             │
+# │  │ Frontend │────▶│   API    │────▶│    ML    │             │
+# │  │ (CDN)    │     │  (AWS)   │     │  (GCP)   │             │
+# │  └──────────┘     └────┬─────┘     └────┬─────┘             │
+# │                        │                │                    │
+# │                        ▼                ▼                    │
+# │                   ┌──────────┐    ┌──────────┐              │
+# │                   │ Database │    │  Legacy  │              │
+# │                   │  (AWS)   │    │ (On-prem)│              │
+# │                   └──────────┘    └──────────┘              │
+# └─────────────────────────────────────────────────────────────┘
+```
+
+**Cross-cloud tracing:**
+```go
+// Trace that spans clouds
+Trace: abc-123
+├── Span: frontend (Cloudflare)
+│   └── 45ms
+├── Span: api-gateway (AWS us-east-1)
+│   ├── 234ms
+│   └── Child: database query (AWS RDS)
+│       └── 89ms
+├── Span: ml-inference (GCP us-central1)
+│   ├── 567ms
+│   └── Child: model-load (GCP)
+│       └── 123ms
+└── Span: legacy-validation (on-prem)
+    └── 1.2s  ← BOTTLENECK IDENTIFIED
+
+Total: 2.1s
+Root cause: Legacy on-prem validation (57% of total)
+```
+
+Priority: **P1**. Modern architectures are multi-cloud. This is table stakes.
+
+---
+
+#### Pain Point 12: Ephemeral Infrastructure ⭐ HIGH
+
+**The problem:**
+```
+Old world:
+- 10 servers
+- Each has a name (web-1, web-2, db-master)
+- Servers live for years
+- You can SSH in and debug
+
+New world:
+- 1000 containers
+- Names are random (api-7d4f8b9c-xyz)
+- Containers live for hours or minutes
+- They're gone before you can debug
+- Lambda functions exist for milliseconds
+```
+
+**Specific challenges:**
+```
+Serverless (Lambda/Cloud Functions):
+├── Starts cold (1.2s)
+├── Runs for 200ms
+├── Dies
+├── No persistent logs
+├── No way to attach debugger
+└── Problem: "Which invocation had the error?"
+
+Kubernetes pods:
+├── Pod starts
+├── Runs for 2 hours
+├── Gets OOMKilled
+├── New pod starts (different name, different node)
+└── Problem: "What happened to the old pod?"
+
+Spot instances:
+├── Running fine
+├── AWS reclaims instance (2-minute warning)
+├── Workload migrates
+├── Logs/metrics gaps during migration
+└── Problem: "Why is there missing data?"
+```
+
+**What we SHOULD build:**
+```yaml
+# Ephemeral-aware data model
+entities:
+  # Track entity lifecycle
+  - type: container
+    id: api-7d4f8b9c-xyz
+    lifecycle:
+      created: 2024-01-15T14:00:00Z
+      terminated: 2024-01-15T16:32:00Z
+      termination_reason: OOMKilled
+    parent: pod/api-deployment-abc123
+    # All data tagged with entity lifecycle
+
+  - type: lambda
+    id: process-orders-v3
+    invocations:
+      - request_id: abc-123
+        started: 2024-01-15T14:32:01.234Z
+        duration_ms: 456
+        cold_start: true
+        memory_used_mb: 234
+        # Logs and traces linked to this invocation
+
+# Query by entity, even after it's gone
+GET /api/entities/container/api-7d4f8b9c-xyz
+
+Response:
+{
+  "entity": {
+    "type": "container",
+    "id": "api-7d4f8b9c-xyz",
+    "status": "terminated",
+    "lifetime": "2h 32m",
+    "termination": "OOMKilled"
+  },
+  "links": {
+    "logs": "/api/logs?entity=api-7d4f8b9c-xyz",
+    "traces": "/api/traces?entity=api-7d4f8b9c-xyz",
+    "metrics": "/api/metrics?entity=api-7d4f8b9c-xyz",
+    "previous": "/api/entities/container/api-6c3e7a8b-wxy",
+    "replacement": "/api/entities/container/api-8e5f9c0d-zab"
+  }
+}
+```
+
+**Lambda-specific views:**
+```
+Lambda Function: process-orders
+
+Invocations (last hour):
+├── Total: 12,847
+├── Errors: 23 (0.18%)
+├── Cold starts: 89 (0.7%)
+├── Avg duration: 234ms
+├── p99 duration: 890ms
+└── Timeouts: 2
+
+Error breakdown:
+├── ValidationError: 12 (52%)
+├── TimeoutError: 2 (9%)
+├── DatabaseError: 9 (39%)
+
+Cold start analysis:
+├── Avg cold start: 1.2s
+├── Warm start: 45ms
+├── Provisioned concurrency: Not enabled
+└── Recommendation: Enable provisioned concurrency (saves ~$200/month in user-facing latency)
+
+[View invocations] [View errors] [Compare versions]
+```
+
+Priority: **P1**. Serverless and K8s are the norm. Must handle ephemeral well.
+
+---
+
+#### Pain Point 13: Microservices Dependency Hell ⭐ HIGH
+
+**The problem:**
+```
+api-gateway → user-service → auth-service → redis
+          ↘ order-service → payment-service → stripe
+                         → inventory-service → database
+                         → shipping-service → fedex-api
+
+"Why is checkout slow?"
+- Is it order-service? Or something it calls?
+- Is it payment-service? Or Stripe?
+- Is it inventory? Or the database?
+- Is it all of them?
+
+100+ services = impossible to understand dependencies manually
+```
+
+**The cascade effect:**
+```
+14:30:00 - Redis latency increases (50ms → 500ms)
+14:30:01 - auth-service slows down (calls Redis)
+14:30:02 - user-service slows down (calls auth-service)
+14:30:03 - api-gateway slows down (calls user-service)
+14:30:04 - ALL endpoints slow
+
+Alert: "api-gateway latency high"
+Team debugs api-gateway for 30 minutes
+Actual cause: Redis memory pressure
+
+Without dependency awareness: 45 minutes
+With dependency awareness: 2 minutes
+```
+
+**What we SHOULD build:**
+```
+Dependency-aware alerting:
+
+┌─────────────────────────────────────────────────────────────┐
+│ Alert: api-gateway latency high                              │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│ Dependency Analysis:                                         │
+│                                                              │
+│ api-gateway (this service)                                   │
+│ ├── Self time: 12ms (normal)                                │
+│ └── Waiting on dependencies: 1.8s (HIGH)                    │
+│     ├── user-service: 800ms (usually 50ms) ⚠️               │
+│     │   └── Waiting on: auth-service: 750ms ⚠️              │
+│     │       └── Waiting on: redis: 700ms 🔴 ROOT CAUSE      │
+│     └── order-service: 1.0s (usually 100ms) ⚠️              │
+│         └── Also waiting on: auth-service (same issue)      │
+│                                                              │
+│ Root Cause: redis latency (700ms, usually 5ms)              │
+│                                                              │
+│ Affected Services: 8 (all depend on auth → redis)           │
+│ Affected Endpoints: 23                                       │
+│ Affected Users: ~12% seeing slow responses                  │
+│                                                              │
+│ [View Redis Dashboard] [View Dependency Map] [Create Incident]│
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Service health rollup:**
+```
+Service Health (real-time)
+
+Healthy (72):
+├── payment-service ✅
+├── inventory-service ✅
+└── ... 70 more
+
+Degraded (5):
+├── user-service ⚠️ (slow, caused by redis)
+├── auth-service ⚠️ (slow, caused by redis)
+├── api-gateway ⚠️ (slow, caused by redis)
+├── order-service ⚠️ (slow, caused by redis)
+└── checkout-service ⚠️ (slow, caused by redis)
+
+Root Causes:
+└── redis 🔴 (1 root cause affecting 5 services)
+```
+
+**Dependency change detection:**
+```yaml
+# Alert on unexpected dependencies
+dependencies:
+  change_detection:
+    enabled: true
+    alert_on:
+      - new_dependency          # "frontend now calls database directly?!"
+      - removed_dependency      # "why did auth stop calling redis?"
+      - increased_call_rate     # "payment now calls stripe 10x more"
+      - new_external_dependency # "who added call to unknown-api.com?"
+```
+
+Priority: **P0**. Microservices without dependency tracking is flying blind.
+
+---
+
+#### Pain Point 14: Lack of Business Context ⭐ HIGH
+
+**The problem:**
+```
+Technical alert: "Error rate > 5%"
+
+What the engineer sees:
+- HTTP 500 errors
+- Stack traces
+- Service name
+
+What they DON'T see:
+- Is this affecting revenue?
+- Which customers?
+- How much money are we losing?
+- Is this a $10 problem or a $100,000 problem?
+
+CTO: "Is this critical?"
+Engineer: "Uh... it's a 5% error rate?"
+CTO: "What does that MEAN for the business?"
+Engineer: "..."
+```
+
+**The gap:**
+```
+Technical Data              Business Data
+─────────────              ─────────────
+500 errors/min             ??? customers affected
+p99 = 2.3s                 ??? revenue impacted
+3 services degraded        ??? SLA breach?
+Database at 90% CPU        ??? cost of downtime?
+
+These SHOULD be connected but usually aren't.
+```
+
+**What we SHOULD build:**
+```yaml
+# Business context configuration
+business_context:
+  # Link services to business impact
+  services:
+    checkout-service:
+      revenue_per_request: $45  # Average order value
+      sla_tier: critical        # Business-critical
+      customer_segment: all
+
+    internal-tools:
+      revenue_per_request: $0
+      sla_tier: low
+      customer_segment: internal
+
+  # Alert enrichment
+  enrichment:
+    enabled: true
+    include:
+      - estimated_revenue_impact
+      - affected_customer_count
+      - affected_customer_tiers
+      - sla_status
+```
+
+**Business-aware dashboards:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Business Impact Dashboard                                    │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│ Current Incidents:                                           │
+│                                                              │
+│ 🔴 CRITICAL: Checkout failing for 12% of users              │
+│    ├── Revenue impact: -$4,230/hour                          │
+│    ├── Affected customers: 847 (23 enterprise)              │
+│    ├── Started: 14:32 (18 minutes ago)                      │
+│    ├── Estimated loss so far: $1,269                        │
+│    └── SLA status: BREACHING (99.9% target, currently 88%)  │
+│                                                              │
+│ ⚠️ WARNING: Search slow for mobile users                     │
+│    ├── Revenue impact: -$890/hour (estimated)               │
+│    ├── Affected customers: 2,341 (mobile only)              │
+│    └── SLA status: OK (within targets)                      │
+│                                                              │
+│ Today's Summary:                                             │
+│ ├── Revenue protected: $234,567                              │
+│ ├── Revenue at risk: $5,120                                  │
+│ ├── Incidents: 3 (2 resolved, 1 active)                     │
+│ └── SLA status: 99.2% (target: 99.9%) ⚠️                    │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Revenue-aware alerting:**
+```yaml
+alerts:
+  - name: checkout-errors
+    condition: error_rate{service="checkout"} > 0.01
+    severity: critical
+
+    # Business context
+    business_impact:
+      revenue_per_error: $45
+      calculate_impact: true
+
+    # Alert includes:
+    # "Checkout errors: 234/hour
+    #  Estimated revenue impact: $10,530/hour
+    #  Affected customers: 234 (12 enterprise tier)"
+
+    # Escalation based on business impact
+    escalation:
+      - if: revenue_impact > 1000/hour
+        then: page_oncall
+      - if: revenue_impact > 10000/hour
+        then: page_engineering_lead
+      - if: revenue_impact > 50000/hour
+        then: page_cto
+```
+
+Priority: **P1**. Connects technical work to business outcomes. Executives love this.
+
+---
+
+#### Pain Point 15: Security Blind Spots ⭐ HIGH
+
+**The problem:**
+```
+Security team: "Was there any unusual access to the user database yesterday?"
+Ops team: "We don't track that in our observability"
+Security team: "Can you check for SQL injection attempts?"
+Ops team: "We'd have to grep through logs manually"
+Security team: "Were there any data exfiltration attempts?"
+Ops team: "We have no way to know"
+
+Security and observability are separate worlds.
+But attackers don't care about organizational silos.
+```
+
+**What observability can see (but usually doesn't surface):**
+```
+eBPF sees EVERYTHING:
+├── Every network connection (including unusual destinations)
+├── Every file access (including /etc/passwd)
+├── Every process spawn (including reverse shells)
+├── Every syscall (including privilege escalation)
+
+Logs contain:
+├── Authentication attempts (including brute force)
+├── SQL queries (including injection attempts)
+├── API access patterns (including scraping)
+├── Error messages (including path traversal attempts)
+
+Traces show:
+├── Request paths (including unusual patterns)
+├── User sessions (including session hijacking)
+├── Data access (including unauthorized access)
+```
+
+**What we SHOULD build:**
+```yaml
+# Security-focused observability
+security:
+  enabled: true
+
+  # Threat detection from existing data
+  detection_rules:
+    - name: brute_force_login
+      condition: |
+        count(logs{message=~"login failed"}) by (source_ip) > 10
+        within 5m
+      severity: high
+      action: alert
+
+    - name: sql_injection_attempt
+      condition: |
+        http.path matches "('|--|UNION|SELECT|DROP)"
+      severity: critical
+      action: [alert, block_ip]
+
+    - name: unusual_data_access
+      condition: |
+        database.rows_returned > 10000 AND
+        user NOT IN known_batch_users
+      severity: medium
+      action: alert
+
+    - name: lateral_movement
+      condition: |
+        new_internal_connection AND
+        source.service NOT IN destination.allowed_callers
+      severity: high
+      action: alert
+
+    - name: data_exfiltration
+      condition: |
+        outbound.bytes > 100MB AND
+        destination NOT IN known_destinations
+      severity: critical
+      action: [alert, block]
+
+  # Security dashboard
+  dashboard:
+    show_auth_failures: true
+    show_unusual_access: true
+    show_threat_map: true
+    show_compliance_status: true
+
+  # SIEM integration
+  export:
+    siem:
+      enabled: true
+      target: splunk
+      events: [high, critical]
+```
+
+**Security incident view:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Security Alert: Potential Data Exfiltration                 │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│ Detected: 2024-01-15 14:32:01                               │
+│ Severity: CRITICAL                                           │
+│                                                              │
+│ What happened:                                               │
+│ ├── User: john@example.com (session: abc123)                │
+│ ├── Query: SELECT * FROM users (returned 847,234 rows)      │
+│ ├── Data size: 234MB                                        │
+│ ├── Normal behavior: <1000 rows, <1MB                       │
+│ └── Destination: Downloaded to client                        │
+│                                                              │
+│ Context:                                                     │
+│ ├── User role: support (should not access all users)        │
+│ ├── Time: 2:32 AM (outside normal hours)                    │
+│ ├── Location: IP 45.67.89.12 (VPN: Russia)                  │
+│ └── Recent activity: Password changed 2 hours ago           │
+│                                                              │
+│ Risk Assessment: HIGH                                        │
+│ ├── Possible compromised account                            │
+│ ├── Possible insider threat                                 │
+│ └── Data may include PII                                    │
+│                                                              │
+│ [Block User] [Revoke Sessions] [Create Incident] [Ignore]   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Priority: **P1**. Security + observability convergence is a major trend.
+
+---
+
+#### Pain Point 16: Legacy System Visibility ⭐ MEDIUM
+
+**The problem:**
+```
+Modern stack:
+├── Kubernetes (full observability)
+├── Cloud functions (full observability)
+└── Easy to monitor
+
+Legacy stack:
+├── COBOL on mainframe (no agents allowed)
+├── Java 6 on ancient Tomcat (can't update)
+├── Windows Server 2008 (please don't ask)
+└── "It works, don't touch it"
+
+Reality: Legacy systems often handle critical business logic.
+"The mainframe processes $2B in transactions daily."
+"We can't see ANY of that in our dashboards."
+```
+
+**Approaches we SHOULD support:**
+```yaml
+# Non-invasive legacy monitoring
+legacy_systems:
+
+  # Option 1: Network-level observation
+  - name: mainframe-transactions
+    type: network_tap
+    capture:
+      interface: eth0
+      filter: "host 10.0.1.50 and port 3270"  # TN3270
+    parse:
+      protocol: tn3270
+      extract: [transaction_id, response_code, duration]
+
+  # Option 2: Log file tailing
+  - name: legacy-java-app
+    type: file_tail
+    paths:
+      - /var/log/legacy-app/*.log
+    parse:
+      format: regex
+      pattern: '(?P<timestamp>\d{4}-\d{2}-\d{2}) (?P<level>\w+) (?P<message>.*)'
+
+  # Option 3: Database query (observe the data, not the app)
+  - name: mainframe-batch-jobs
+    type: database_poll
+    connection: oracle://readonly:***@legacy-db:1521/prod
+    query: |
+      SELECT job_name, status, duration_seconds, error_message
+      FROM batch_job_log
+      WHERE completed_at > :last_poll
+    interval: 60s
+
+  # Option 4: SNMP for ancient infrastructure
+  - name: legacy-load-balancer
+    type: snmp
+    host: 10.0.1.100
+    community: public
+    oids:
+      - 1.3.6.1.2.1.2.2.1.10  # ifInOctets
+      - 1.3.6.1.2.1.2.2.1.16  # ifOutOctets
+
+  # Option 5: Synthetic probes
+  - name: mainframe-health
+    type: synthetic
+    check:
+      type: tcp
+      host: 10.0.1.50
+      port: 3270
+    assertions:
+      - response_time: <100ms
+```
+
+**Legacy in the service map:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Service Map                             │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│    ┌──────────┐     ┌──────────┐     ┌──────────────────┐  │
+│    │   API    │────▶│ Payment  │────▶│    Mainframe     │  │
+│    │ Gateway  │     │ Service  │     │  (limited view)  │  │
+│    └──────────┘     └──────────┘     └──────────────────┘  │
+│         │                                     │             │
+│         │           Observability:            │             │
+│         │           ├── Full telemetry        │             │
+│         │           └── eBPF tracing          │             │
+│         │                                     │             │
+│         │           Observability:            │             │
+│         │           ├── Network latency only  │             │
+│         │           ├── Success/failure       │             │
+│         │           └── No internal visibility│             │
+│                                                              │
+│    Legend: ████ Full visibility  ░░░░ Limited visibility   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Priority: **P2**. Not everyone has legacy, but those who do really need this.
+
+---
+
+#### Pain Point 17: Observability of Observability ⭐ MEDIUM
+
+**The problem:**
+```
+"Our monitoring is down"
+"How do you know?"
+"... I don't"
+
+The irony: Observability systems need observability too.
+And they're often the least monitored thing in the stack.
+```
+
+**What can go wrong:**
+```
+Scenario 1: Silent failure
+├── Metrics ingestion stops
+├── No alerts fire (because no metrics!)
+├── Hours pass before someone notices
+└── "Why didn't we get alerted about the outage?"
+   "Because the alerting system was down"
+
+Scenario 2: Data loss
+├── Log buffer overflows
+├── Logs dropped silently
+├── Investigation fails ("where are the logs?!")
+└── "They were dropped, we just didn't know"
+
+Scenario 3: Delayed data
+├── Processing lag increases
+├── Dashboards show stale data
+├── Decisions made on old information
+└── "This says everything is fine" [narrator: it wasn't]
+```
+
+**What we SHOULD build:**
+```yaml
+# Self-monitoring
+self_monitoring:
+  enabled: true
+
+  # Internal metrics (always on)
+  metrics:
+    - dogwatch_events_received_total
+    - dogwatch_events_dropped_total
+    - dogwatch_events_processed_total
+    - dogwatch_processing_latency_seconds
+    - dogwatch_storage_bytes
+    - dogwatch_query_latency_seconds
+    - dogwatch_active_connections
+    - dogwatch_error_total
+
+  # Health checks
+  health:
+    endpoints:
+      - /health          # Basic liveness
+      - /health/detailed # Component-level health
+    components:
+      - name: metrics_ingestion
+        check: events_received > 0 in last 60s
+      - name: log_ingestion
+        check: logs_received > 0 in last 60s
+      - name: storage
+        check: disk_free > 10%
+      - name: queries
+        check: query_latency_p99 < 5s
+
+  # External monitoring (push-based)
+  external:
+    enabled: true
+    push_to:
+      - type: heartbeat
+        url: https://healthchecks.io/ping/abc123
+        interval: 60s
+      - type: metrics
+        url: https://backup-metrics.example.com/push
+        interval: 60s
+
+  # Alerting on self
+  alerts:
+    - name: ingestion_stopped
+      condition: rate(events_received[5m]) == 0
+      severity: critical
+      notify: [pagerduty, slack, email]  # ALL channels
+
+    - name: high_drop_rate
+      condition: rate(events_dropped[5m]) / rate(events_received[5m]) > 0.01
+      severity: warning
+
+    - name: storage_full
+      condition: disk_free_percent < 10
+      severity: critical
+
+    - name: processing_lag
+      condition: processing_lag_seconds > 60
+      severity: warning
+```
+
+**Self-monitoring dashboard:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│ dogwatch Health                                              │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│ Status: HEALTHY ✅                                           │
+│                                                              │
+│ Ingestion:                                                   │
+│ ├── Events/sec: 12,847                                      │
+│ ├── Dropped: 0 (0%)                                         │
+│ └── Lag: 1.2s                                               │
+│                                                              │
+│ Storage:                                                     │
+│ ├── Used: 234 GB / 500 GB (47%)                             │
+│ ├── Write rate: 12 MB/s                                     │
+│ └── Retention: 14 days                                      │
+│                                                              │
+│ Queries:                                                     │
+│ ├── Active: 23                                              │
+│ ├── p50 latency: 45ms                                       │
+│ └── p99 latency: 890ms                                      │
+│                                                              │
+│ Components:                                                  │
+│ ├── eBPF agent: ✅ (12 probes active)                       │
+│ ├── Metrics engine: ✅                                      │
+│ ├── Log processor: ✅                                       │
+│ ├── Trace collector: ✅                                     │
+│ ├── Alert evaluator: ✅ (47 rules, 2 firing)               │
+│ └── Web UI: ✅                                              │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Priority: **P1**. Embarrassing when your monitoring is unmonitored.
+
+---
+
+#### Pain Point 18: Scaling Observability Itself ⭐ MEDIUM
+
+**The problem:**
+```
+Small scale: 10 services, 100 metrics, 1GB logs/day
+→ Everything works fine
+
+Medium scale: 100 services, 10,000 metrics, 100GB logs/day
+→ Queries getting slow, storage filling up
+
+Large scale: 1000 services, 1M metrics, 10TB logs/day
+→ Everything is on fire
+
+Observability tools become the bottleneck.
+"We can't add more metrics, the system can't handle it"
+"We had to disable debug logging, too expensive"
+```
+
+**Scaling challenges:**
+```
+1. Cardinality explosion
+   └── 1000 services × 100 metrics × 10 labels = 1M time series
+
+2. Storage growth
+   └── 10TB/day × 30 days retention = 300TB storage
+
+3. Query performance
+   └── Aggregating 1M series = seconds or minutes
+
+4. Ingestion throughput
+   └── 1M events/second needs serious infrastructure
+
+5. Cost explosion
+   └── All the above = $$$
+```
+
+**What we SHOULD build:**
+```yaml
+# Scaling configurations
+scaling:
+
+  # Tier 1: Small (<100 services)
+  small:
+    deployment: single-binary
+    storage: local-disk
+    retention: 30d
+    sampling: none
+    resources:
+      cpu: 2 cores
+      memory: 4GB
+      disk: 100GB
+
+  # Tier 2: Medium (<1000 services)
+  medium:
+    deployment: clustered
+    storage: s3-backed
+    retention:
+      hot: 7d (local SSD)
+      warm: 30d (S3)
+    sampling:
+      traces: 10%
+      logs: drop-debug
+    resources:
+      nodes: 3
+      cpu: 8 cores each
+      memory: 32GB each
+      disk: 500GB SSD each
+
+  # Tier 3: Large (1000+ services)
+  large:
+    deployment: distributed
+    storage: tiered
+    retention:
+      hot: 1d (local NVMe)
+      warm: 7d (S3 Standard)
+      cold: 90d (S3 Glacier)
+    sampling:
+      traces: 1% (keep errors/slow)
+      logs: drop-debug, sample-info
+      metrics: downsample after 7d
+    resources:
+      ingest_nodes: 10
+      query_nodes: 5
+      storage_nodes: 20
+
+# Automatic scaling signals
+autoscaling:
+  enabled: true
+  signals:
+    - metric: ingestion_lag_seconds
+      scale_up_threshold: 30
+      scale_down_threshold: 5
+
+    - metric: query_latency_p99
+      scale_up_threshold: 5s
+      scale_down_threshold: 1s
+
+    - metric: storage_used_percent
+      scale_up_threshold: 80
+      # No scale down - storage doesn't shrink
+```
+
+**Scaling dashboard:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Capacity Planning                                            │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│ Current Load:                                                │
+│ ├── Events/sec: 234,567 (capacity: 500,000)                 │
+│ ├── Active series: 847,234 (capacity: 2,000,000)            │
+│ ├── Storage: 2.3TB / 5TB (46%)                              │
+│ └── Headroom: 53%                                           │
+│                                                              │
+│ Growth Trends (30 days):                                     │
+│ ├── Events: +12%/week                                       │
+│ ├── Series: +8%/week                                        │
+│ └── Storage: +15%/week                                      │
+│                                                              │
+│ Projections:                                                 │
+│ ├── Storage full in: 47 days                                │
+│ ├── Cardinality limit in: 89 days                           │
+│ └── Ingestion limit in: 120 days                            │
+│                                                              │
+│ Recommendations:                                             │
+│ ├── Add storage node in 30 days                             │
+│ ├── Enable trace sampling at 10%: saves 40%                 │
+│ └── Drop debug logs: saves 25%                              │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Priority: **P2** initially (single binary scales far). **P0** when customers grow.
+
+---
+
+### Summary: Priority Ranking
+
+#### P0 - Must Have (Build First)
+
+| Pain Point | Why Critical | Effort |
+|------------|--------------|--------|
+| **Data silos / correlation** | This IS our core value prop | Medium |
+| **Cost unpredictability** | Our #2 killer feature | Medium |
+| **Alert fatigue** | Universal pain, high visibility | Medium |
+| **Incident response** | Directly reduces MTTR | Medium |
+| **Microservices dependencies** | Can't debug without this | Medium |
+
+#### P1 - High Priority (Build Next)
+
+| Pain Point | Why Important | Effort |
+|------------|---------------|--------|
+| **Cardinality management** | How bills explode | Medium |
+| **Kubernetes complexity** | Everyone runs K8s | High |
+| **Developer experience** | Drives adoption | Medium |
+| **Business context** | Connects tech to revenue | Medium |
+| **Compliance/audit** | Required for enterprise | Medium |
+| **Multi-cloud visibility** | Modern reality | High |
+| **Ephemeral infra** | Serverless/K8s is norm | Medium |
+| **Security blind spots** | Growing trend | Medium |
+| **Self-monitoring** | Embarrassing if broken | Low |
+| **LLM integration** | Table stakes by 2025 | Low |
+
+#### P2 - Important (Build When Ready)
+
+| Pain Point | Why | Effort |
+|------------|-----|--------|
+| **On-call burnout** | Integrate, don't build | Low |
+| **Legacy visibility** | Niche but valuable | Medium |
+| **Scaling** | Only at growth stage | High |
+| **IDE integration** | Nice DX differentiator | Medium |
+| **CI/CD visibility** | Correlation value | Low |
+| **GitOps workflow** | Platform teams want | Medium |
+| **Terraform provider** | IaC expectation | Medium |
+| **Wasm plugins** | Extensibility win | High |
+
+#### Future / Skip
+
+| Item | Recommendation |
+|------|----------------|
+| **RUM** | Integrate with Sentry/LogRocket |
+| **Mobile SDK** | Skip - use OTLP |
+| **Browser synthetics** | Multi-step API first |
+| **Custom ML** | Use LLM APIs instead |
+| **Full SIEM** | Too broad - focus on detection |
+| **Carbon footprint** | Future nice-to-have |
+
+### The Bottom Line
+
+**Where we're strong (double down):**
+- Zero-config eBPF tracing (unique, hard to copy)
+- Cost intelligence (unique positioning, no one else does this)
+- Single binary simplicity (architectural decision, can't be changed)
+- Service catalog (platform engineering aligned)
+- Data correlation (metrics + logs + traces in one place)
+
+**Where we need work (prioritize these):**
+- Alert intelligence (grouping, context, noise reduction)
+- Incident experience (auto-enrichment, timelines, runbooks)
+- Dependency tracking (root cause across services)
+- Cardinality control (analysis, limits, cost attribution)
+- Kubernetes-native views (pods, nodes, namespaces)
+- Business context (revenue impact, customer impact)
+- Basic LLM integration (use APIs, not custom ML)
+- Wasm extensibility (custom logic without forking)
+
+**Where we should integrate (don't build):**
+- RUM/Mobile → Sentry, LogRocket
+- On-call → PagerDuty, OpsGenie
+- Full SIEM → Splunk, Elastic Security
+- Session replay → LogRocket, FullStory
+
+**Our unfair advantages:**
+1. **eBPF** - Kernel-level visibility no one else has in single binary
+2. **Cost transparency** - We call out competitor pricing (they can't do this)
+3. **Simplicity** - One binary vs 5+ components
+4. **Data sovereignty** - Self-hosted, your data stays yours
+5. **Wasm extensibility** - Your rules, your logic, safely sandboxed
+
+---
+
+## Stealing Killer Features from Competitors
+
+Analyzing the unique strengths of major observability platforms and how to adopt them.
+
+### Splunk: The Features That Made Them a $28B Company
+
+Splunk's dominance came from several genuinely innovative features:
+
+#### 1. SPL (Search Processing Language) ⭐ STEAL THIS
+
+**What it is:** A pipeline-based query language that's incredibly expressive.
+
+```spl
+# Find slow requests, extract fields, calculate stats, alert
+index=web sourcetype=access_log
+| rex field=_raw "duration=(?<duration>\d+)"
+| where duration > 2000
+| stats count, avg(duration), max(duration) by endpoint, user
+| where count > 10
+| sort -avg(duration)
+```
+
+**Why it's killer:**
+- Pipe-based (like Unix) - intuitive for engineers
+- Field extraction on the fly (`rex`)
+- Statistical commands built-in
+- Transformations chain naturally
+- Users can build complex analysis without programming
+
+**What we should build:**
+
+```
+DogQuery Language (DQL):
+
+# Same query in DQL
+logs
+| where service == "api" and latency_ms > 2000
+| extract pattern="user=(?P<user>\w+)"
+| group by endpoint, user
+| stats count(), avg(latency_ms), max(latency_ms)
+| having count() > 10
+| sort avg_latency_ms desc
+
+# Cross-signal queries (Splunk can't do this easily)
+logs | where error == true
+| join traces on trace_id
+| join metrics on (service, timestamp ± 1m)
+| correlate  # Find what's common across all three
+```
+
+**Implementation:**
+
+```go
+// DQL Parser
+type DQLQuery struct {
+    Source      DataSource    // logs, traces, metrics, events
+    Pipes       []PipeStage   // Sequential transformations
+}
+
+type PipeStage interface {
+    Execute(input Stream) Stream
+}
+
+// Pipe stages
+type WhereStage struct { Condition Expression }
+type ExtractStage struct { Pattern string; Fields []string }
+type GroupByStage struct { Fields []string }
+type StatsStage struct { Aggregations []Aggregation }
+type JoinStage struct { Other DataSource; On JoinCondition }
+type SortStage struct { Field string; Desc bool }
+type LimitStage struct { N int }
+
+// Example query execution
+func (q *DQLQuery) Execute(ctx context.Context) (Results, error) {
+    stream := q.Source.Stream(ctx)
+    for _, pipe := range q.Pipes {
+        stream = pipe.Execute(stream)
+    }
+    return stream.Collect()
+}
+```
+
+Priority: **P1**. Query language is how power users live in the product.
+
+---
+
+#### 2. Knowledge Objects ⭐ STEAL THIS
+
+**What it is:** Saved searches, reports, alerts, and dashboards that are first-class, reusable objects.
+
+```
+Knowledge Object Hierarchy:
+
+Organization
+├── Apps (logical groupings)
+│   ├── Saved Searches
+│   │   ├── "Slow API Requests" (used by 3 dashboards, 2 alerts)
+│   │   ├── "Error Patterns" (used by 1 report)
+│   │   └── "User Activity" (used by 2 dashboards)
+│   ├── Reports (scheduled saved searches)
+│   ├── Alerts (saved search + trigger + action)
+│   ├── Dashboards (compositions of saved searches)
+│   └── Lookups (enrichment data)
+└── Permissions (who can use what)
+```
+
+**Why it's killer:**
+- One search powers multiple dashboards
+- Change the search, all dashboards update
+- Alerts are just searches with triggers
+- Reports are just searches with schedules
+- Everything is composable
+
+**What we should build:**
+
+```yaml
+# dogwatch knowledge objects
+knowledge_objects:
+
+  saved_queries:
+    - id: slow-api-requests
+      name: "Slow API Requests"
+      query: |
+        traces
+        | where service == "api" and duration_ms > 2000
+        | stats count(), p50(duration_ms), p99(duration_ms) by endpoint
+      cache_ttl: 60s
+      used_by:
+        - dashboard: api-overview
+        - alert: slow-endpoint-alert
+        - report: weekly-performance
+
+  alerts:
+    - id: slow-endpoint-alert
+      based_on: slow-api-requests  # Reference saved query
+      trigger:
+        condition: p99_duration_ms > 5000
+        for: 5m
+      actions:
+        - slack: #api-team
+        - pagerduty: api-oncall
+
+  reports:
+    - id: weekly-performance
+      based_on: slow-api-requests
+      schedule: "0 9 * * 1"  # Monday 9am
+      format: pdf
+      recipients: [engineering-leads@]
+
+  dashboards:
+    - id: api-overview
+      panels:
+        - query_ref: slow-api-requests
+          visualization: table
+        - query_ref: slow-api-requests
+          visualization: timeseries
+          field: p99_duration_ms
+```
+
+Priority: **P2**. Enables power users and reduces duplication.
+
+---
+
+#### 3. LogReduce / Pattern Detection ⭐ STEAL THIS
+
+**What it is:** Automatically clusters log messages to find patterns.
+
+```
+Before LogReduce (1M log lines):
+2024-01-15 14:32:01 ERROR Failed to connect to database: timeout
+2024-01-15 14:32:01 ERROR Failed to connect to database: timeout
+2024-01-15 14:32:02 ERROR Failed to connect to database: timeout
+... (repeated 50,000 times)
+2024-01-15 14:32:01 INFO User john logged in
+2024-01-15 14:32:02 INFO User jane logged in
+... (repeated 200,000 times)
+2024-01-15 14:32:03 WARN Rate limit exceeded for IP 10.0.1.50
+... (repeated 100 times)
+
+After LogReduce (3 patterns):
+┌─────────────────────────────────────────────────────────────┐
+│ Pattern                                    │ Count │ Trend │
+├────────────────────────────────────────────┼───────┼───────┤
+│ ERROR Failed to connect to database: *     │ 50K   │ ↑ NEW │
+│ INFO User * logged in                      │ 200K  │ →     │
+│ WARN Rate limit exceeded for IP *          │ 100   │ →     │
+└─────────────────────────────────────────────────────────────┘
+
+Click pattern → See all matching logs
+```
+
+**Why it's killer:**
+- Turns 1M lines into 3 patterns
+- Immediately surfaces anomalies ("↑ NEW")
+- No manual regex writing
+- Works on ANY log format
+
+**What we should build:**
+
+```go
+// Log pattern detection
+type LogPattern struct {
+    Template    string            // "ERROR Failed to connect to database: *"
+    Signature   uint64            // Hash for fast matching
+    Count       int64
+    FirstSeen   time.Time
+    LastSeen    time.Time
+    Trend       Trend             // NEW, INCREASING, STABLE, DECREASING
+    Examples    []string          // Sample matching logs
+    Variables   []VariableSlot    // Extracted wildcards
+}
+
+// Pattern detection algorithm
+func DetectPatterns(logs []LogLine) []LogPattern {
+    // 1. Tokenize each log line
+    // 2. Replace variable parts with wildcards:
+    //    - Numbers → *
+    //    - UUIDs → *
+    //    - IPs → *
+    //    - Timestamps → *
+    //    - Quoted strings → *
+    // 3. Hash the template
+    // 4. Group by hash
+    // 5. Calculate trends vs previous period
+
+    patterns := make(map[uint64]*LogPattern)
+
+    for _, log := range logs {
+        template := tokenizeAndGeneralize(log.Message)
+        sig := hash(template)
+
+        if p, exists := patterns[sig]; exists {
+            p.Count++
+            p.LastSeen = log.Timestamp
+        } else {
+            patterns[sig] = &LogPattern{
+                Template:  template,
+                Signature: sig,
+                Count:     1,
+                FirstSeen: log.Timestamp,
+                LastSeen:  log.Timestamp,
+            }
+        }
+    }
+
+    return rankByRelevance(patterns)
+}
+```
+
+**UI for pattern detection:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Log Patterns (last 1 hour)                    [Auto-refresh]│
+├─────────────────────────────────────────────────────────────┤
+│ 🔴 NEW PATTERN (first seen 5 min ago)                       │
+│ ├── "ERROR Connection refused to redis:6379"               │
+│ ├── Count: 12,847                                          │
+│ ├── Services: api, worker, scheduler                       │
+│ └── [View logs] [Create alert] [Investigate]               │
+│                                                              │
+│ ⚠️ INCREASING (+340% vs last hour)                          │
+│ ├── "WARN Request timeout after * ms"                      │
+│ ├── Count: 8,234                                           │
+│ └── [View logs] [Correlate]                                │
+│                                                              │
+│ ✅ NORMAL                                                   │
+│ ├── "INFO User * logged in from *"                         │
+│ ├── Count: 234,567                                         │
+│ └── [View logs]                                            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Priority: **P1**. Transforms log analysis from "needle in haystack" to "here are the 5 things you should care about."
+
+---
+
+#### 4. SOAR (Security Orchestration, Automation, Response) ⭐ PARTIAL STEAL
+
+**What it is:** Automated playbooks for security response.
+
+```
+Playbook: "Brute Force Response"
+
+Trigger: > 10 failed logins from same IP in 5 min
+
+Actions:
+1. Block IP at firewall (automated)
+2. Create ticket in ServiceNow (automated)
+3. Enrich with threat intel (automated)
+4. Notify security team (automated)
+5. Wait for analyst decision
+6. If malicious: add to permanent blocklist
+7. Generate incident report
+```
+
+**Why it's killer:**
+- Reduces response time from hours to seconds
+- Consistent response (no human error)
+- Audit trail of all actions
+- Integrates everything
+
+**What we should steal (simplified):**
+
+```yaml
+# Automated response playbooks
+playbooks:
+  - name: high-error-rate-response
+    trigger:
+      alert: error-rate-high
+      severity: critical
+
+    steps:
+      - name: gather-context
+        parallel:
+          - action: query
+            query: "traces | where error == true | limit 100"
+            save_as: error_traces
+
+          - action: query
+            query: "events | where type == 'deploy' | last 1h"
+            save_as: recent_deploys
+
+          - action: query
+            query: "logs | where level == 'error' | pattern_detect"
+            save_as: error_patterns
+
+      - name: check-for-deploy-correlation
+        condition: recent_deploys.count > 0
+        action: enrich
+        add:
+          likely_cause: "deploy"
+          deploy_version: "{{recent_deploys[0].version}}"
+          rollback_available: true
+
+      - name: auto-rollback-if-enabled
+        condition: config.auto_rollback_enabled AND likely_cause == "deploy"
+        action: webhook
+        url: "{{deploy_system}}/rollback"
+        body:
+          version: "{{recent_deploys[0].previous_version}}"
+
+      - name: notify
+        action: notify
+        channels: [slack, pagerduty]
+        message: |
+          🔴 High Error Rate Detected
+
+          Error patterns:
+          {{error_patterns | format}}
+
+          {{#if likely_cause == "deploy"}}
+          Likely caused by deploy {{deploy_version}}
+          {{#if auto_rollback_triggered}}
+          ✅ Auto-rollback initiated
+          {{else}}
+          [Rollback] [Ignore]
+          {{/if}}
+          {{/if}}
+```
+
+Priority: **P2**. Powerful but complex. Start with simple auto-enrichment, add full playbooks later.
+
+---
+
+### VMware Wavefront (Aria): High-Cardinality Masters
+
+Wavefront handles 100M+ time series. Here's how:
+
+#### 1. Histograms as First-Class Citizens ⭐ STEAL THIS
+
+**What it is:** Store full distributions, not just percentiles.
+
+```
+Traditional (Prometheus style):
+  http_request_duration_seconds_bucket{le="0.1"} 24054
+  http_request_duration_seconds_bucket{le="0.25"} 33444
+  http_request_duration_seconds_bucket{le="0.5"} 100392
+  http_request_duration_seconds_bucket{le="1"} 129389
+  http_request_duration_seconds_bucket{le="+Inf"} 133988
+
+  Problem: Fixed buckets chosen at instrumentation time
+  Can't compute p99.9 if you didn't create that bucket
+
+Wavefront histograms:
+  http_request_duration stores ACTUAL distribution
+  Query any percentile at query time: p50, p99, p99.9, p99.99
+  Merge histograms across time/dimensions without losing accuracy
+```
+
+**Why it's killer:**
+- No bucket pre-configuration
+- Accurate tail latencies (p99.9+)
+- Aggregate across dimensions without losing precision
+- Storage efficient (t-digest or HDR histogram)
+
+**What we should build:**
+
+```go
+// HDR Histogram storage
+type HistogramPoint struct {
+    Timestamp  time.Time
+    Histogram  *hdrhistogram.Histogram  // Or t-digest
+}
+
+// Store full distribution, query any percentile
+func (h *HistogramStore) RecordValue(metric string, labels Labels, value float64) {
+    key := metricKey(metric, labels)
+    hist := h.getOrCreate(key)
+    hist.RecordValue(int64(value * 1000))  // Store as microseconds
+}
+
+func (h *HistogramStore) Query(metric string, labels Labels, percentile float64) float64 {
+    key := metricKey(metric, labels)
+    hist := h.get(key)
+    return float64(hist.ValueAtPercentile(percentile)) / 1000
+}
+
+// Merge histograms across time windows
+func (h *HistogramStore) Aggregate(metrics []string, window TimeWindow) *hdrhistogram.Histogram {
+    result := hdrhistogram.New(1, 3600000000, 3)  // 1µs to 1hr, 3 sig figs
+    for _, m := range metrics {
+        points := h.getPoints(m, window)
+        for _, p := range points {
+            result.Merge(p.Histogram)
+        }
+    }
+    return result
+}
+```
+
+**Query examples:**
+
+```
+# Get p99.9 (not possible with fixed buckets)
+percentile(99.9, http.duration{service="api"})
+
+# Compare percentiles
+percentile(99, http.duration) vs percentile(50, http.duration)
+
+# Histogram over time
+percentile(99, http.duration{service="api"}) [1h:1m]
+```
+
+Priority: **P1**. Tail latency accuracy is critical for SLOs.
+
+---
+
+#### 2. Delta Counters ⭐ STEAL THIS
+
+**What it is:** Counters that work correctly in distributed/serverless environments.
+
+```
+Problem with regular counters:
+  Lambda invocation 1: counter = 5
+  Lambda invocation 2: counter = 3
+  Lambda invocation 3: counter = 7
+
+  How do you aggregate? They're independent!
+  Regular counter assumes continuous increment.
+
+Delta counters:
+  Lambda 1 sends: Δ+5
+  Lambda 2 sends: Δ+3
+  Lambda 3 sends: Δ+7
+
+  Server aggregates: total = 15
+  Works for ANY ephemeral compute.
+```
+
+**Why it's killer:**
+- Works with serverless (Lambda, Cloud Functions)
+- Works with auto-scaling (pods come and go)
+- Works with distributed systems (no coordination needed)
+- No "counter reset" detection heuristics
+
+**What we should build:**
+
+```go
+// Delta counter aggregation
+type DeltaCounter struct {
+    Name   string
+    Labels Labels
+}
+
+// Ingest handles delta values
+func (s *MetricsStore) IngestDelta(metric string, labels Labels, delta float64) {
+    key := metricKey(metric, labels)
+    bucket := s.getBucket(time.Now().Truncate(time.Minute))
+
+    // Atomic add - no race conditions
+    bucket.AddDelta(key, delta)
+}
+
+// Query returns aggregated value
+func (s *MetricsStore) QueryDeltaCounter(metric string, labels Labels, window TimeWindow) float64 {
+    var total float64
+    for _, bucket := range s.getBuckets(window) {
+        total += bucket.GetDelta(metricKey(metric, labels))
+    }
+    return total
+}
+
+// Rate calculation
+func (s *MetricsStore) DeltaRate(metric string, labels Labels, window TimeWindow) float64 {
+    total := s.QueryDeltaCounter(metric, labels, window)
+    return total / window.Duration().Seconds()
+}
+```
+
+**API:**
+
+```
+# Send delta
+POST /api/v1/metrics/delta
+{
+  "metric": "function.invocations",
+  "labels": {"function": "process-order"},
+  "delta": 1
+}
+
+# Query (works correctly with ephemeral compute)
+GET /api/v1/query?q=rate(function.invocations[5m])
+```
+
+Priority: **P1**. Essential for serverless/K8s environments.
+
+---
+
+#### 3. Derived Metrics ⭐ STEAL THIS
+
+**What it is:** Define new metrics as computations of existing metrics.
+
+```yaml
+# Derived metric definitions
+derived_metrics:
+  # Error rate from raw counters
+  - name: error_rate
+    query: |
+      rate(http_errors) / rate(http_requests) * 100
+    interval: 1m
+
+  # Cost per request
+  - name: cost_per_request
+    query: |
+      sum(infrastructure_cost) / sum(http_requests)
+    interval: 1h
+
+  # Apdex score
+  - name: apdex_score
+    query: |
+      (
+        count(http_duration < 500) +
+        count(http_duration >= 500 AND http_duration < 2000) * 0.5
+      ) / count(http_duration)
+    interval: 1m
+
+  # Business metric: revenue per minute
+  - name: revenue_per_minute
+    query: |
+      sum(order_value{status="completed"})
+    interval: 1m
+```
+
+**Why it's killer:**
+- Complex metrics without client-side computation
+- Consistent definitions (everyone uses same formula)
+- Alertable (alert on derived metrics)
+- Historical (backfill when definition changes)
+
+**What we should build:**
+
+```go
+// Derived metric engine
+type DerivedMetric struct {
+    Name       string
+    Query      string        // DQL expression
+    Interval   time.Duration // Computation frequency
+    Labels     []string      // Preserved labels
+    Enabled    bool
+}
+
+type DerivedMetricEngine struct {
+    definitions []DerivedMetric
+    store       MetricsStore
+    queryEngine QueryEngine
+}
+
+func (e *DerivedMetricEngine) Run(ctx context.Context) {
+    for _, dm := range e.definitions {
+        go e.runDerivation(ctx, dm)
+    }
+}
+
+func (e *DerivedMetricEngine) runDerivation(ctx context.Context, dm DerivedMetric) {
+    ticker := time.NewTicker(dm.Interval)
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case <-ticker.C:
+            // Execute query
+            result, err := e.queryEngine.Execute(dm.Query)
+            if err != nil {
+                log.Error("derived metric failed", "name", dm.Name, "err", err)
+                continue
+            }
+
+            // Store as new metric
+            for _, point := range result.Points {
+                e.store.Record(dm.Name, point.Labels, point.Value)
+            }
+        }
+    }
+}
+```
+
+Priority: **P2**. Power feature for advanced users.
+
+---
+
+### Elastic/ELK: Search & Visualization Kings
+
+#### 1. Full-Text Search with Relevance ⭐ STEAL THIS
+
+**What it is:** Not just "contains" but "most relevant matches."
+
+```
+Query: "payment failed timeout"
+
+Elasticsearch returns (ranked by relevance):
+1. "Payment processing failed due to gateway timeout" (score: 9.2)
+2. "Failed to complete payment: connection timeout" (score: 8.7)
+3. "Payment service timeout, retry failed" (score: 8.1)
+4. "Timeout waiting for payment confirmation" (score: 6.3)
+5. "Failed health check (not payment related)" (score: 2.1)
+
+Not just "contains all words" but "most relevant context"
+```
+
+**Why it's killer:**
+- Natural language queries
+- Finds what you mean, not just what you typed
+- Handles typos, synonyms, word order
+- Ranks results by usefulness
+
+**What we should build:**
+
+```go
+// Full-text search with BM25 ranking
+type LogSearchEngine struct {
+    index *bluge.Index  // Or tantivy-go
+}
+
+func (e *LogSearchEngine) Search(query string, opts SearchOptions) ([]LogResult, error) {
+    // Parse natural language query
+    parsed := parseQuery(query)
+
+    // Build search request
+    req := bluge.NewSearchRequest(
+        bluge.NewBooleanQuery().
+            Should(bluge.NewMatchQuery(parsed.Terms).SetField("message")).
+            Should(bluge.NewMatchPhraseQuery(query).SetField("message").SetBoost(2.0)).
+            Filter(buildFilters(opts)),
+    ).
+        WithStandardAggregations().
+        Size(opts.Limit).
+        SortBy(bluge.SortBy{Field: "_score", Descending: true})
+
+    // Execute and rank
+    results, err := e.index.Search(req)
+    if err != nil {
+        return nil, err
+    }
+
+    return mapToLogResults(results), nil
+}
+
+// Query suggestions
+func (e *LogSearchEngine) Suggest(partial string) []string {
+    // Return common completions
+    // "pay" → ["payment", "payment failed", "payment timeout"]
+}
+```
+
+**UI experience:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 🔍 payment failed timeout                           [Search]│
+├─────────────────────────────────────────────────────────────┤
+│ Did you mean: "payment failure timeout" (23% more results)  │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│ 📄 1. payment-service | 14:32:01                            │
+│    Payment processing failed due to gateway timeout         │
+│    after 30000ms. Transaction ID: txn_abc123                │
+│    [View context] [View trace]                              │
+│                                                              │
+│ 📄 2. checkout-service | 14:32:00                           │
+│    Failed to complete payment: connection timeout to        │
+│    payment gateway. Retrying...                             │
+│    [View context] [View trace]                              │
+│                                                              │
+│ 💡 Related: Show traces with payment errors (47 found)      │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Priority: **P1**. This is how people actually want to search logs.
+
+---
+
+#### 2. Canvas (Presentation Dashboards) ⭐ STEAL THIS
+
+**What it is:** Pixel-perfect dashboards for executives/TV displays.
+
+```
+Regular dashboard: Grids of charts, data-dense, for operators
+
+Canvas dashboard:
+- Custom backgrounds/branding
+- Positioned elements (not grid)
+- Large KPI numbers
+- Status indicators
+- Designed for TV displays / exec presentations
+- Auto-refresh, auto-rotate
+```
+
+**Why it's killer:**
+- NOC/SOC wall displays
+- Executive dashboards (simple, pretty)
+- Customer-facing status pages
+- TV mode for office displays
+
+**What we should build:**
+
+```yaml
+# Canvas dashboard
+canvas:
+  name: "NOC Overview"
+  size: { width: 1920, height: 1080 }
+  background:
+    color: "#1a1a2e"
+    # Or image: "/assets/company-bg.png"
+
+  elements:
+    - type: metric
+      position: { x: 100, y: 100 }
+      size: { width: 300, height: 200 }
+      query: "sum(http_requests)"
+      format: "0.0a"  # 1.2M
+      label: "Requests/min"
+      color:
+        good: "#00ff00"
+        warn: "#ffff00"
+        bad: "#ff0000"
+      thresholds:
+        warn: 10000
+        bad: 50000
+
+    - type: status
+      position: { x: 500, y: 100 }
+      size: { width: 400, height: 50 }
+      query: "min(up{job='api'})"
+      states:
+        1: { label: "API Healthy", color: "green" }
+        0: { label: "API DOWN", color: "red", blink: true }
+
+    - type: chart
+      position: { x: 100, y: 350 }
+      size: { width: 800, height: 300 }
+      query: "rate(http_requests[5m])"
+      style: "area"
+      hideAxis: true
+      hideLabels: true  # Just the shape
+
+    - type: text
+      position: { x: 1600, y: 50 }
+      content: "{{now | format 'HH:mm'}}"
+      size: 48
+      color: "#ffffff"
+
+  rotation:
+    enabled: true
+    interval: 30s
+    dashboards: [canvas-1, canvas-2, canvas-3]
+```
+
+Priority: **P3**. Nice for enterprise sales demos, not core.
+
+---
+
+### New Relic: Entity-Centric Observability
+
+#### 1. Entity Synthesis ⭐ STEAL THIS
+
+**What it is:** Automatic discovery and relationship mapping of ALL entities.
+
+```
+Entity Types:
+├── Services (from APM)
+├── Hosts (from infrastructure)
+├── Containers (from K8s)
+├── Databases (from connections)
+├── Load Balancers (from network)
+├── Queues (from message traces)
+├── External APIs (from outbound calls)
+└── Custom (from your definitions)
+
+Each entity has:
+├── Golden signals (throughput, errors, latency, saturation)
+├── Relationships (calls, runs-on, contains)
+├── Ownership (team, repo, oncall)
+└── Alerts (scoped to this entity)
+```
+
+**Why it's killer:**
+- Everything is an entity with consistent metadata
+- Navigate by relationship, not just by query
+- "Show me everything related to this service"
+- Automatic SLOs per entity
+
+**What we should build:**
+
+```go
+// Entity model
+type Entity struct {
+    Type         EntityType    // SERVICE, HOST, CONTAINER, DATABASE, etc.
+    ID           string        // Unique identifier
+    Name         string        // Human-readable name
+    Domain       string        // Logical grouping
+
+    // Golden signals (auto-calculated)
+    Signals      GoldenSignals
+
+    // Relationships
+    Relationships []Relationship
+
+    // Metadata
+    Tags         map[string]string
+    Team         string
+    Repository   string
+    OnCall       string
+
+    // Current status
+    Health       HealthStatus
+    Alerts       []Alert
+}
+
+type GoldenSignals struct {
+    Throughput   float64  // Requests per second
+    ErrorRate    float64  // Percentage
+    Latency      Percentiles
+    Saturation   float64  // Resource utilization
+}
+
+type Relationship struct {
+    Type         RelationType  // CALLS, RUNS_ON, CONTAINS, DEPENDS_ON
+    Target       string        // Target entity ID
+    Metadata     map[string]interface{}
+}
+
+// Entity synthesizer
+type EntitySynthesizer struct {
+    // Discover entities from various signals
+}
+
+func (s *EntitySynthesizer) Synthesize(ctx context.Context) []Entity {
+    entities := make(map[string]*Entity)
+
+    // From traces: services, databases, external APIs
+    for _, span := range s.traceStore.GetSpans(ctx, last1Hour) {
+        svc := s.getOrCreateService(entities, span.ServiceName)
+        svc.UpdateSignals(span)
+
+        if span.SpanKind == CLIENT {
+            // Creates relationship to target
+            target := s.inferTarget(span)
+            svc.AddRelationship(CALLS, target)
+        }
+    }
+
+    // From metrics: hosts, containers
+    for _, metric := range s.metricStore.GetHostMetrics(ctx) {
+        host := s.getOrCreateHost(entities, metric.Host)
+        host.UpdateSignals(metric)
+    }
+
+    // From K8s: pods, deployments, nodes
+    for _, pod := range s.k8sStore.GetPods(ctx) {
+        container := s.getOrCreateContainer(entities, pod)
+        container.AddRelationship(RUNS_ON, pod.NodeName)
+    }
+
+    return toSlice(entities)
+}
+```
+
+**Entity explorer UI:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Entity: payment-service                                      │
+├─────────────────────────────────────────────────────────────┤
+│ Type: SERVICE     Team: payments     OnCall: @alice         │
+├─────────────────────────────────────────────────────────────┤
+│ Golden Signals (last 5m):                                    │
+│ ├── Throughput: 1,234 req/s                                 │
+│ ├── Error Rate: 0.3%                                        │
+│ ├── Latency: p50=45ms, p99=234ms                            │
+│ └── Saturation: 67% CPU                                     │
+├─────────────────────────────────────────────────────────────┤
+│ Relationships:                                               │
+│                                                              │
+│ ← Called by:           → Calls:              Runs on:       │
+│ ├── checkout-svc       ├── postgres-main     ├── node-1     │
+│ ├── api-gateway        ├── redis-cache       ├── node-2     │
+│ └── order-svc          ├── stripe-api        └── node-3     │
+│                        └── kafka                             │
+├─────────────────────────────────────────────────────────────┤
+│ Active Alerts: 1                                             │
+│ └── ⚠️ High latency (p99 > 200ms for 5m)                     │
+├─────────────────────────────────────────────────────────────┤
+│ [View Traces] [View Logs] [View Metrics] [View Dependencies]│
+└─────────────────────────────────────────────────────────────┘
+```
+
+Priority: **P1**. This is how users want to navigate their systems.
+
+---
+
+#### 2. Lookout (Automatic Anomaly Overview) ⭐ STEAL THIS
+
+**What it is:** At-a-glance view of everything that's abnormal.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Lookout - What's Different Right Now                        │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│ 🔴 Critical Deviations:                                      │
+│ ├── payment-service: Error rate 5.2% (normally 0.1%)        │
+│ ├── checkout-db: Query time 890ms (normally 45ms)           │
+│ └── redis-main: Memory 94% (normally 60%)                   │
+│                                                              │
+│ ⚠️ Warnings:                                                 │
+│ ├── api-gateway: Throughput -34% vs same time yesterday     │
+│ ├── worker-pool: Queue depth 10x normal                     │
+│ └── cdn: Cache hit rate 67% (normally 89%)                  │
+│                                                              │
+│ 📈 Unusual Growth:                                           │
+│ ├── new-feature-service: +450% traffic (expected: launch)   │
+│ └── logging: +230% volume (investigate)                     │
+│                                                              │
+│ Circle size = impact, Color = severity                      │
+│ Click any item to investigate                               │
+│                                                              │
+│ ○ payment  ○ checkout-db  ○ redis                          │
+│    ○ api-gateway  ○ worker  ○ cdn                          │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Why it's killer:**
+- No query required
+- Just open the page and see what's wrong
+- Compares to baseline automatically
+- Prioritized by impact
+
+**What we should build:**
+
+```go
+// Anomaly detection across all entities
+type LookoutEngine struct {
+    entities    EntityStore
+    baselines   BaselineStore
+    anomalies   []Anomaly
+}
+
+type Anomaly struct {
+    Entity      Entity
+    Metric      string
+    Current     float64
+    Baseline    float64
+    Deviation   float64   // How many standard deviations
+    Impact      float64   // Estimated user/business impact
+    Severity    Severity
+    FirstSeen   time.Time
+}
+
+func (l *LookoutEngine) Scan(ctx context.Context) []Anomaly {
+    var anomalies []Anomaly
+
+    for _, entity := range l.entities.All() {
+        for _, metric := range entity.GoldenSignals {
+            baseline := l.baselines.Get(entity.ID, metric.Name)
+            deviation := (metric.Value - baseline.Mean) / baseline.StdDev
+
+            if abs(deviation) > 2 {  // More than 2 standard deviations
+                anomalies = append(anomalies, Anomaly{
+                    Entity:    entity,
+                    Metric:    metric.Name,
+                    Current:   metric.Value,
+                    Baseline:  baseline.Mean,
+                    Deviation: deviation,
+                    Impact:    l.estimateImpact(entity, metric),
+                    Severity:  l.classifySeverity(deviation),
+                })
+            }
+        }
+    }
+
+    // Sort by impact
+    sort.Slice(anomalies, func(i, j int) bool {
+        return anomalies[i].Impact > anomalies[j].Impact
+    })
+
+    return anomalies
+}
+```
+
+Priority: **P1**. This should be the homepage. "What's wrong right now?"
+
+---
+
+### Honeycomb: Query UX Masters
+
+#### 1. BubbleUp (We Already Know This) ✅ HAVE IT
+
+We've already documented this. Just ensure implementation is solid.
+
+---
+
+#### 2. Query Builder UX ⭐ STEAL THIS
+
+**What it is:** Visual query construction for non-experts.
+
+```
+Instead of writing:
+  logs | where service="api" and status>=500 | group by endpoint | count()
+
+Build visually:
+┌─────────────────────────────────────────────────────────────┐
+│ Query Builder                                                │
+├─────────────────────────────────────────────────────────────┤
+│ WHERE:                                                       │
+│ [service    ▼] [=    ▼] [api        ▼] [AND ▼]             │
+│ [status     ▼] [>=   ▼] [500          ] [+Add]              │
+│                                                              │
+│ GROUP BY:                                                    │
+│ [endpoint   ▼] [+Add]                                       │
+│                                                              │
+│ VISUALIZE:                                                   │
+│ [COUNT      ▼] as [Request Count]                           │
+│ [P99        ▼] of [duration] as [Latency]                   │
+│                                                              │
+│ [Run Query]                         Generated: logs | whe... │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Why it's killer:**
+- Discoverability (dropdown shows available fields)
+- No syntax errors
+- Learn the query language by seeing generated output
+- Accessible to non-engineers
+
+**What we should build:**
+
+```typescript
+// React query builder component
+interface QueryBuilder {
+  filters: Filter[];
+  groupBy: string[];
+  aggregations: Aggregation[];
+  visualization: VisualizationType;
+}
+
+interface Filter {
+  field: string;      // Autocomplete from schema
+  operator: Operator; // =, !=, >, <, contains, regex
+  value: string;      // Autocomplete from actual values
+  combinator: 'AND' | 'OR';
+}
+
+// Real-time query generation
+function generateDQL(builder: QueryBuilder): string {
+  let query = builder.source;
+
+  if (builder.filters.length > 0) {
+    query += ' | where ' + builder.filters.map(f =>
+      `${f.field} ${f.operator} "${f.value}"`
+    ).join(` ${f.combinator} `);
+  }
+
+  if (builder.groupBy.length > 0) {
+    query += ' | group by ' + builder.groupBy.join(', ');
+  }
+
+  if (builder.aggregations.length > 0) {
+    query += ' | ' + builder.aggregations.map(a =>
+      `${a.function}(${a.field}) as ${a.alias}`
+    ).join(', ');
+  }
+
+  return query;
+}
+
+// Field value autocomplete
+async function getFieldValues(field: string, prefix: string): Promise<string[]> {
+  // Query for common values of this field matching prefix
+  const values = await api.query(`
+    logs | stats count() by ${field} | sort -count | limit 20
+  `);
+  return values.filter(v => v.startsWith(prefix));
+}
+```
+
+Priority: **P1**. Critical for adoption by non-power-users.
+
+---
+
+### Sumo Logic: Log Intelligence
+
+#### 1. LogCompare ⭐ STEAL THIS
+
+**What it is:** Compare logs between two time periods to find what changed.
+
+```
+Time Period A: Today 14:00-15:00 (when things broke)
+Time Period B: Yesterday 14:00-15:00 (when things worked)
+
+LogCompare Result:
+┌─────────────────────────────────────────────────────────────┐
+│ New in Period A (didn't exist in B):                        │
+├─────────────────────────────────────────────────────────────┤
+│ 🆕 "Connection refused to redis:6379" (12,847 occurrences) │
+│ 🆕 "Timeout waiting for lock" (3,421 occurrences)          │
+│ 🆕 "Circuit breaker OPEN" (891 occurrences)                │
+├─────────────────────────────────────────────────────────────┤
+│ Gone from Period B (existed before, not now):               │
+├─────────────────────────────────────────────────────────────┤
+│ ❌ "Connected to redis:6379" (was 50,000/hr)               │
+├─────────────────────────────────────────────────────────────┤
+│ Changed Frequency:                                          │
+├─────────────────────────────────────────────────────────────┤
+│ ↑ "Request timeout" +2,340% (100 → 2,440)                  │
+│ ↓ "Request completed" -89% (50,000 → 5,500)                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Why it's killer:**
+- Instant root cause identification
+- "What's different?" is the debugging question
+- No hypothesis needed - just show the diff
+
+**What we should build:**
+
+```go
+// Log comparison engine
+type LogCompare struct {
+    store LogStore
+}
+
+type CompareResult struct {
+    NewPatterns      []PatternDiff  // Only in period A
+    GonePatterns     []PatternDiff  // Only in period B
+    IncreasedPatterns []PatternDiff // Higher count in A
+    DecreasedPatterns []PatternDiff // Lower count in A
+}
+
+func (c *LogCompare) Compare(periodA, periodB TimeWindow) *CompareResult {
+    patternsA := c.store.GetPatterns(periodA)
+    patternsB := c.store.GetPatterns(periodB)
+
+    result := &CompareResult{}
+
+    // Find new patterns
+    for sig, pattern := range patternsA {
+        if _, exists := patternsB[sig]; !exists {
+            result.NewPatterns = append(result.NewPatterns, PatternDiff{
+                Pattern: pattern,
+                CountA:  pattern.Count,
+                CountB:  0,
+                Change:  "NEW",
+            })
+        }
+    }
+
+    // Find gone patterns
+    for sig, pattern := range patternsB {
+        if _, exists := patternsA[sig]; !exists {
+            result.GonePatterns = append(result.GonePatterns, PatternDiff{
+                Pattern: pattern,
+                CountA:  0,
+                CountB:  pattern.Count,
+                Change:  "GONE",
+            })
+        }
+    }
+
+    // Find frequency changes
+    for sig, patternA := range patternsA {
+        if patternB, exists := patternsB[sig]; exists {
+            changePercent := (patternA.Count - patternB.Count) / patternB.Count * 100
+            if abs(changePercent) > 50 {  // More than 50% change
+                diff := PatternDiff{
+                    Pattern:       patternA,
+                    CountA:        patternA.Count,
+                    CountB:        patternB.Count,
+                    ChangePercent: changePercent,
+                }
+                if changePercent > 0 {
+                    result.IncreasedPatterns = append(result.IncreasedPatterns, diff)
+                } else {
+                    result.DecreasedPatterns = append(result.DecreasedPatterns, diff)
+                }
+            }
+        }
+    }
+
+    return result
+}
+```
+
+**UI:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ LogCompare                                                   │
+├─────────────────────────────────────────────────────────────┤
+│ Compare: [Today 14:00-15:00 ▼] vs [Yesterday 14:00-15:00 ▼] │
+│                                                              │
+│ Or: [Current hour] vs [Same hour last week]                 │
+│     [After deploy] vs [Before deploy]                       │
+│     [Incident window] vs [Normal baseline]                  │
+│                                                              │
+│ [Compare]                                                    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Priority: **P0**. This is how people actually debug. "What changed?"
+
+---
+
+### Cribl: Data Pipeline Control
+
+#### 1. Data Routing & Transformation ⭐ STEAL THIS
+
+**What it is:** Control where data goes and transform it in transit.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Data Pipeline                             │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Sources          Pipelines           Destinations          │
+│  ────────         ─────────           ────────────          │
+│  ┌────────┐       ┌─────────────┐     ┌─────────┐           │
+│  │ eBPF   │──┬───▶│ Sample 10%  │────▶│ dogwatch│           │
+│  └────────┘  │    │ (traces)    │     │ storage │           │
+│              │    └─────────────┘     └─────────┘           │
+│  ┌────────┐  │    ┌─────────────┐     ┌─────────┐           │
+│  │ OTLP   │──┼───▶│ Redact PII  │────▶│ S3 cold │           │
+│  └────────┘  │    │ (logs)      │     │ storage │           │
+│              │    └─────────────┘     └─────────┘           │
+│  ┌────────┐  │    ┌─────────────┐     ┌─────────┐           │
+│  │ Prom   │──┴───▶│ Drop debug  │────▶│ SIEM    │           │
+│  └────────┘       │ (all)       │     │ forward │           │
+│                   └─────────────┘     └─────────┘           │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Why it's killer:**
+- Route different data to different destinations
+- Transform in transit (redact, enrich, sample)
+- Cost control (drop low-value data)
+- Compliance (route PII differently)
+
+**What we should build:**
+
+```yaml
+# Data pipeline configuration
+pipelines:
+  sources:
+    - name: ebpf-traces
+      type: internal
+
+    - name: otlp-external
+      type: otlp
+      port: 4317
+
+    - name: prometheus-scrape
+      type: prometheus
+      targets:
+        - "app:9090"
+
+  routes:
+    # High-value traces: keep 100%, send to hot storage
+    - name: important-traces
+      source: ebpf-traces
+      filter: |
+        error == true OR
+        duration_ms > 2000 OR
+        service IN ["checkout", "payment"]
+      transforms:
+        - enrich:
+            team: "{{lookup service_team_mapping}}"
+      destination: hot-storage
+
+    # Normal traces: sample to 10%
+    - name: sampled-traces
+      source: ebpf-traces
+      filter: NOT (error == true OR duration_ms > 2000)
+      transforms:
+        - sample:
+            rate: 0.1
+      destination: hot-storage
+
+    # Logs with PII: redact and route to compliance storage
+    - name: pii-logs
+      source: otlp-external
+      filter: |
+        pii_detected == true
+      transforms:
+        - redact:
+            patterns:
+              - '\d{3}-\d{2}-\d{4}'  # SSN
+              - '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'  # Email
+        - add_field:
+            pii_redacted: true
+      destination: [compliance-storage, siem]
+
+    # Debug logs: drop entirely in production
+    - name: drop-debug
+      source: otlp-external
+      filter: level == "debug" AND env == "production"
+      destination: null  # /dev/null
+
+    # All metrics: forward to both dogwatch and external
+    - name: metrics-fanout
+      source: prometheus-scrape
+      transforms:
+        - rename:
+            old: http_requests_total
+            new: http.requests
+      destination: [hot-storage, datadog-exporter]
+
+  destinations:
+    - name: hot-storage
+      type: internal
+
+    - name: compliance-storage
+      type: s3
+      bucket: compliance-logs
+      encryption: AES256
+
+    - name: siem
+      type: webhook
+      url: https://siem.internal/api/events
+
+    - name: datadog-exporter
+      type: datadog
+      api_key: ${DD_API_KEY}
+```
+
+Priority: **P1**. Essential for cost control and compliance.
+
+---
+
+### Summary: Features to Steal
+
+#### P0 - Build These First
+
+| Feature | From | Why Critical |
+|---------|------|--------------|
+| **LogCompare** | Sumo Logic | "What changed?" is THE debugging question |
+| **Pattern Detection** | Splunk | Turns 1M logs into 5 patterns |
+| **Lookout/Anomaly Overview** | New Relic | Homepage should show what's wrong |
+| **Query Builder UX** | Honeycomb | Enables non-experts |
+| **Entity Synthesis** | New Relic | How users navigate systems |
+
+#### P1 - Build These Next
+
+| Feature | From | Why Important |
+|---------|------|---------------|
+| **DQL (Pipeline Query Language)** | Splunk SPL | Power users live here |
+| **Full-Text Search** | Elastic | Natural language log search |
+| **Histograms** | Wavefront | Accurate tail latencies |
+| **Delta Counters** | Wavefront | Serverless/K8s essential |
+| **Data Pipeline Routing** | Cribl | Cost control, compliance |
+
+#### P2 - Build When Ready
+
+| Feature | From | Why |
+|---------|------|-----|
+| **Knowledge Objects** | Splunk | Reusable, composable queries |
+| **Derived Metrics** | Wavefront | Complex metrics without code |
+| **SOAR Playbooks** | Splunk | Automated response |
+| **Canvas Dashboards** | Elastic | NOC/exec displays |
+
+#### P3 / Skip
+
+| Feature | Why Skip |
+|---------|----------|
+| **Full SIEM** | Too broad, integrate instead |
+| **ML Anomaly Models** | Use LLM APIs or simple stats |
+| **600 Integrations** | Focus on auto-discovery |
+
+---
+
+## What Pixie Did (That We're Not Doing)
 
 ### 1. Edge Computing Architecture
 
@@ -6090,3 +10140,640 @@ When switching from Datadog:
 No SDKs. No configuration. No bill shock. No hunting for root cause. No switching cost.
 
 **That's the product.**
+
+---
+
+## Go-to-Market Strategy
+
+### Customer Personas
+
+#### Primary: The Frustrated SRE (Individual Contributor)
+
+```
+Name: Alex, Site Reliability Engineer
+Company: Series A startup, 50-200 employees
+Stack: Kubernetes, PostgreSQL, Redis, 10-50 microservices
+
+Pain points:
+- Paying $15K+/month for Datadog, leadership asking to cut costs
+- Spent 2 weeks integrating APM SDKs, still missing services
+- On-call and can't figure out why things are slow
+- Dashboard sprawl, no one knows what's monitored
+
+Buying behavior:
+- Finds tools on Hacker News, Reddit, Twitter
+- Tries before buying
+- Champions tool internally, needs to convince manager
+- Budget: Can expense $99/mo, needs approval for more
+
+How we win:
+- Zero-config demo in 5 minutes
+- "Look, it found 3 services we forgot to instrument"
+- Cost comparison screenshot to share with manager
+```
+
+#### Secondary: The Platform Team Lead
+
+```
+Name: Jordan, Platform Engineering Manager
+Company: Growth stage, 200-1000 employees
+Stack: Multi-cluster K8s, service mesh, 100+ services
+
+Pain points:
+- Teams shipping without observability
+- Inconsistent instrumentation across teams
+- Can't enforce standards
+- Datadog bill growing 30% month-over-month
+
+Buying behavior:
+- Evaluates tools formally (POC, security review)
+- Needs enterprise features (SSO, RBAC)
+- Budget holder, can approve $5K+/mo
+- Cares about vendor stability
+
+How we win:
+- Control plane shows "Team X costs $Y"
+- Enforce observability without requiring team cooperation
+- Migration path from Datadog with savings report
+```
+
+#### Tertiary: The Cost-Conscious CTO
+
+```
+Name: Sam, CTO/VP Engineering
+Company: Series B+, cost optimization mode
+Stack: Whatever the teams use
+
+Pain points:
+- Board asking about cloud spend
+- Observability is 10%+ of infrastructure cost
+- Can't cut it without losing visibility
+
+Buying behavior:
+- Hears about tools from team or peers
+- Wants ROI calculation
+- Needs to justify to CFO/board
+- Will pay for enterprise if value is clear
+
+How we win:
+- "$564K/year savings" headline
+- Professional services for migration
+- Executive-friendly reports
+```
+
+---
+
+### Finding First 10 Customers
+
+#### Week 1-2: Personal Network
+
+```
+1. Post on personal Twitter/LinkedIn
+   "Built an observability tool that auto-traces everything via eBPF.
+    No SDKs. Shows what you'd pay on Datadog.
+    Looking for 5 beta testers. DM me."
+
+2. Email 50 people you know personally
+   - Former colleagues
+   - Meetup contacts
+   - Conference connections
+   Subject: "Need your help testing my observability tool"
+
+3. Ask for intros
+   "Do you know anyone frustrated with their Datadog bill?"
+```
+
+#### Week 3-4: Community Seeding
+
+```
+1. Hacker News "Show HN"
+   Title: "Show HN: dogwatch – eBPF observability that shows your Datadog bill"
+   - Post at 9am EST Tuesday/Wednesday
+   - Be available to answer every comment
+   - Don't be salesy, be helpful
+
+2. Reddit
+   - r/kubernetes (100K+ members)
+   - r/devops (300K+ members)
+   - r/sre (50K+ members)
+   Post: "I built X, here's what I learned about eBPF"
+   Not: "Check out my product"
+
+3. Dev.to / Hashnode
+   "How we replaced Datadog with eBPF and saved $40K/month"
+   (Write about the technical journey, link to dogwatch at end)
+```
+
+#### Week 5-8: Targeted Outreach
+
+```
+1. Find Datadog complainers
+   - Twitter search: "datadog expensive" OR "datadog bill"
+   - Reply helpfully, don't pitch immediately
+   - DM after building rapport
+
+2. GitHub stars of similar projects
+   - People who starred Pixie, Grafana, Prometheus
+   - They're interested in observability
+   - Cold DM: "Saw you starred X, working on Y, would love feedback"
+
+3. Kubernetes Slack communities
+   - #observability channels
+   - Answer questions, become known
+   - Mention dogwatch when relevant
+```
+
+---
+
+### Content Strategy
+
+#### SEO Target Keywords
+
+| Keyword | Volume | Difficulty | Intent |
+|---------|--------|------------|--------|
+| "datadog alternative" | 1.2K/mo | Medium | High |
+| "datadog pricing" | 2.4K/mo | Medium | Research |
+| "open source apm" | 800/mo | Low | High |
+| "ebpf observability" | 400/mo | Low | High |
+| "kubernetes monitoring" | 3.2K/mo | High | Medium |
+| "distributed tracing" | 1.8K/mo | High | Research |
+| "grafana vs datadog" | 600/mo | Medium | Comparison |
+
+#### Content Calendar (First 3 Months)
+
+**Month 1: Foundation**
+- Landing page with clear value prop
+- "How dogwatch works" technical deep-dive
+- "Datadog vs dogwatch" comparison page
+- Install docs with video walkthrough
+
+**Month 2: SEO Play**
+- "Complete guide to eBPF observability"
+- "How to reduce observability costs by 70%"
+- "Distributed tracing without code changes"
+- "Kubernetes monitoring in 2024: Options compared"
+
+**Month 3: Social Proof**
+- Case study: "How [Company] saved $X with dogwatch"
+- "Why we switched from Datadog"
+- Technical blog: "Building protocol parsers in eBPF"
+- Comparison: "dogwatch vs Pixie vs Grafana"
+
+---
+
+### Competitive Battlecards
+
+#### vs Datadog
+
+```
+When they say: "Datadog has 600+ integrations"
+You say: "You don't need integrations when eBPF sees everything automatically.
+          How many weeks did it take to integrate your last 10 services?"
+
+When they say: "Datadog is the industry standard"
+You say: "The industry standard for bill shock. Show me a company happy with
+          their Datadog bill. We show you exactly what you'd pay them."
+
+When they say: "We need enterprise support"
+You say: "We offer enterprise support at $299/mo. Datadog enterprise is
+          $50K+/year minimum. What level of support do you actually need?"
+
+When they say: "Datadog has more features"
+You say: "Which features do you actually use? Our control plane shows
+          80% of metrics are never queried. More features = more cost."
+
+Killer demo moment:
+→ Install dogwatch (60 seconds)
+→ Show service map auto-discovered
+→ Show database queries auto-captured
+→ Show "This would cost $X on Datadog"
+→ Ask: "How long did Datadog take to set up?"
+```
+
+#### vs Grafana Stack
+
+```
+When they say: "Grafana is open source and free"
+You say: "Free if you don't count the 3 engineers spending 20% of their time
+          managing Prometheus + Loki + Tempo + Grafana + alertmanager.
+          How's that going?"
+
+When they say: "We already have Grafana dashboards"
+You say: "Keep them. dogwatch imports Grafana dashboards. Add zero-config
+          tracing and cost intelligence on top of what you have."
+
+When they say: "We know Grafana, don't want to learn new tool"
+You say: "Fair. But your team also knows 'why is this slow?' takes hours.
+          dogwatch answers that in seconds. Worth learning for that?"
+
+Killer demo moment:
+→ Show BubbleUp: "98% of slow requests hit shard 7"
+→ Ask: "How long would that take in Grafana?"
+```
+
+#### vs New Relic / Pixie
+
+```
+When they say: "Pixie does eBPF too"
+You say: "Pixie is New Relic now. Same vendor lock-in, same pricing games.
+          dogwatch is independent and self-hosted if you want."
+
+When they say: "New Relic has better AI features"
+You say: "AI that costs $0.30/GB. Our BubbleUp does automatic root cause
+          analysis without the per-GB pricing."
+
+Killer demo moment:
+→ Show cost intelligence
+→ "New Relic would charge $X for this data volume"
+```
+
+---
+
+## First-Time User Experience
+
+### The Golden Path (5 Minutes to Wow)
+
+```
+Minute 0:00 - Install
+$ curl -sSL https://get.dogwatch.dev | sh
+# or
+$ kubectl apply -f https://dogwatch.dev/install.yaml
+
+Minute 0:30 - First Data
+Browser opens automatically to localhost:9999
+"Discovering services... Found 7 services"
+[Service map appears with live traffic]
+
+Minute 1:00 - Wow Moment #1
+"Click on 'api-service' to see all requests"
+[Shows HTTP requests with latency, status codes]
+[Shows database queries this service makes]
+"We found this without any code changes."
+
+Minute 2:00 - Wow Moment #2
+"See this slow request? Click to trace it."
+[Shows distributed trace across 3 services]
+[Shows exact database query that was slow]
+"Traditional APM needs SDK integration for this."
+
+Minute 3:00 - Wow Moment #3
+"Now let's see what this would cost elsewhere."
+[Shows Cost Intelligence dashboard]
+"Based on your usage: Datadog estimate $12,400/month"
+"You're getting this for free with dogwatch."
+
+Minute 4:00 - Hook
+"Want to keep this data? Create an account."
+[Simple signup - email only, no credit card]
+"Your data persists. We'll email you weekly insights."
+
+Minute 5:00 - Expansion
+"Invite your team to see this too."
+[Share link with read-only access]
+```
+
+### Onboarding Checklist UI
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  🚀 Get the most out of dogwatch                            │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ✅ Install dogwatch agent                                  │
+│  ✅ Discover services (found 7)                             │
+│  ✅ View your first trace                                   │
+│                                                              │
+│  ◯ Set up your first alert                                  │
+│     → Alert when API latency > 500ms                        │
+│                                                              │
+│  ◯ Connect Slack/PagerDuty                                  │
+│     → Get notified when things break                        │
+│                                                              │
+│  ◯ Import Datadog dashboards                                │
+│     → Bring your existing dashboards                        │
+│                                                              │
+│  ◯ Invite a teammate                                        │
+│     → Share the visibility                                  │
+│                                                              │
+│  Progress: 3/7 complete                                     │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Open Source Strategy
+
+### License
+
+**Recommendation: Apache 2.0 for core, proprietary for enterprise features**
+
+```
+Open Source (Apache 2.0):
+├── eBPF probes and protocol parsing
+├── Core tracing, metrics, logs
+├── Basic dashboards and alerting
+├── Single-node deployment
+├── Community scripts
+└── Basic RBAC
+
+Proprietary (Source Available):
+├── SSO/SAML integration
+├── Advanced RBAC
+├── Multi-tenancy
+├── Control plane with shaping
+├── Migration assistant (full)
+├── Enterprise support
+└── Clustering/HA
+```
+
+**Why this split:**
+- Open core gets adoption and contributions
+- Enterprise features fund development
+- No one can fork and compete on enterprise
+- Contributors get value, company makes money
+
+### Community Building
+
+**GitHub Strategy:**
+- Respond to every issue within 24 hours
+- Label issues clearly (good-first-issue, help-wanted)
+- Public roadmap in GitHub Projects
+- Monthly "office hours" for contributors
+
+**Discord/Slack:**
+- #general - community chat
+- #help - support questions
+- #contributing - for contributors
+- #showcase - users sharing their setups
+
+**Recognition:**
+- Contributors in release notes
+- "Community spotlight" blog posts
+- Swag for significant contributors
+- Invite top contributors to advisory role
+
+---
+
+## Team & Hiring Plan
+
+### Solo → $20K MRR
+
+**Just you:**
+- Build core product
+- Handle support (< 10 customers)
+- Do your own marketing
+- Wear all hats
+
+### $20K → $50K MRR
+
+**Hire #1: Developer Advocate / Growth**
+```
+Why: You're bottlenecked on awareness, not product
+Role:
+- Content creation (blog, videos, talks)
+- Community management
+- User onboarding calls
+- Competitive research
+
+Cost: $80-120K/year
+```
+
+### $50K → $100K MRR
+
+**Hire #2: Senior Backend Engineer**
+```
+Why: You're bottlenecked on shipping features
+Role:
+- Core product development
+- eBPF/systems work
+- Performance optimization
+
+Cost: $150-200K/year
+```
+
+**Hire #3: Customer Success / Support**
+```
+Why: Support is taking too much of your time
+Role:
+- Handle support tickets
+- Onboarding calls
+- Documentation
+- Renewal conversations
+
+Cost: $70-100K/year
+```
+
+### $100K MRR+ (Series A territory)
+
+- VP Engineering (if you want to stay technical)
+- VP Sales (if going enterprise)
+- More engineers based on roadmap
+- Consider outside CEO if you want to stay technical
+
+---
+
+## Exit Strategy
+
+### What Makes Us Acquirable
+
+| Asset | Value | Likely Acquirer |
+|-------|-------|-----------------|
+| **eBPF tech** | Unique expertise, hard to build | Datadog, Splunk, Cisco |
+| **Customer base** | Warm leads for their sales team | Any observability vendor |
+| **Team** | Systems engineers are expensive | Everyone |
+| **Open source community** | Built-in distribution | Cloud providers |
+| **Product** | Fill gap in their portfolio | Grafana Labs, Elastic |
+
+### Potential Acquirers
+
+**Tier 1 (Most Likely):**
+- **Datadog** - Kill a competitor, acquire eBPF tech
+- **Grafana Labs** - Add zero-config tracing to their stack
+- **Elastic** - Observability is strategic for them
+
+**Tier 2 (Strategic):**
+- **Cisco/Splunk** - They're consolidating observability
+- **VMware/Broadcom** - Tanzu observability play
+- **ServiceNow** - They bought Lightstep, want more
+
+**Tier 3 (Cloud):**
+- **AWS** - Could be CloudWatch addition
+- **Google** - Could be Cloud Monitoring addition
+- **Microsoft** - Could be Azure Monitor addition
+
+### Acquisition Math
+
+| ARR | Typical Multiple | Valuation |
+|-----|-----------------|-----------|
+| $500K | 8-15x | $4-7.5M |
+| $1M | 10-15x | $10-15M |
+| $3M | 10-20x | $30-60M |
+| $10M | 15-25x | $150-250M |
+
+**Comparable exits:**
+- Pixie → New Relic: ~$200M (2 months post-launch!)
+- Lightstep → ServiceNow: ~$500M
+- SignalFx → Splunk: $1.05B
+- Chronosphere → acquired at $3.35B valuation
+
+**What increases multiple:**
+- Growth rate (> 100% YoY)
+- Gross margin (> 80%)
+- Net retention (> 120%)
+- Unique tech (eBPF)
+- Strategic fit
+
+### Timeline
+
+```
+Year 1: Build product, find PMF, get to $100K ARR
+Year 2: Scale to $500K-1M ARR, build team
+Year 3: Either:
+        a) Raise Series A, go for $10M+ ARR
+        b) Accept acquisition offer ($10-30M)
+        c) Stay bootstrapped, lifestyle business ($1-3M ARR)
+```
+
+---
+
+## Legal Considerations
+
+### Open Source License Compliance
+
+```
+Using Apache 2.0 licensed code:
+- ✅ Can use commercially
+- ✅ Can modify
+- ✅ Can distribute
+- ⚠️ Must include license
+- ⚠️ Must state changes
+- ❌ Cannot use contributor trademarks
+
+Key dependencies to audit:
+- eBPF libraries (check licenses)
+- Prometheus client (Apache 2.0 ✅)
+- SQLite (public domain ✅)
+- UI frameworks (check each)
+```
+
+### Terms of Service (Key Points)
+
+```
+1. Service provided "as is" for self-hosted
+2. Paid tiers include SLA
+3. User responsible for their data
+4. We can terminate for abuse
+5. Limitation of liability
+6. Governing law (Delaware)
+```
+
+### Privacy Policy (Key Points)
+
+```
+For self-hosted:
+- We don't see your data
+- Telemetry is opt-in
+- No PII collected by default
+
+For cloud features:
+- What data we collect
+- How we use it
+- How to delete it
+- GDPR compliance
+```
+
+### Trademark
+
+```
+Register:
+- "dogwatch" wordmark
+- Logo
+- Domain (dogwatch.dev, dogwatch.io)
+
+Protect against:
+- Similar names in observability space
+- Confusing forks
+```
+
+---
+
+## Demo Environment
+
+### Public Sandbox
+
+```
+https://demo.dogwatch.dev
+
+Pre-populated with:
+- 10 microservices (simulated e-commerce)
+- 24 hours of realistic data
+- Pre-built dashboards
+- Sample alerts (some firing)
+- Example traces with issues
+
+Login:
+- Email: demo@dogwatch.dev
+- Password: trydogwatch
+
+Restrictions:
+- Read-only (can't create/modify)
+- Resets every hour
+- Rate limited
+```
+
+### "Try on Your Infra" Flow
+
+```
+1. One-line install (curl | sh)
+2. Runs for 15 minutes
+3. Data persists to /tmp (not permanent)
+4. Shows "Create account to keep this data"
+5. No credit card required
+
+This is the conversion funnel:
+Try (free) → Use (free tier) → Pay (team/business)
+```
+
+---
+
+## Support Strategy
+
+### Tiered Support Model
+
+| Tier | Response Time | Channels | Who |
+|------|--------------|----------|-----|
+| **Community** | Best effort | GitHub, Discord | You + community |
+| **Team $99** | 24 hours | Email, Discord | You |
+| **Business $299** | 4 hours | Email, Slack | You (then hire) |
+| **Enterprise** | 1 hour, 24/7 | Dedicated Slack | Hire for this |
+
+### Scaling Support
+
+**0-50 customers:**
+- You answer everything
+- Build FAQ from common questions
+- Create video tutorials
+
+**50-200 customers:**
+- Hire part-time support person
+- Implement help desk (Intercom, Zendesk)
+- Create knowledge base
+
+**200+ customers:**
+- Full-time support hire
+- On-call rotation for enterprise
+- Support metrics (response time, satisfaction)
+
+### Self-Service Priority
+
+```
+Best support is no support needed.
+
+Invest in:
+1. Comprehensive docs
+2. In-app guidance
+3. Error messages with solutions
+4. Status page
+5. Community forums where users help each other
+```
