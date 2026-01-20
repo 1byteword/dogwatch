@@ -49,6 +49,10 @@ func InitSSO(store *sso.Store, baseURL string) {
 	config := sso.DefaultJWTConfig()
 	if secret != "" {
 		config.SecretKey = []byte(secret)
+	} else {
+		log.Println("WARNING: DOGWATCH_JWT_SECRET not set - using random secret")
+		log.Println("         Sessions will not persist across restarts")
+		log.Println("         Set DOGWATCH_JWT_SECRET for production use")
 	}
 	jwtManager = sso.NewJWTManager(config)
 

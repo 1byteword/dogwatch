@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"flag"
 	"fmt"
 	"log"
@@ -259,20 +260,49 @@ func main() {
 		rbacAuth := rbac.NewAuth(rbacStore)
 		rbacMiddleware := rbac.NewMiddleware(rbacAuth)
 
-		// Ensure default admin user exists (in production, use env vars)
-		adminEmail := os.Getenv("DOGWATCH_ADMIN_EMAIL")
-		adminPassword := os.Getenv("DOGWATCH_ADMIN_PASSWORD")
-		if adminEmail == "" {
-			adminEmail = "admin@localhost"
-		}
-		if adminPassword == "" {
-			adminPassword = "changeme123"
-		}
-
+		// Ensure default admin user exists
 		if defaultOrg != nil {
-			admin, _ := rbacAuth.EnsureDefaultAdmin(defaultOrg.ID, adminEmail, adminPassword)
-			if admin != nil {
-				fmt.Printf("Admin user: %s (role: %s)\n", admin.Email, admin.Role)
+			adminEmail := os.Getenv("DOGWATCH_ADMIN_EMAIL")
+			adminPassword := os.Getenv("DOGWATCH_ADMIN_PASSWORD")
+
+			// Check if any users exist
+			users, _ := rbacStore.ListUsers(defaultOrg.ID)
+			if len(users) == 0 {
+				// First boot - need to create admin
+				if adminEmail == "" {
+					adminEmail = "admin@localhost"
+				}
+
+				if adminPassword == "" {
+					// Generate a secure random password
+					adminPassword = generateSecurePassword()
+					fmt.Println()
+					fmt.Println("╔════════════════════════════════════════════════════════════╗")
+					fmt.Println("║  FIRST-TIME SETUP - Admin credentials generated            ║")
+					fmt.Println("╠════════════════════════════════════════════════════════════╣")
+					fmt.Printf("║  Email:    %-48s║\n", adminEmail)
+					fmt.Printf("║  Password: %-48s║\n", adminPassword)
+					fmt.Println("╠════════════════════════════════════════════════════════════╣")
+					fmt.Println("║  ⚠️  SAVE THIS PASSWORD - it will not be shown again!      ║")
+					fmt.Println("║  Set DOGWATCH_ADMIN_EMAIL and DOGWATCH_ADMIN_PASSWORD      ║")
+					fmt.Println("║  environment variables to use your own credentials.        ║")
+					fmt.Println("╚════════════════════════════════════════════════════════════╝")
+					fmt.Println()
+				}
+
+				admin, err := rbacAuth.CreateUser(defaultOrg.ID, &rbac.UserCreate{
+					Email:    adminEmail,
+					Password: adminPassword,
+					Name:     "Admin",
+					Role:     rbac.RoleOwner,
+				})
+				if err != nil {
+					log.Printf("Warning: Could not create admin user: %v", err)
+				} else {
+					fmt.Printf("Admin user: %s (role: %s)\n", admin.Email, admin.Role)
+				}
+			} else {
+				fmt.Printf("Admin user: %s (role: %s)\n", users[0].Email, users[0].Role)
 			}
 		}
 
@@ -744,4 +774,25 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max-1] + "…"
+}
+
+// generateSecurePassword generates a cryptographically secure random password
+func generateSecurePassword() string {
+	const (
+		length  = 24
+		charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
+	)
+
+	b := make([]byte, length)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to less secure but still random
+		for i := range b {
+			b[i] = charset[time.Now().UnixNano()%int64(len(charset))]
+		}
+	} else {
+		for i := range b {
+			b[i] = charset[int(b[i])%len(charset)]
+		}
+	}
+	return string(b)
 }

@@ -364,13 +364,13 @@ func (s *Server) initStatusPages() {
 	}
 
 	s.statusPageStore = store
-	s.statusPageHandlers = NewStatusPageHandlers(store)
+	s.statusPageHandlers = NewStatusPageHandlers(store, staticFiles)
 }
 
 // SetStatusPageStore sets the status page store
 func (s *Server) SetStatusPageStore(store *statuspage.Store) {
 	s.statusPageStore = store
-	s.statusPageHandlers = NewStatusPageHandlers(store)
+	s.statusPageHandlers = NewStatusPageHandlers(store, staticFiles)
 }
 
 // initCatalog initializes the service catalog store and handlers

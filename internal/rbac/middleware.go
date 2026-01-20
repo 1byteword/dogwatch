@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -249,13 +250,14 @@ func GetOrgIDFromContext(ctx context.Context) string {
 	return orgID
 }
 
-// MustGetUser returns the user or panics - use only when auth is guaranteed
-func MustGetUser(ctx context.Context) *User {
+// MustGetUser returns the user or an error if not authenticated
+// Prefer this over GetUserFromContext when authentication is required
+func MustGetUser(ctx context.Context) (*User, error) {
 	user := GetUserFromContext(ctx)
 	if user == nil {
-		panic("no user in context - middleware not applied")
+		return nil, ErrInvalidToken
 	}
-	return user
+	return user, nil
 }
 
 // CORS adds CORS headers for API requests
@@ -294,17 +296,58 @@ func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
 
 // RateLimit provides basic rate limiting (should use redis in production)
 type RateLimiter struct {
-	requests map[string][]int64
-	limit    int
-	window   int64 // seconds
+	mu         sync.RWMutex
+	requests   map[string][]int64
+	limit      int
+	window     int64 // seconds
+	maxEntries int   // max unique keys to track (memory bound)
 }
 
 // NewRateLimiter creates a rate limiter
 func NewRateLimiter(limit int, windowSeconds int64) *RateLimiter {
-	return &RateLimiter{
-		requests: make(map[string][]int64),
-		limit:    limit,
-		window:   windowSeconds,
+	rl := &RateLimiter{
+		requests:   make(map[string][]int64),
+		limit:      limit,
+		window:     windowSeconds,
+		maxEntries: 10000, // prevent memory exhaustion
+	}
+
+	// Start background cleanup goroutine
+	go rl.cleanupLoop()
+
+	return rl
+}
+
+// cleanupLoop periodically removes stale entries
+func (rl *RateLimiter) cleanupLoop() {
+	ticker := time.NewTicker(time.Duration(rl.window) * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		rl.cleanup()
+	}
+}
+
+// cleanup removes entries with no recent requests
+func (rl *RateLimiter) cleanup() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now().Unix()
+	cutoff := now - rl.window
+
+	for key, timestamps := range rl.requests {
+		var recent []int64
+		for _, ts := range timestamps {
+			if ts > cutoff {
+				recent = append(recent, ts)
+			}
+		}
+		if len(recent) == 0 {
+			delete(rl.requests, key)
+		} else {
+			rl.requests[key] = recent
+		}
 	}
 }
 
@@ -320,6 +363,17 @@ func (rl *RateLimiter) Limit(next http.Handler) http.Handler {
 		now := time.Now().Unix()
 		cutoff := now - rl.window
 
+		rl.mu.Lock()
+
+		// Check if we're at max entries and this is a new key
+		if _, exists := rl.requests[key]; !exists && len(rl.requests) >= rl.maxEntries {
+			rl.mu.Unlock()
+			// At capacity - reject new clients to prevent memory exhaustion
+			w.Header().Set("Retry-After", "60")
+			http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)
+			return
+		}
+
 		// Clean old entries and count recent
 		var recent []int64
 		for _, ts := range rl.requests[key] {
@@ -329,6 +383,7 @@ func (rl *RateLimiter) Limit(next http.Handler) http.Handler {
 		}
 
 		if len(recent) >= rl.limit {
+			rl.mu.Unlock()
 			w.Header().Set("Retry-After", "60")
 			http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)
 			return
@@ -336,6 +391,7 @@ func (rl *RateLimiter) Limit(next http.Handler) http.Handler {
 
 		recent = append(recent, now)
 		rl.requests[key] = recent
+		rl.mu.Unlock()
 
 		next.ServeHTTP(w, r)
 	})

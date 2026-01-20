@@ -1,8 +1,10 @@
 package web
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"strings"
 	"time"
@@ -12,12 +14,14 @@ import (
 
 // StatusPageHandlers provides HTTP handlers for status pages
 type StatusPageHandlers struct {
-	store *statuspage.Store
+	store    *statuspage.Store
+	staticFS fs.FS
 }
 
 // NewStatusPageHandlers creates status page handlers
-func NewStatusPageHandlers(store *statuspage.Store) *StatusPageHandlers {
-	return &StatusPageHandlers{store: store}
+func NewStatusPageHandlers(store *statuspage.Store, staticFiles embed.FS) *StatusPageHandlers {
+	staticFS, _ := fs.Sub(staticFiles, "static")
+	return &StatusPageHandlers{store: store, staticFS: staticFS}
 }
 
 // RegisterRoutes registers status page routes
@@ -406,7 +410,7 @@ func (h *StatusPageHandlers) handlePublicStatusPage(w http.ResponseWriter, r *ht
 		return
 	}
 
-	// Serve the status page HTML
+	// Verify the status page exists and is public
 	page, err := h.store.GetStatusPageBySlug(slug)
 	if err != nil {
 		http.Error(w, "Status page not found", http.StatusNotFound)
@@ -418,8 +422,14 @@ func (h *StatusPageHandlers) handlePublicStatusPage(w http.ResponseWriter, r *ht
 		return
 	}
 
-	// Return status page data as JSON for SPA rendering
-	h.handlePublicStatusPageAPI(w, r, slug)
+	// Serve the static HTML page from embedded FS
+	content, err := fs.ReadFile(h.staticFS, "statuspage.html")
+	if err != nil {
+		http.Error(w, "Status page template not found", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(content)
 }
 
 // handlePublicStatusPageAPI returns status page data as JSON
