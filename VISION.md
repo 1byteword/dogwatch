@@ -14545,6 +14545,345 @@ RESULT:         "We see everything (CPU, GPU, encrypted)
 
 ---
 
+### Additional Research Areas (Deep Dive)
+
+The following sections cover additional cutting-edge research discovered through comprehensive arxiv analysis.
+
+#### Smart Trace Sampling
+
+The volume problem is real - Alibaba generates **18-20 PB of traces per day**. Traditional sampling loses critical context.
+
+| Paper | Venue | Innovation | Key Result |
+|-------|-------|------------|------------|
+| [Trace Sampling 2.0](https://arxiv.org/abs/2509.13852) | arXiv Sep 2025 | Span-level sampling (not trace-level) | Keeps ALL traces, reduces storage via smart span selection |
+| [Tracezip](https://arxiv.org/abs/2502.06318) | arXiv Feb 2025 | Trace compression at source | Compress spans on generation, decompress at backend |
+| [TraceMesh](https://arxiv.org/abs/2406.06975) | arXiv Jun 2024 | Streaming + scalable sampling | Handles scale without buffering |
+| [Astraea](https://arxiv.org/abs/2405.15645) | arXiv May 2024 | Bayesian + multi-armed bandit | Uses only 10-28% of instrumentation for same accuracy |
+
+**Key insight:** Tail-based sampling catches anomalies but loses 99%+ of normal traces needed for comparison. Span-level and compression approaches preserve structure while reducing volume.
+
+**dogwatch opportunity:** Implement span-level sampling that keeps trace structure while dramatically reducing storage. Enable "keep everything, store smartly" approach.
+
+---
+
+#### LLM-Powered Log Parsing
+
+Eliminate regex maintenance hell.
+
+| Paper | Venue | Innovation | Improvement |
+|-------|-------|------------|-------------|
+| [LogLLM](https://arxiv.org/html/2411.08561v5) | arXiv Apr 2025 | BERT + Llama for log anomaly | 6.6% better F1 than NeuralLog |
+| [Log Parsing Survey](https://arxiv.org/html/2504.04877v2) | arXiv May 2025 | Comprehensive LLM parsing review | Covers Lemur, LogParser-LLM, LogBabylon |
+| Lemur | Referenced in survey | Chain-of-Thought template merging | 3-round dialogue for semantic parsing |
+
+**The shift:**
+```
+Traditional:     Log → Regex rules → Template → Analysis
+                 (brittle, requires maintenance per format)
+
+LLM-based:       Log → LLM semantic understanding → Analysis
+                 (adapts to any format, no regex needed)
+```
+
+**dogwatch opportunity:** Parse any log format without predefined templates. Zero-config log analysis.
+
+---
+
+#### Automatic Service Dependency Discovery
+
+Don't require manual service registration or topology maintenance.
+
+| Paper | Venue | Innovation | Accuracy |
+|-------|-------|------------|----------|
+| [Retrofitting Dependency Discovery](https://arxiv.org/abs/2510.15490) | arXiv Oct 2025 | No instrumentation, NAT-resilient | Correct graph across all benchmarks |
+| [Model Discovery for Chaos](https://arxiv.org/abs/2506.11176) | arXiv Jun 2025 | Mine traces → dependency graph in CI/CD | Enables chaos simulation |
+
+**Key insight:** Extract live dependency graphs automatically from existing telemetry (traces, service mesh data, configs). No manual topology maintenance needed.
+
+**dogwatch opportunity:** eBPF sees all connections. Automatically build and maintain service dependency graph without any configuration.
+
+---
+
+#### Performance Regression Detection
+
+Catch degradation before users do.
+
+| Paper | Venue | Innovation | Result |
+|-------|-------|------------|--------|
+| [Early Detection via Arch Models](https://arxiv.org/html/2408.08148v1) | arXiv Aug 2024 | Component → architectural propagation | Detect in dev phase, not production |
+| [Tracing Optimization](https://arxiv.org/abs/2411.17548) | arXiv Nov 2024 | Smart function selection | 80% less tracing overhead, R² of 99% |
+| [ConfFLARE](https://arxiv.org/abs/2511.17271) | arXiv Nov 2025 | Configurable system regression | 70-79% fewer configs to test |
+| [Nyrkiö Change Detection](https://arxiv.org/html/2510.11310) | arXiv Oct 2025 | GitHub Actions integration | Automated regression alerts in CI |
+
+**Key insight:** Predict performance regression from component-level tests before full deployment. Shift left on performance.
+
+**dogwatch opportunity:** Integrate with CI/CD to detect performance regressions before they reach production.
+
+---
+
+#### Contrastive Learning for Anomaly Detection
+
+Learn what's normal, detect what's not - without explicit rules.
+
+| Paper | Venue | Innovation | Key Feature |
+|-------|-------|------------|-------------|
+| [CARLA](https://arxiv.org/abs/2308.09296) | arXiv Aug 2024 | Self-supervised contrastive | Learns both normal AND deviation patterns |
+| [CNT](https://arxiv.org/abs/2304.07898) | arXiv Jan 2025 | Window-based + learnable transforms | Prevents representation collapse |
+| [DACAD](https://arxiv.org/abs/2404.11269) | arXiv Apr 2024 | Domain adaptation + contrastive | Works across domains with scarce labels |
+| [Causality-Aware Contrastive](https://arxiv.org/html/2506.03964v1) | arXiv Jun 2025 | Causal augmentations | Exploits causal relationships |
+| [TFCL](https://link.springer.com/article/10.1007/s40747-025-02119-w) | Complex & Intelligent Systems 2025 | Time-frequency contrastive | Both time and frequency features |
+
+**The technique:**
+```python
+# Contrastive learning creates embeddings where:
+# - Similar patterns (normal) cluster together
+# - Anomalies are naturally distant
+
+def contrastive_anomaly_detection(time_series):
+    # 1. Create augmented views of windows
+    # 2. Train encoder to maximize similarity of same-window views
+    # 3. Minimize similarity of different-window views
+    # 4. Anomalies = windows far from normal clusters
+
+    embedding = encoder(time_series)
+    distance_to_normal = compute_distance(embedding, normal_cluster)
+    return distance_to_normal > threshold
+```
+
+**dogwatch opportunity:** Replace rule-based anomaly detection with learned representations. No threshold tuning needed.
+
+---
+
+#### Diffusion Models for Time Series
+
+The new frontier beyond transformers for forecasting and anomaly detection.
+
+| Paper | Venue | Application | Innovation |
+|-------|-------|-------------|------------|
+| [Diffusion Models for TSF Survey](https://arxiv.org/abs/2507.14507) | arXiv Aug 2025 | Comprehensive survey | Taxonomy of diffusion for time series |
+| [Survey on Diffusion for TS](https://arxiv.org/html/2404.18886v1) | arXiv Apr 2024 | Forecasting, generation, anomaly, imputation | All four tasks covered |
+| MAFCD | Information Fusion 2025 | Multi-level adaptive conditional | State-of-art anomaly detection |
+| DiffGSL | IEEE Big Data 2025 | Graph structure learning | Spatio-temporal forecasting |
+| DiffusionAD | IEEE TPAMI 2025 | One-step denoising | Faster anomaly detection |
+
+**Why diffusion models:**
+- Handle multimodal distributions (metrics can have multiple "normal" states)
+- Naturally model uncertainty
+- Generate plausible counterfactuals ("what should this metric look like?")
+
+**dogwatch opportunity:** Use diffusion models for anomaly detection that understands "this metric has multiple valid patterns."
+
+---
+
+#### Reinforcement Learning for Kubernetes Autoscaling
+
+Learn optimal scaling policies that beat threshold-based HPAs.
+
+| Paper | Venue | Innovation | Improvement |
+|-------|-------|------------|-------------|
+| [KARMA](https://arxiv.org/abs/2505.21559) | arXiv May 2025 | Multi-agent RL for resilience | Handles DDoS, cascading failures |
+| [DRPC](https://arxiv.org/html/2407.10169v1) | arXiv Jul 2024 | Distributed RL (TD3) | 15% lower latency, 24% fewer failures |
+| [KIS-S](https://arxiv.org/html/2507.07932) | arXiv Jul 2025 | GPU-aware RL autoscaler | Handles inference workloads |
+| [Gwydion](https://www.sciencedirect.com/science/article/pii/S1084804524002443) | J. Network & Computer Apps Feb 2025 | RL for microservice graphs | Handles inter-dependencies |
+| [SDQN](https://arxiv.org/html/2601.13579) | arXiv Jan 2025 | DQN-based scheduling | 20% lower CPU utilization |
+
+**Key insight:** RL learns scaling policies from experience. Handles complex scenarios (DDoS, cascading failures) that threshold-based systems can't.
+
+**dogwatch opportunity:** Offer intelligent autoscaling recommendations or direct integration based on learned policies.
+
+---
+
+#### Mamba/State Space Models for Time Series
+
+Linear complexity alternative to Transformers for long sequences.
+
+| Paper | Venue | Innovation | Result |
+|-------|-------|------------|--------|
+| [Mamba](https://arxiv.org/abs/2312.00752) | arXiv (Updated May 2024) | Selective state spaces | 5× throughput, linear scaling |
+| [MambaTS](https://arxiv.org/abs/2405.16440) | arXiv May 2024 | Mamba for long-term forecasting | New SOTA on 8 datasets |
+| [PowerMamba](https://arxiv.org/html/2412.06112) | arXiv Dec 2024 | Power systems time series | Outperforms all baselines |
+
+**Why Mamba matters for observability:**
+```
+Transformer:  O(n²) complexity → struggles with long sequences
+Mamba:        O(n) complexity → handles streaming data efficiently
+
+For telemetry:
+- Metrics arriving continuously
+- Need to process hours/days of history
+- Mamba: 5× faster inference, same accuracy
+```
+
+**dogwatch opportunity:** Use Mamba for efficient long-context analysis of metrics and traces. Handle hours of history in real-time.
+
+---
+
+#### Knowledge Graphs for Incident Management
+
+Structured reasoning over incidents and operations.
+
+| Paper | Venue | Innovation | Improvement |
+|-------|-------|------------|-------------|
+| [Support Ticket KG](https://arxiv.org/abs/2501.00461) | arXiv Dec 2024 | KG embeddings from multi-source | Better than TF-IDF for ticket routing |
+| [BRIDG-ICS](https://arxiv.org/html/2512.12112v1) | arXiv Dec 2024 | Cybersecurity KG | Integrates CVE, CWE, attack patterns |
+| [KG for Cloud Ops](https://link.springer.com/chapter/10.1007/978-3-032-11477-8_11) | Springer 2025 | Unified agentic memory | Better retrieval + causal analysis |
+
+**The approach:**
+```
+Traditional:     Incident → Search logs → Manual correlation
+                 (slow, misses connections)
+
+KG-based:        Incident → Query knowledge graph
+                 → Find related past incidents
+                 → Traverse causal relationships
+                 → Suggest likely root cause + remediation
+```
+
+**dogwatch opportunity:** Build knowledge graph from incidents over time. Enable "we've seen this before" retrieval and causal reasoning.
+
+---
+
+#### Federated eBPF Monitoring (FedMon)
+
+Privacy-preserving distributed observability - critical for multi-tenant and regulated environments.
+
+| Paper | Venue | Innovation | Why It Matters |
+|-------|-------|------------|----------------|
+| [FedMon](https://arxiv.org/html/2510.10126) | arXiv Oct 2025 | eBPF + Federated Learning | Train models without sharing raw telemetry |
+
+**The architecture:**
+```
+Traditional centralized:
+┌──────────┐     ┌──────────┐     ┌──────────┐
+│ Cluster1 │────▶│ Central  │◀────│ Cluster2 │
+│ telemetry│     │ Analysis │     │ telemetry│
+└──────────┘     └──────────┘     └──────────┘
+                 (privacy risk, bandwidth cost)
+
+FedMon distributed:
+┌──────────┐     ┌──────────┐     ┌──────────┐
+│ Cluster1 │     │  Global  │     │ Cluster2 │
+│ eBPF+    │────▶│  Model   │◀────│ eBPF+    │
+│ Local ML │     │(gradients│     │ Local ML │
+└──────────┘     │  only)   │     └──────────┘
+                 └──────────┘
+                 (privacy preserved, bandwidth efficient)
+```
+
+**Key insight:** Each cluster trains locally on eBPF telemetry, shares only model updates. Global model improves without raw data exposure.
+
+**dogwatch opportunity:** Enable multi-org observability (MSPs, regulated industries) without sharing sensitive telemetry.
+
+---
+
+#### LLM-based Fault Localization
+
+Connect observability to code-level diagnosis.
+
+| Paper | Venue | Approach | Accuracy |
+|-------|-------|----------|----------|
+| [FaR-Loc](https://arxiv.org/abs/2509.20552) | arXiv Sep 2025 | RAG + LLM | 14.6% better Top-1 than SoapFL |
+| [AgentFL](https://arxiv.org/abs/2403.16362v2) | arXiv 2024 | Multi-agent ChatGPT | 157/395 bugs at Top-1, $0.074/bug |
+| [LLMAO](https://arxiv.org/pdf/2310.01726) | arXiv 2024 | Test-free localization | Works without test suite |
+| [DEVLoRe](https://arxiv.org/html/2412.03905) | arXiv Dec 2024 | Multi-artifact integration | 142/259 bugs repaired |
+
+**The connection:**
+```
+Observability data:           Code-level diagnosis:
+├── Stack trace          ───▶ Likely faulty file/function
+├── Error logs           ───▶ Error context
+├── Trace spans          ───▶ Which service caused it
+└── Metrics anomaly      ───▶ When it started
+
+LLM synthesizes all artifacts → Points to exact line of code
+```
+
+**dogwatch opportunity:** Go beyond "service X is slow" to "function Y in file Z at line 142 is the likely cause."
+
+---
+
+#### Streaming & Long-Context Inference
+
+Handle infinite telemetry streams with bounded memory.
+
+| Paper | Venue | Innovation | Capability |
+|-------|-------|------------|------------|
+| [Infini-attention](https://arxiv.org/html/2404.07143v1) | arXiv Apr 2024 | Bounded memory + streaming | Infinite context under fixed memory |
+| [StreamingLLM](https://arxiv.org/html/2404.07143v1) | Referenced | Attention sink + sliding window | Stable over arbitrarily long sequences |
+| [Titans](https://arxiv.org/html/2501.00663v1) | arXiv Jan 2025 | Neural long-term memory | Learn to memorize at test time |
+| [Radar](https://arxiv.org/abs/2503.10571) | arXiv Mar 2025 | Dynamic token importance | Training-free acceleration |
+
+**The problem and solution:**
+```
+Problem:  Telemetry never stops. Can't keep infinite history in memory.
+          Traditional: truncate context → lose important history
+
+Solution: Streaming architectures
+          ├── Compress old context into fixed-size memory
+          ├── Keep recent context in full detail
+          └── Attend to both: recent + compressed history
+
+Result:   Analyze hours/days of telemetry with constant memory
+```
+
+**dogwatch opportunity:** Enable "ask anything about the last 24 hours" without storing full context. Bounded memory, infinite history.
+
+---
+
+#### Network Topology Inference
+
+Automatically discover infrastructure topology from passive measurements.
+
+| Paper | Venue | Innovation | Result |
+|-------|-------|------------|--------|
+| [Topology from Smooth Signals](https://arxiv.org/abs/2410.05707) | arXiv Oct 2024 | Partial observability handling | Linear convergence guarantee |
+| [SecureNT](https://arxiv.org/html/2412.08177v2) | arXiv Dec 2024 | Privacy-preserving topology | Defends against inference attacks |
+| [DFL Topology Attack](https://arxiv.org/abs/2501.03119) | arXiv Jan 2025 | Infer topology from model behavior | Reveals hidden connections |
+
+**dogwatch opportunity:** Infer infrastructure topology from eBPF observations without explicit configuration.
+
+---
+
+### Implementation Priority Matrix
+
+Based on research maturity and dogwatch relevance:
+
+| Technology | Research Maturity | Implementation Effort | Impact | Priority |
+|------------|-------------------|----------------------|--------|----------|
+| **Span-level trace sampling** | Ready (papers + code) | Medium | Critical for scale | 🔥🔥🔥 P0 |
+| **LLM log parsing** | Ready (LogLLM works) | Medium | No more regex | 🔥🔥🔥 P0 |
+| **Auto dependency discovery** | Ready | Low (eBPF has data) | Zero-config topology | 🔥🔥🔥 P0 |
+| **Contrastive anomaly** | Mature | Medium | No rule maintenance | 🔥🔥 P1 |
+| **Mamba for streaming** | Ready | Medium | Efficient inference | 🔥🔥 P1 |
+| **FedMon pattern** | New but solid | High | Multi-tenant privacy | 🔥🔥 P1 |
+| **Streaming inference** | Ready | Medium | Infinite telemetry | 🔥🔥 P1 |
+| **RL autoscaling** | Mature | High | Smart recommendations | 🔥 P2 |
+| **Diffusion models** | Emerging | High | Better uncertainty | 🔥 P2 |
+| **Knowledge graphs** | Research | High | Long-term reasoning | 🔥 P2 |
+| **LLM fault localization** | Mature | Medium | Code-level diagnosis | 🔥 P2 |
+| **Perf regression in CI** | Mature | Medium | Shift-left | 🔥 P2 |
+
+---
+
+### Additional Research Resources
+
+**Trace Sampling:**
+- [Awesome-TimeSeries-Diffusion](https://github.com/yyysjz1997/Awesome-TimeSeries-SpatioTemporal-Diffusion-Model) - Diffusion models for time series
+
+**Log Analysis:**
+- [AwesomeLLM4SE](https://github.com/iSEngLab/AwesomeLLM4SE) - LLM for software engineering survey
+
+**Mamba/SSM:**
+- [state-spaces/mamba](https://github.com/state-spaces/mamba) - Official Mamba implementation
+
+**Federated Learning:**
+- [FedMon concept](https://arxiv.org/html/2510.10126) - eBPF + FL integration
+
+**Streaming/Long-Context:**
+- [long-llms-learning](https://github.com/Strivin0311/long-llms-learning) - Long-context LLM resources
+
+---
+
 ## Go-to-Market Strategy
 
 ### Customer Personas
