@@ -14,6 +14,33 @@ Then show your boss: *"This would cost us $47,000/month on Datadog."*
 
 ---
 
+## Glossary
+
+Key terms used throughout this document:
+
+| Term | Definition |
+|------|------------|
+| **Cardinality** | The number of unique combinations of label values for a metric. A metric with labels `{method, path, status}` where method has 5 values, path has 1000 values, and status has 10 values has cardinality of 5×1000×10 = 50,000 series. High cardinality (>100K series per metric) causes storage and query performance issues. |
+| **Control Plane** | A data management layer that sits between data ingestion and storage. It analyzes, shapes, and optimizes observability data—aggregating unused labels, dropping never-queried metrics, and enforcing team quotas—before data hits permanent storage. Named after Kubernetes' control plane concept. |
+| **BubbleUp** | An automated root cause analysis technique. When you select a set of "bad" requests (slow, erroring), BubbleUp statistically compares them against "good" requests to find which dimensions (service, endpoint, region, etc.) are disproportionately represented in the bad set. |
+| **Exemplars** | Sample trace IDs attached to metric data points. When you see a latency spike in a graph, exemplars let you click through to an actual trace that contributed to that spike. Bridges metrics → traces. |
+| **Entity** | A logical unit in your infrastructure: a service, database, queue, host, or container. Entity Synthesis automatically discovers these from telemetry data and tracks their relationships (service A calls service B, runs on host C). |
+| **Span** | A single unit of work in a distributed trace. A trace is a tree of spans. Each span has: operation name, start time, duration, parent span ID, and attributes. Example: "HTTP GET /api/users" taking 45ms. |
+| **Golden Signals** | The four key metrics for any service: latency, traffic, errors, and saturation (from Google SRE). If you only monitor four things, monitor these. |
+| **Head Sampling** | Making the keep/drop decision at trace start (before you know if it's interesting). Opposite of tail sampling, which decides after the trace completes. Head sampling is simpler but can't keep "all errors" since you don't know yet if it will error. |
+| **Tail Sampling** | Making the keep/drop decision after a trace completes, so you can keep interesting traces (errors, slow requests) and drop boring ones. Requires buffering all spans until the trace completes. |
+| **Recording Rules** | Pre-computed aggregations that run continuously. Instead of computing `sum(rate(http_requests_total[5m])) by (service)` at query time, a recording rule computes it every 15s and stores the result. Faster queries, but uses storage. |
+| **Uptime Probe / Synthetic Check** | An automated test that periodically hits an endpoint and records success/failure/latency. "Is my API responding?" checked every 60 seconds from multiple locations. |
+| **SLO (Service Level Objective)** | A target for service reliability, expressed as a percentage over a time window. "99.9% of requests complete in <500ms over 30 days." SLOs have error budgets—if you're at 99.95%, you have budget to deploy risky changes. |
+| **eBPF (Extended Berkeley Packet Filter)** | Linux kernel technology that lets you run sandboxed programs in kernel space. dogwatch uses eBPF to observe all network traffic, syscalls, and function calls without modifying applications. Requires Linux kernel 4.14+ (5.8+ recommended). |
+| **Wire Format** | The raw bytes sent over the network for a protocol. Parsing wire format means reading TCP packets and understanding "these bytes are a MySQL query." |
+| **uprobes** | eBPF hooks that attach to user-space functions. Used to intercept SSL/TLS libraries (like OpenSSL's `SSL_read`/`SSL_write`) to see encrypted traffic before/after encryption. |
+| **Cardinality Explosion** | When a label has unbounded values (user IDs, request IDs, timestamps), causing metric series count to grow without limit. A single bad label can create millions of series and crash your monitoring system. |
+| **OTLP (OpenTelemetry Protocol)** | The standard protocol for sending traces, metrics, and logs. gRPC on port 4317, HTTP on port 4318. Supporting OTLP means any OpenTelemetry-instrumented app can send data to dogwatch. |
+| **PromQL** | Prometheus Query Language. The de facto standard for querying time-series metrics. `rate(http_requests_total[5m])` means "requests per second over the last 5 minutes." |
+
+---
+
 ## Seven Killer Features
 
 ### 1. Zero-Config Distributed Tracing
@@ -1307,7 +1334,3460 @@ dogwatch binary
 
 ---
 
+## Technical Moats
+
+These are the genuinely hard engineering challenges that create defensibility. Unlike features that can be copied in a weekend, these require months of painful iteration and real-world feedback. **This is where the engineering investment pays off.**
+
+### Why Technical Depth Matters
+
+| "Moat" | Reality | Defensibility |
+|--------|---------|---------------|
+| Cost calculator | Arithmetic with public pricing | ❌ None - anyone can copy |
+| Single binary | Architecture choice | ❌ Low - just a build decision |
+| Basic HTTP parsing | Documented protocol | ❌ Low - examples everywhere |
+| Pretty dashboards | UI/UX work | ❌ Low - table stakes |
+| **Kernel compatibility** | Months of testing, edge cases | ✅ High |
+| **TLS interception** | Library-specific, breaks constantly | ✅ High |
+| **Protocol edge cases** | Only found in production | ✅ High |
+| **Correlation accuracy** | Probabilistic, needs tuning | ✅ High |
+| **Migration fidelity** | Experience-based, 100 edge cases | ✅ High |
+
+---
+
+### 1. Kernel Version Compatibility Matrix
+
+**The nightmare:**
+```
+Kernel 4.14    (old RHEL/CentOS, still in production)
+Kernel 4.19    (Debian 10)
+Kernel 5.4     (Ubuntu 20.04 LTS - huge install base)
+Kernel 5.10    (Debian 11, Amazon Linux 2022)
+Kernel 5.15    (Ubuntu 22.04 LTS)
+Kernel 6.1     (Debian 12, latest LTS)
+Kernel 6.5+    (Ubuntu 23.10+, bleeding edge)
+
+Each has:
+├── Different eBPF features available
+├── Different verifier behavior (what passes/fails)
+├── Different helper functions
+├── Different struct layouts (task_struct changes!)
+├── Different BTF availability
+└── Different performance characteristics
+```
+
+**Why it's hard:**
+- eBPF verifier rejects code that works on other kernels
+- Struct field offsets change between versions
+- Some features (ringbuf, BTF, CO-RE) only exist on newer kernels
+- Can't just "test on CI" - need actual kernel diversity
+- Users won't tell you their kernel version, just "it doesn't work"
+
+**The moat:** An eBPF program that works reliably across all of these is months of painful testing. Most competitors pick 1-2 kernels and hope for the best.
+
+**Implementation strategy:**
+
+```go
+// Build-time: Compile multiple variants
+//go:embed bpf/probe_v4.14.o
+//go:embed bpf/probe_v5.4.o
+//go:embed bpf/probe_v5.10.o
+//go:embed bpf/probe_v6.1.o
+
+// Runtime: Detect and load appropriate variant
+func loadProbe() (*ebpf.Collection, error) {
+    version := detectKernelVersion()
+
+    switch {
+    case version.AtLeast(6, 1):
+        return loadProbeV61()  // Full features, ringbuf, BTF
+    case version.AtLeast(5, 10):
+        return loadProbeV510() // CO-RE, most features
+    case version.AtLeast(5, 4):
+        return loadProbeV54()  // Reduced features
+    case version.AtLeast(4, 14):
+        return loadProbeV414() // Minimal, perf buffer
+    default:
+        return nil, ErrKernelTooOld
+    }
+}
+
+// Graceful degradation
+type ProbeCapabilities struct {
+    HasRingbuf       bool  // 5.8+
+    HasBTF           bool  // 5.2+ with config
+    HasCORE          bool  // 5.2+
+    HasKprobeMulti   bool  // 5.18+
+    HasFentry        bool  // 5.5+
+    MaxInstructions  int   // Varies by version
+}
+```
+
+**Testing matrix (CI requirement):**
+
+| Distro | Kernel | Priority | Notes |
+|--------|--------|----------|-------|
+| Ubuntu 20.04 | 5.4 | P0 | Huge install base |
+| Ubuntu 22.04 | 5.15 | P0 | Current LTS |
+| Debian 11 | 5.10 | P0 | Server standard |
+| Amazon Linux 2023 | 6.1 | P0 | AWS default |
+| RHEL 8 | 4.18 | P1 | Enterprise |
+| RHEL 9 | 5.14 | P1 | Enterprise |
+| Debian 12 | 6.1 | P1 | Latest stable |
+| Fedora (latest) | 6.x | P2 | Bleeding edge testing |
+
+**Effort estimate:** 4-6 weeks for comprehensive coverage + ongoing maintenance
+
+**Deliverable:** `dogwatch doctor` command that reports kernel compatibility, missing features, and recommended actions.
+
+---
+
+### 2. TLS Interception Depth
+
+**The nightmare:**
+```
+OpenSSL 1.1.x     (Ubuntu 20.04, older systems)
+├── SSL_read/SSL_write symbols
+├── Specific struct layouts
+└── Different than 3.x!
+
+OpenSSL 3.x       (Ubuntu 22.04+, modern systems)
+├── New API, new symbols
+├── Providers architecture
+├── struct ssl_st layout changed!
+└── BIO layer changes
+
+BoringSSL         (Google's fork)
+├── Used by: Go, Chrome, Android, gRPC
+├── Different symbols entirely
+├── Statically linked usually
+└── Version detection is hard
+
+LibreSSL          (OpenBSD's fork)
+├── Used by: OpenBSD, some Alpine
+├── API-compatible but different internals
+└── Less common but exists
+
+Go crypto/tls     (Go runtime)
+├── Not a library - compiled into binary
+├── Need to hook runtime functions
+├── crypto/tls.(*Conn).Read
+├── Offsets depend on Go version!
+└── Go 1.20 vs 1.21 vs 1.22 differ
+
+Java JSSE         (JVM TLS)
+├── Need to hook JNI or Java methods
+├── JVM version dependent
+├── GraalVM native different again
+└── Usually punt on this
+
+Node.js           (V8 + OpenSSL)
+├── Sometimes statically linked
+├── Sometimes system OpenSSL
+└── Need to detect which
+
+Rust rustls       (Pure Rust TLS)
+├── No OpenSSL at all
+├── Need to hook Rust internals
+└── Binary has no standard symbols
+```
+
+**Why it's hard:**
+- Symbol names differ between libraries
+- Struct layouts differ (can't just cast pointers)
+- Static linking hides symbols
+- Version detection requires reading binary headers
+- One wrong offset = garbage data or crash
+- Libraries update, breaking your probes
+
+**Implementation strategy:**
+
+```c
+// Multiple uprobe targets for different libraries
+
+// OpenSSL 1.1.x
+SEC("uprobe/openssl_1_1_read")
+int uprobe_ssl_read_1_1(struct pt_regs *ctx) {
+    // OpenSSL 1.1.x struct layout
+    struct ssl_st_1_1 *ssl = (void *)PT_REGS_PARM1(ctx);
+    void *buf = (void *)PT_REGS_PARM2(ctx);
+    // ... extract data
+}
+
+// OpenSSL 3.x
+SEC("uprobe/openssl_3_read")
+int uprobe_ssl_read_3(struct pt_regs *ctx) {
+    // OpenSSL 3.x struct layout - DIFFERENT!
+    struct ssl_st_3 *ssl = (void *)PT_REGS_PARM1(ctx);
+    void *buf = (void *)PT_REGS_PARM2(ctx);
+    // ... extract data
+}
+
+// Go crypto/tls
+SEC("uprobe/go_tls_read")
+int uprobe_go_tls_read(struct pt_regs *ctx) {
+    // Go calling convention, different registers
+    // Need to handle Go stack layout
+}
+```
+
+```go
+// Runtime library detection
+type TLSLibrary struct {
+    Type     string  // "openssl", "boringssl", "go", etc.
+    Version  string  // "1.1.1", "3.0.2", etc.
+    Path     string  // /usr/lib/libssl.so.1.1
+    Symbols  map[string]uint64
+}
+
+func detectTLSLibraries(pid int) ([]TLSLibrary, error) {
+    // 1. Read /proc/pid/maps
+    // 2. Find loaded libraries
+    // 3. Parse ELF headers for symbols
+    // 4. Match against known signatures
+    // 5. Return detected libraries with versions
+}
+
+func attachTLSProbes(lib TLSLibrary) error {
+    switch lib.Type {
+    case "openssl":
+        if lib.Version.Major == 1 {
+            return attachOpenSSL1Probes(lib)
+        }
+        return attachOpenSSL3Probes(lib)
+    case "boringssl":
+        return attachBoringSSlProbes(lib)
+    case "go":
+        return attachGoTLSProbes(lib)
+    default:
+        return ErrUnsupportedTLS
+    }
+}
+```
+
+**Coverage targets:**
+
+| Library | Version | Priority | Coverage |
+|---------|---------|----------|----------|
+| OpenSSL | 1.1.x | P0 | 40% of traffic |
+| OpenSSL | 3.x | P0 | 30% of traffic |
+| Go crypto/tls | 1.20+ | P0 | 20% of traffic (growing) |
+| BoringSSL | latest | P1 | gRPC, some apps |
+| LibreSSL | 3.x | P2 | Rare |
+| Java JSSE | 11+ | P2 | Enterprise apps |
+| rustls | latest | P3 | Growing but rare |
+
+**Effort estimate:** 6-8 weeks for OpenSSL + Go, 3-4 weeks per additional library
+
+**The moat:** This is genuinely painful. Pixie had dedicated engineers on this. Getting it working across all variants requires constant maintenance as libraries update.
+
+---
+
+### 3. Protocol Edge Cases
+
+**Basic parsing is easy. Production parsing is brutal.**
+
+#### MySQL Protocol Deep Dive
+
+```
+Easy (what tutorials show):
+  COM_QUERY: "SELECT * FROM users WHERE id = 1"
+  → Parse packet, extract SQL string, done
+
+Hard (what production sends):
+
+Prepared statements (binary protocol):
+  COM_STMT_PREPARE: "SELECT * FROM users WHERE id = ?"
+  COM_STMT_EXECUTE: [stmt_id=1, params=[binary encoded 42]]
+  → Need to track prepared statements per connection
+  → Need to decode binary parameter encoding
+  → Need to reconstruct full query for display
+
+Pipelining:
+  Client sends: QUERY1; QUERY2; QUERY3 (without waiting)
+  → Can't assume request-response ordering
+  → Need sequence number tracking
+
+Compression (COMPRESS flag):
+  Packets are zlib compressed after handshake
+  → Need to detect compression negotiation
+  → Need to decompress before parsing
+
+Multi-statement:
+  "SELECT 1; INSERT INTO t VALUES (1); SELECT 2"
+  → Single packet, multiple queries
+  → Multiple result sets
+
+Connection state:
+  USE database;  -- changes current database
+  SET NAMES utf8mb4;  -- changes character set
+  → Need to track per-connection state
+
+SSL upgrade:
+  Plain → COM_SSL → TLS handshake → encrypted
+  → Need to switch from TCP parsing to TLS uprobes mid-connection
+
+Character encoding:
+  Query in latin1 vs utf8 vs utf8mb4
+  → Wrong encoding = garbled query text
+
+PgBouncer/ProxySQL:
+  Connection poolers multiplex queries
+  → Multiple logical connections over one TCP connection
+  → Need to parse pooler protocol too
+```
+
+**Implementation for MySQL:**
+
+```go
+type MySQLConnection struct {
+    // Connection state
+    ConnectionID    uint32
+    Database        string
+    User            string
+    CharacterSet    uint8
+    Compressed      bool
+    UsingSSL        bool
+
+    // Prepared statement tracking
+    PreparedStmts   map[uint32]*PreparedStatement
+
+    // Query reassembly
+    PendingPackets  [][]byte
+    ExpectedSeq     uint8
+}
+
+type PreparedStatement struct {
+    StmtID      uint32
+    Query       string
+    ParamCount  uint16
+    ParamTypes  []uint8
+}
+
+func (c *MySQLConnection) ParsePacket(data []byte) (*MySQLEvent, error) {
+    if c.Compressed {
+        data = c.decompress(data)
+    }
+
+    cmd := data[0]
+    switch cmd {
+    case COM_QUERY:
+        return c.parseQuery(data[1:])
+    case COM_STMT_PREPARE:
+        return c.parsePrepare(data[1:])
+    case COM_STMT_EXECUTE:
+        return c.parseExecute(data[1:]) // Needs PreparedStmts lookup
+    case COM_STMT_CLOSE:
+        return c.parseStmtClose(data[1:])
+    // ... 20+ more command types
+    }
+}
+
+func (c *MySQLConnection) parseExecute(data []byte) (*MySQLEvent, error) {
+    stmtID := binary.LittleEndian.Uint32(data[0:4])
+
+    stmt, ok := c.PreparedStmts[stmtID]
+    if !ok {
+        // Statement prepared before we started tracing
+        return &MySQLEvent{Query: "<prepared statement, unknown>"}, nil
+    }
+
+    // Decode binary parameters
+    params, err := c.decodeBinaryParams(data[5:], stmt.ParamTypes)
+    if err != nil {
+        return nil, err
+    }
+
+    // Reconstruct query with parameters
+    query := c.reconstructQuery(stmt.Query, params)
+    return &MySQLEvent{Query: query, Params: params}, nil
+}
+```
+
+#### PostgreSQL Protocol Deep Dive
+
+```
+Similar complexity:
+├── Simple query vs Extended query protocol
+├── Parse/Bind/Execute message flow
+├── Portal management
+├── COPY protocol (bulk data)
+├── SSL negotiation
+├── SCRAM-SHA-256 auth parsing
+└── Logical replication protocol
+```
+
+#### Redis Protocol Deep Dive
+
+```
+Easier but still has edge cases:
+├── RESP2 vs RESP3 protocol
+├── Pipelining (very common)
+├── PubSub mode (changes parsing rules)
+├── Cluster redirects (MOVED, ASK)
+├── Transactions (MULTI/EXEC blocks)
+├── Lua scripts (EVAL)
+└── Module commands (custom protocols)
+```
+
+**Testing strategy:**
+
+```go
+// Capture real traffic for test cases
+func TestMySQLParsing(t *testing.T) {
+    // These are real packet captures from production
+    testCases := []struct {
+        name     string
+        packets  [][]byte  // Captured from tcpdump
+        expected []MySQLEvent
+    }{
+        {"simple_select", loadCapture("simple_select.pcap"), ...},
+        {"prepared_stmt", loadCapture("prepared_stmt.pcap"), ...},
+        {"compressed", loadCapture("compressed.pcap"), ...},
+        {"pipelined", loadCapture("pipelined.pcap"), ...},
+        {"ssl_upgrade", loadCapture("ssl_upgrade.pcap"), ...},
+        {"pgbouncer_multiplex", loadCapture("pgbouncer.pcap"), ...},
+    }
+
+    for _, tc := range testCases {
+        t.Run(tc.name, func(t *testing.T) {
+            // ...
+        })
+    }
+}
+```
+
+**Effort estimate:**
+- MySQL (solid): 3-4 weeks
+- PostgreSQL (solid): 3-4 weeks
+- Redis (solid): 1-2 weeks
+- gRPC/HTTP2: 4-5 weeks
+- Kafka: 3-4 weeks
+
+**The moat:** Every production deployment finds new edge cases. Building a library of real-world packet captures from actual migrations = competitors can't match without the same experience.
+
+---
+
+### 4. Correlation Without Trace Headers
+
+**The holy grail: distributed traces without any code changes.**
+
+When services don't propagate W3C traceparent / B3 / X-Request-ID headers:
+
+```
+Request flow (what we see):
+  10:00:00.000  Service A (pid 1234) → TCP connect to B:8080
+  10:00:00.001  Service A → send HTTP request (247 bytes)
+  10:00:00.023  Service B (pid 5678) → recv HTTP request
+  10:00:00.025  Service B → TCP connect to MySQL:3306
+  10:00:00.026  Service B → send MySQL query
+  10:00:00.045  MySQL → send response
+  10:00:00.046  Service B → recv MySQL response
+  10:00:00.048  Service B → send HTTP response
+  10:00:00.050  Service A → recv HTTP response
+
+How do we KNOW the MySQL query belongs to that HTTP request?
+```
+
+**Correlation strategies:**
+
+```go
+// Strategy 1: Socket-to-process-to-socket tracking
+type CorrelationEngine struct {
+    // Track socket ownership
+    SocketToProcess map[SocketKey]ProcessInfo
+
+    // Track active requests per thread
+    ThreadActiveRequest map[ThreadKey]*Request
+
+    // Track pending requests awaiting response
+    PendingRequests map[RequestKey]*Request
+}
+
+// When we see TCP connect from B to MySQL
+func (e *CorrelationEngine) OnConnect(event *TCPConnectEvent) {
+    // What thread made this connection?
+    thread := ThreadKey{PID: event.PID, TID: event.TID}
+
+    // Is this thread handling an inbound request?
+    if req := e.ThreadActiveRequest[thread]; req != nil {
+        // This outbound connection is part of that request's trace
+        e.linkOutboundConnection(req, event)
+    }
+}
+
+// Strategy 2: Timing-based correlation
+type TimingCorrelator struct {
+    // Window for matching requests
+    MaxLatency time.Duration  // e.g., 100ms
+}
+
+func (c *TimingCorrelator) Correlate(
+    inbound *Request,
+    outbounds []*Request,
+) []*Request {
+    var correlated []*Request
+
+    for _, out := range outbounds {
+        // Outbound must start after inbound starts
+        if out.StartTime.Before(inbound.StartTime) {
+            continue
+        }
+        // Outbound must complete before inbound completes
+        if out.EndTime.After(inbound.EndTime) {
+            continue
+        }
+        // Same process
+        if out.PID != inbound.PID {
+            continue
+        }
+
+        correlated = append(correlated, out)
+    }
+
+    return correlated
+}
+
+// Strategy 3: Content-based correlation (best effort)
+type ContentCorrelator struct{}
+
+func (c *ContentCorrelator) FindRequestID(req *Request) string {
+    // Check common header patterns
+    for _, header := range []string{
+        "X-Request-ID",
+        "X-Correlation-ID",
+        "X-Trace-ID",
+        "Request-Id",
+        "X-Amzn-Trace-Id",
+    } {
+        if val := req.Headers.Get(header); val != "" {
+            return val
+        }
+    }
+
+    // Check body for correlation IDs (JSON APIs)
+    if id := extractJSONField(req.Body, "request_id"); id != "" {
+        return id
+    }
+
+    return ""
+}
+
+// Combined: Use all strategies with confidence scoring
+type TraceBuilder struct {
+    strategies []CorrelationStrategy
+}
+
+func (b *TraceBuilder) BuildTrace(events []Event) (*Trace, float64) {
+    trace := &Trace{}
+    confidence := 0.0
+
+    // Try content-based first (highest confidence)
+    if linked := b.contentCorrelate(events); linked != nil {
+        trace = linked
+        confidence = 0.95
+    }
+
+    // Fall back to socket tracking
+    if trace.IsEmpty() {
+        if linked := b.socketCorrelate(events); linked != nil {
+            trace = linked
+            confidence = 0.85
+        }
+    }
+
+    // Fall back to timing
+    if trace.IsEmpty() {
+        if linked := b.timingCorrelate(events); linked != nil {
+            trace = linked
+            confidence = 0.70
+        }
+    }
+
+    return trace, confidence
+}
+```
+
+**Edge cases that break correlation:**
+
+| Scenario | Problem | Mitigation |
+|----------|---------|------------|
+| Connection pooling | One TCP connection, many requests | Track request/response pairing |
+| Async workers | Request handled by different thread | Track goroutine/thread handoff |
+| Queue-based | Request → Queue → Worker | Need queue protocol parsing |
+| Long polling | Request open for minutes | Timeout handling |
+| Multiplexing (HTTP/2) | Multiple requests on one connection | Stream ID tracking |
+| Thread pools | Thread handles unrelated requests | Careful state clearing |
+
+**Confidence reporting:**
+
+```go
+// Show users when correlation might be wrong
+type Span struct {
+    // ... normal span fields
+
+    CorrelationConfidence float64  // 0.0 - 1.0
+    CorrelationMethod     string   // "header", "socket", "timing"
+    CorrelationWarnings   []string // ["timing-based, may be inaccurate"]
+}
+```
+
+**Effort estimate:** 4-6 weeks for solid implementation, ongoing tuning based on real-world feedback
+
+**The moat:** This is iterative. Every deployment teaches you new patterns. Competitors without production data can't tune their heuristics.
+
+---
+
+### 5. Low-Overhead Continuous Profiling
+
+**The challenge:**
+```
+Requirements:
+├── Sample CPU stacks at 100Hz (100 samples/second)
+├── Across all processes on the system
+├── Resolve symbols (function names, not addresses)
+├── Handle multiple languages (Go, C, Java, Python, Node)
+├── Store efficiently (deduplicate common stacks)
+├── <1% CPU overhead
+└── Don't drop samples under load
+```
+
+**Why symbol resolution is hell:**
+
+```
+Native binaries (C, C++, Rust):
+├── Need DWARF debug info
+├── Often stripped in production
+├── Need to fetch debuginfo packages
+└── Or use frame pointers (if compiled with -fno-omit-frame-pointer)
+
+Go binaries:
+├── Go has its own stack format
+├── Goroutine stacks, not OS thread stacks
+├── Need to parse Go runtime structures
+├── gopclntab for symbol resolution
+└── Changes between Go versions
+
+JVM (Java, Kotlin, Scala):
+├── JIT compiled - addresses change at runtime
+├── Need to query JVM for method mappings
+├── Perf-map-agent or AsyncProfiler integration
+├── GraalVM native is different again
+
+Python:
+├── Interpreted - C stack shows interpreter, not Python
+├── Need to read Python frame objects
+├── py-spy approach: read PyFrameObject
+└── Different for Python 3.10 vs 3.11 vs 3.12
+
+Node.js:
+├── V8 JIT compiled
+├── Need V8 perf hooks
+├── Or use --perf-basic-prof flag
+└── Different for each Node version
+```
+
+**Implementation approach:**
+
+```c
+// eBPF: Capture stacks
+SEC("perf_event")
+int profile_cpu(struct bpf_perf_event_data *ctx) {
+    u64 id = bpf_get_current_pid_tgid();
+    u32 pid = id >> 32;
+
+    // Get kernel stack
+    int kernel_stack_id = bpf_get_stackid(ctx, &stack_traces, 0);
+
+    // Get user stack
+    int user_stack_id = bpf_get_stackid(ctx, &stack_traces, BPF_F_USER_STACK);
+
+    struct profile_event event = {
+        .pid = pid,
+        .tid = id,
+        .kernel_stack_id = kernel_stack_id,
+        .user_stack_id = user_stack_id,
+        .timestamp = bpf_ktime_get_ns(),
+    };
+
+    bpf_ringbuf_output(&events, &event, sizeof(event), 0);
+    return 0;
+}
+```
+
+```go
+// Userspace: Symbol resolution
+type SymbolResolver struct {
+    // Per-process symbol tables
+    processes map[uint32]*ProcessSymbols
+}
+
+type ProcessSymbols struct {
+    PID         uint32
+    Executable  string
+    Mappings    []MemoryMapping
+    Symbols     map[uint64]Symbol  // addr → symbol
+    Language    string             // "go", "c", "java", etc.
+}
+
+func (r *SymbolResolver) Resolve(pid uint32, addr uint64) (Symbol, error) {
+    proc := r.processes[pid]
+    if proc == nil {
+        proc = r.loadProcess(pid)
+    }
+
+    // Find which mapping contains this address
+    mapping := proc.FindMapping(addr)
+    if mapping == nil {
+        return Symbol{Name: fmt.Sprintf("0x%x", addr)}, nil
+    }
+
+    // Adjust address for mapping offset
+    offset := addr - mapping.Start + mapping.Offset
+
+    // Look up symbol
+    if sym, ok := proc.Symbols[offset]; ok {
+        return sym, nil
+    }
+
+    // Language-specific resolution
+    switch proc.Language {
+    case "go":
+        return r.resolveGoSymbol(proc, addr)
+    case "java":
+        return r.resolveJavaSymbol(proc, addr)
+    default:
+        return r.resolveDWARF(proc, offset)
+    }
+}
+```
+
+**Build vs Buy decision:**
+
+| Option | Pros | Cons |
+|--------|------|------|
+| **Integrate Pyroscope** | Full-featured, maintained | Dependency, less control |
+| **Use async-profiler** | Best for JVM | JVM only |
+| **Build from scratch** | Full control | 10+ weeks, ongoing maintenance |
+
+**Recommendation:** Start with Pyroscope integration (2-3 weeks). Build custom only if Pyroscope doesn't fit.
+
+**Effort estimate:**
+- Pyroscope integration: 2-3 weeks
+- Custom (native + Go): 8-10 weeks
+- Custom (+ JVM): +4 weeks
+- Custom (+ Python/Node): +4 weeks each
+
+---
+
+### 6. Security Detection Without False Positive Hell
+
+**The problem:**
+```
+Alert: "Shell spawned in container api-service-7f8d9"
+
+Is this:
+A) A health check: /bin/sh -c "curl localhost:8080/health"
+B) A cron job: /bin/sh -c "/app/cleanup.sh"
+C) An engineer debugging: kubectl exec -it api-service -- /bin/bash
+D) An actual attack: reverse shell from compromised RCE
+```
+
+**All of them spawn /bin/sh in a container.** Alert on all = noise. Alert on none = miss attacks.
+
+**Baseline learning approach:**
+
+```go
+type ContainerBaseline struct {
+    // Key: image name (not container ID - containers are ephemeral)
+    Image           string
+
+    // Learned normal behavior
+    NormalProcesses map[string]ProcessPattern  // process name → pattern
+    NormalNetwork   map[string]NetworkPattern  // dest → pattern
+    NormalFiles     map[string]FilePattern     // path → pattern
+
+    // Learning state
+    LearningStarted time.Time
+    LearningComplete bool
+    SampleCount     int
+}
+
+type ProcessPattern struct {
+    ProcessName  string
+    ParentName   string   // e.g., "containerd-shim"
+    CommandLine  []string // common arguments
+    Frequency    float64  // how often it runs
+    SeenCount    int
+}
+
+func (b *ContainerBaseline) Learn(event *ProcessEvent) {
+    key := event.ProcessName
+
+    if pattern, exists := b.NormalProcesses[key]; exists {
+        pattern.SeenCount++
+        pattern.Frequency = b.calculateFrequency(pattern)
+    } else {
+        b.NormalProcesses[key] = &ProcessPattern{
+            ProcessName: event.ProcessName,
+            ParentName:  event.ParentName,
+            CommandLine: event.Args,
+            SeenCount:   1,
+        }
+    }
+}
+
+func (b *ContainerBaseline) IsAnomalous(event *ProcessEvent) (bool, string) {
+    if !b.LearningComplete {
+        return false, "still learning"
+    }
+
+    pattern, known := b.NormalProcesses[event.ProcessName]
+    if !known {
+        return true, fmt.Sprintf("process '%s' never seen in this image", event.ProcessName)
+    }
+
+    // Known process but unusual parent?
+    if pattern.ParentName != "" && event.ParentName != pattern.ParentName {
+        return true, fmt.Sprintf("unusual parent: expected '%s', got '%s'",
+            pattern.ParentName, event.ParentName)
+    }
+
+    return false, ""
+}
+```
+
+**Context-aware alerting:**
+
+```go
+type SecurityRule struct {
+    Name        string
+    Severity    Severity
+    Condition   func(*Event, *ContainerBaseline) bool
+    Context     func(*Event) []ContextInfo
+}
+
+var ShellInContainerRule = SecurityRule{
+    Name:     "shell_in_container",
+    Severity: WARNING,  // Not CRITICAL by default
+
+    Condition: func(e *Event, b *ContainerBaseline) bool {
+        if !isShell(e.ProcessName) {
+            return false
+        }
+        if !e.InContainer {
+            return false
+        }
+        // Check if this image normally runs shells
+        if b.NormalProcesses[e.ProcessName] != nil {
+            return false  // Normal for this image
+        }
+        return true
+    },
+
+    Context: func(e *Event) []ContextInfo {
+        return []ContextInfo{
+            checkKubectlExec(e),      // Is this a kubectl exec?
+            checkHealthCheck(e),       // Health check pattern?
+            checkCronJob(e),           // Scheduled job?
+            checkSSHSession(e),        // SSH session?
+            checkRecentDeploy(e),      // Recent deploy to this pod?
+        }
+    },
+}
+
+// Severity escalation based on context
+func (r *SecurityRule) FinalSeverity(e *Event, contexts []ContextInfo) Severity {
+    base := r.Severity
+
+    for _, ctx := range contexts {
+        if ctx.Type == "kubectl_exec" && ctx.UserKnown {
+            // Known user doing kubectl exec = lower severity
+            return INFO
+        }
+        if ctx.Type == "health_check" {
+            // Definitely a health check
+            return SUPPRESSED
+        }
+        if ctx.Type == "reverse_shell_pattern" {
+            // stdin/stdout redirected to socket
+            return CRITICAL  // Escalate!
+        }
+    }
+
+    return base
+}
+```
+
+**Known-good patterns to whitelist:**
+
+```go
+var KnownGoodPatterns = []WhitelistPattern{
+    // Health checks
+    {
+        Parent:  "containerd-shim",
+        Process: "sh",
+        Args:    regexp.MustCompile(`curl.*localhost.*/health`),
+        Reason:  "health check",
+    },
+    // Kubernetes probes
+    {
+        Parent:  "kubelet",
+        Process: "*",
+        Reason:  "kubernetes probe",
+    },
+    // Init containers
+    {
+        Container: regexp.MustCompile(`-init$`),
+        Reason:    "init container",
+    },
+}
+```
+
+**Effort estimate:** 4-6 weeks for solid baseline learning + context-aware alerting
+
+**The moat:** False positive tuning requires real deployments. Every customer teaches you new patterns. This knowledge compounds over time.
+
+---
+
+### 7. Migration Fidelity (Your Unique Advantage)
+
+**You've done the Rivian migration. You know what actually breaks.**
+
+```
+Datadog Dashboard JSON → dogwatch
+
+What tutorials show:
+  timeseries widget → timeseries widget
+  ✓ Easy!
+
+What actually happens:
+
+Template variables:
+  $env = {prod, staging, dev}
+  Query: avg:cpu{env:$env} by {host}
+  → Need to parse and preserve variable syntax
+  → Variables can have default values
+  → Variables can depend on other variables
+
+Datadog-specific functions:
+  anomalies(avg:cpu{*}, 'agile', 2)
+  forecast(avg:requests{*}, 'linear', 1)
+  → No equivalent in PromQL
+  → Need to either skip or implement equivalents
+
+Composite monitors:
+  (A && B) || (C && !D)
+  Where A, B, C, D are other monitors
+  → Need to recursively resolve
+
+APM-specific widgets:
+  Service Map widget (Datadog's trace data)
+  Trace flamegraph widget
+  → Need equivalent data in dogwatch
+
+Dashboard links:
+  "View in Logs" button → Datadog logs page
+  → Need to rewrite to dogwatch equivalent
+
+SLO references:
+  Widget shows "SLO: api-latency-p99"
+  → Need to import SLOs first
+
+Conditional formatting:
+  "Red if > 90%, yellow if > 70%"
+  → Different syntax per platform
+
+Annotations:
+  "Deploy markers" on graphs
+  → Need to import deploy data too
+```
+
+**Implementation:**
+
+```go
+type DatadogMigrator struct {
+    // Track what we can and can't handle
+    Capabilities MigrationCapabilities
+
+    // Track issues found
+    Issues []MigrationIssue
+}
+
+type MigrationCapabilities struct {
+    WidgetTypes    map[string]WidgetConverter
+    QueryFunctions map[string]QueryConverter
+    MonitorTypes   map[string]MonitorConverter
+}
+
+type MigrationIssue struct {
+    Severity    string  // "error", "warning", "info"
+    Component   string  // "dashboard:main-overview"
+    Field       string  // "widget[3].query"
+    Original    string  // Original Datadog syntax
+    Problem     string  // "anomalies() has no equivalent"
+    Suggestion  string  // "Consider using threshold-based alerting instead"
+}
+
+func (m *DatadogMigrator) MigrateDashboard(dd DatadogDashboard) (*Dashboard, []MigrationIssue) {
+    dashboard := &Dashboard{
+        Name: dd.Title,
+        Description: dd.Description,
+    }
+
+    for i, widget := range dd.Widgets {
+        converted, issues := m.convertWidget(widget)
+
+        for _, issue := range issues {
+            issue.Component = fmt.Sprintf("dashboard:%s", dd.Title)
+            issue.Field = fmt.Sprintf("widget[%d]", i)
+            m.Issues = append(m.Issues, issue)
+        }
+
+        if converted != nil {
+            dashboard.Widgets = append(dashboard.Widgets, converted)
+        }
+    }
+
+    return dashboard, m.Issues
+}
+
+// Query translation with detailed error reporting
+func (m *DatadogMigrator) TranslateQuery(ddQuery string) (string, []MigrationIssue) {
+    issues := []MigrationIssue{}
+
+    // Parse Datadog query
+    parsed, err := parseDatadogQuery(ddQuery)
+    if err != nil {
+        return "", []MigrationIssue{{
+            Severity: "error",
+            Problem:  fmt.Sprintf("Cannot parse: %v", err),
+            Original: ddQuery,
+        }}
+    }
+
+    // Check for unsupported functions
+    for _, fn := range parsed.Functions {
+        if _, ok := m.Capabilities.QueryFunctions[fn.Name]; !ok {
+            issues = append(issues, MigrationIssue{
+                Severity:   "warning",
+                Problem:    fmt.Sprintf("Function '%s' has no equivalent", fn.Name),
+                Original:   ddQuery,
+                Suggestion: suggestAlternative(fn.Name),
+            })
+        }
+    }
+
+    // Convert what we can
+    promql := m.toPromQL(parsed)
+
+    return promql, issues
+}
+```
+
+**Migration report output:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  📊 Migration Report: Datadog → dogwatch                     │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Dashboards: 23 total                                       │
+│  ├── ✅ 18 fully compatible                                 │
+│  ├── ⚠️  4 need adjustments                                 │
+│  └── ❌ 1 cannot migrate (APM-specific)                     │
+│                                                              │
+│  Detailed Issues:                                           │
+│                                                              │
+│  ⚠️  dashboard:api-overview / widget[3]                     │
+│     Query: anomalies(avg:latency{*}, 'agile', 2)           │
+│     Problem: anomalies() has no equivalent                  │
+│     Suggestion: Use threshold alerting on p99 instead       │
+│                                                              │
+│  ⚠️  dashboard:infrastructure / widget[7]                   │
+│     Query: forecast(sum:requests{*}, 'linear', 1)          │
+│     Problem: forecast() has no equivalent                   │
+│     Suggestion: Remove or use external forecasting tool     │
+│                                                              │
+│  ❌ dashboard:apm-services                                  │
+│     Problem: Entire dashboard uses Datadog APM widgets      │
+│     Suggestion: Skip - dogwatch has its own service views   │
+│                                                              │
+│  Monitors: 47 total                                         │
+│  ├── ✅ 42 fully compatible                                 │
+│  └── ⚠️  5 need adjustments                                 │
+│                                                              │
+│  💰 Cost Analysis:                                          │
+│  Current Datadog: $47,234/month                             │
+│  After migration: $0 (self-hosted)                          │
+│  Annual savings: $566,808                                   │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Effort estimate:** 4-6 weeks for solid Datadog migration, 2-3 weeks for Grafana
+
+**The moat:** You've done a real migration at scale. You know the 50 edge cases that blog posts don't mention. Every migration you do adds to this knowledge. Competitors without this experience will miss cases.
+
+---
+
+### 8. Intelligent Tail Sampling
+
+**The problem:** You can't store every trace. But head sampling (decide at start) throws away errors and slow requests. Tail sampling (decide at end) requires buffering everything.
+
+```
+Head sampling problem:
+  Request starts → flip coin → keep 10%
+  → But what if this request will ERROR?
+  → What if this request will be SLOW?
+  → You don't know yet. You might throw away the interesting ones.
+
+Tail sampling problem:
+  Buffer ALL traces for 30 seconds
+  Wait for trace to "complete"
+  Then decide: keep errors, keep slow, sample rest
+  → Requires massive memory
+  → What is "complete"? Async traces never end cleanly.
+  → Distributed: spans arrive at different collectors
+```
+
+**The moat: Hybrid intelligent sampling**
+
+```go
+// Adaptive sampling that doesn't require buffering everything
+type IntelligentSampler struct {
+    // Base sample rate
+    BaseSampleRate float64  // e.g., 0.1 = 10%
+
+    // Priority rules - these always get kept
+    PriorityRules []SamplingRule
+
+    // Adaptive rate based on throughput
+    CurrentRate    float64
+    TargetSpansPerSecond int64
+}
+
+type SamplingRule struct {
+    Name       string
+    Condition  func(*Span) bool
+    Action     SampleAction  // ALWAYS_KEEP, ALWAYS_DROP, USE_BASE_RATE
+    Priority   int           // Higher = evaluated first
+}
+
+var DefaultRules = []SamplingRule{
+    // Always keep errors
+    {
+        Name:      "keep_errors",
+        Condition: func(s *Span) bool { return s.Status == ERROR },
+        Action:    ALWAYS_KEEP,
+        Priority:  100,
+    },
+    // Always keep slow requests (>1s)
+    {
+        Name:      "keep_slow",
+        Condition: func(s *Span) bool { return s.Duration > time.Second },
+        Action:    ALWAYS_KEEP,
+        Priority:  90,
+    },
+    // Always keep if parent was kept (trace coherence)
+    {
+        Name:      "keep_if_parent_kept",
+        Condition: func(s *Span) bool { return s.ParentSampled },
+        Action:    ALWAYS_KEEP,
+        Priority:  80,
+    },
+    // Keep new endpoints (never seen before)
+    {
+        Name:      "keep_new_endpoints",
+        Condition: func(s *Span) bool { return s.IsNewEndpoint },
+        Action:    ALWAYS_KEEP,
+        Priority:  70,
+    },
+    // Sample rest based on adaptive rate
+    {
+        Name:      "base_sample",
+        Condition: func(s *Span) bool { return true },
+        Action:    USE_BASE_RATE,
+        Priority:  0,
+    },
+}
+
+// The magic: consistent sampling for trace coherence
+func (s *IntelligentSampler) ShouldSample(span *Span) bool {
+    // Check priority rules first
+    for _, rule := range s.PriorityRules {
+        if rule.Condition(span) {
+            switch rule.Action {
+            case ALWAYS_KEEP:
+                return true
+            case ALWAYS_DROP:
+                return false
+            case USE_BASE_RATE:
+                // Fall through to consistent sampling
+            }
+        }
+    }
+
+    // Consistent sampling: same trace ID = same decision everywhere
+    // This is critical for distributed tracing
+    hash := xxhash(span.TraceID)
+    threshold := uint64(s.CurrentRate * math.MaxUint64)
+    return hash < threshold
+}
+
+// Adaptive rate adjustment
+func (s *IntelligentSampler) AdjustRate() {
+    currentThroughput := s.measureSpansPerSecond()
+
+    if currentThroughput > s.TargetSpansPerSecond * 1.2 {
+        // Too much data, reduce sampling
+        s.CurrentRate *= 0.9
+    } else if currentThroughput < s.TargetSpansPerSecond * 0.8 {
+        // Room for more, increase sampling
+        s.CurrentRate = min(s.CurrentRate * 1.1, s.BaseSampleRate)
+    }
+}
+```
+
+**Advanced: Retroactive sampling**
+
+```go
+// When we see an error, go back and fetch related spans
+type RetroactiveSampler struct {
+    // Short-term buffer of span metadata (not full spans)
+    RecentSpanIndex map[TraceID][]SpanMetadata
+
+    // Storage for recently dropped spans (compressed, short TTL)
+    DroppedSpanCache *LRUCache
+}
+
+func (s *RetroactiveSampler) OnError(errorSpan *Span) {
+    // Find all spans in this trace from the cache
+    traceID := errorSpan.TraceID
+
+    // Retrieve dropped spans from cache
+    droppedSpans := s.DroppedSpanCache.GetByTraceID(traceID)
+
+    // Promote them to permanent storage
+    for _, span := range droppedSpans {
+        s.permanentStore.Write(span)
+    }
+
+    // Mark trace as "always keep future spans"
+    s.RecentSpanIndex[traceID].AlwaysKeep = true
+}
+```
+
+**Why it's hard:**
+- Consistent sampling across distributed collectors
+- Trace coherence (if parent sampled, children must be too)
+- Adaptive rate without oscillation
+- Low latency (can't wait to decide)
+- Memory bounded
+
+**Effort estimate:** 3-4 weeks for solid implementation
+
+---
+
+### 9. Automatic Log Field Extraction
+
+**The problem:** Logs are unstructured text. Querying them means regex.
+
+```
+Raw logs:
+2024-01-15 10:23:45.123 INFO  [api-service] user=12345 action=login ip=192.168.1.1 duration=45ms
+2024-01-15 10:23:45.456 ERROR [api-service] user=12345 action=checkout error="payment failed" amount=99.99
+{"timestamp": "2024-01-15T10:23:45Z", "level": "warn", "service": "worker", "msg": "queue full", "queue_size": 10000}
+Jan 15 10:23:45 web-server nginx: 192.168.1.1 - - [15/Jan/2024:10:23:45 +0000] "GET /api/users HTTP/1.1" 200 1234
+```
+
+**The moat: Automatic structure detection**
+
+```go
+// Pattern detection engine
+type LogPatternEngine struct {
+    // Known patterns
+    KnownPatterns []LogPattern
+
+    // Learned patterns from data
+    LearnedPatterns map[string]*LearnedPattern
+
+    // Field extractors
+    Extractors []FieldExtractor
+}
+
+type LogPattern struct {
+    Name        string
+    Regex       *regexp.Regexp
+    Fields      []FieldDefinition
+    Confidence  float64
+}
+
+var BuiltInPatterns = []LogPattern{
+    // JSON logs
+    {
+        Name:   "json",
+        Regex:  regexp.MustCompile(`^\s*\{.*\}\s*$`),
+        Fields: nil,  // Dynamic from JSON
+        Confidence: 0.99,
+    },
+    // Logfmt (key=value)
+    {
+        Name:   "logfmt",
+        Regex:  regexp.MustCompile(`(\w+)=("[^"]*"|\S+)`),
+        Fields: nil,  // Dynamic from matches
+        Confidence: 0.95,
+    },
+    // Common Log Format (Apache/Nginx)
+    {
+        Name:  "clf",
+        Regex: regexp.MustCompile(`^(\S+) \S+ \S+ \[([^\]]+)\] "(\S+) (\S+) (\S+)" (\d+) (\d+)`),
+        Fields: []FieldDefinition{
+            {Name: "client_ip", Index: 1, Type: "ip"},
+            {Name: "timestamp", Index: 2, Type: "timestamp"},
+            {Name: "method", Index: 3, Type: "string"},
+            {Name: "path", Index: 4, Type: "string"},
+            {Name: "protocol", Index: 5, Type: "string"},
+            {Name: "status", Index: 6, Type: "int"},
+            {Name: "bytes", Index: 7, Type: "int"},
+        },
+        Confidence: 0.90,
+    },
+    // Syslog
+    {
+        Name:  "syslog",
+        Regex: regexp.MustCompile(`^<(\d+)>(\w+ \d+ \d+:\d+:\d+) (\S+) (\S+): (.*)$`),
+        Fields: []FieldDefinition{
+            {Name: "priority", Index: 1, Type: "int"},
+            {Name: "timestamp", Index: 2, Type: "timestamp"},
+            {Name: "host", Index: 3, Type: "string"},
+            {Name: "program", Index: 4, Type: "string"},
+            {Name: "message", Index: 5, Type: "string"},
+        },
+        Confidence: 0.85,
+    },
+}
+
+// Automatic pattern learning
+type PatternLearner struct {
+    // Sample buffer
+    Samples []string
+
+    // Token frequency analysis
+    TokenFrequency map[string]int
+
+    // Position analysis
+    PositionPatterns map[int]map[string]int
+}
+
+func (l *PatternLearner) LearnPattern(samples []string) *LearnedPattern {
+    // Tokenize all samples
+    tokenized := make([][]Token, len(samples))
+    for i, s := range samples {
+        tokenized[i] = tokenize(s)
+    }
+
+    // Find common structure
+    // "2024-01-15 ERROR user=123" → [TIMESTAMP, LEVEL, FIELD=VALUE]
+    pattern := l.findCommonStructure(tokenized)
+
+    // Identify variable vs constant parts
+    // If position 0 is always a timestamp format → it's a timestamp field
+    // If position 2 varies but matches \w+=\S+ → it's a key-value field
+    for pos, tokens := range l.groupByPosition(tokenized) {
+        pattern.Positions[pos] = l.classifyPosition(tokens)
+    }
+
+    return pattern
+}
+
+// Smart field type inference
+func inferFieldType(values []string) FieldType {
+    // Sample values and detect type
+    var ints, floats, ips, timestamps, bools, strings int
+
+    for _, v := range values {
+        switch {
+        case isInt(v):
+            ints++
+        case isFloat(v):
+            floats++
+        case isIP(v):
+            ips++
+        case isTimestamp(v):
+            timestamps++
+        case isBool(v):
+            bools++
+        default:
+            strings++
+        }
+    }
+
+    total := len(values)
+    // Return most likely type (>80% match)
+    if float64(ints)/float64(total) > 0.8 {
+        return FieldTypeInt
+    }
+    if float64(ips)/float64(total) > 0.8 {
+        return FieldTypeIP
+    }
+    // ... etc
+
+    return FieldTypeString
+}
+```
+
+**Query-time extraction (for unknown patterns):**
+
+```go
+// User can define extraction at query time
+// logs | extract "user=(?P<user_id>\d+)" | where user_id = "12345"
+
+type ExtractOperator struct {
+    Pattern *regexp.Regexp
+    Fields  []string  // Named capture groups
+}
+
+func (e *ExtractOperator) Process(log *Log) *Log {
+    matches := e.Pattern.FindStringSubmatch(log.Message)
+    if matches == nil {
+        return log
+    }
+
+    // Add extracted fields
+    for i, name := range e.Pattern.SubexpNames() {
+        if name != "" && i < len(matches) {
+            log.Fields[name] = matches[i]
+        }
+    }
+
+    return log
+}
+```
+
+**The UI: Field discovery**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  🔍 Discovered Fields (auto-extracted)                       │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  From 1,247,832 logs in last hour:                          │
+│                                                              │
+│  Detected pattern: logfmt (94% of logs)                     │
+│                                                              │
+│  Fields found:                                               │
+│  ├── level      (string)  INFO: 89%, ERROR: 8%, WARN: 3%   │
+│  ├── service    (string)  api: 45%, worker: 35%, web: 20%  │
+│  ├── user_id    (int)     12,847 unique values             │
+│  ├── duration   (duration) p50: 23ms, p99: 450ms           │
+│  ├── status     (int)     200: 94%, 500: 4%, 404: 2%       │
+│  └── trace_id   (string)  can link to traces ✓             │
+│                                                              │
+│  [Create Index] [Add to Dashboard] [Set Up Alert]           │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Effort estimate:** 3-4 weeks for core extraction + learning
+
+---
+
+### 10. Multi-Signal Correlation Engine
+
+**The problem:** Logs, traces, and metrics are collected separately. Connecting them requires manual work.
+
+```
+User sees: Latency spike in metrics graph
+User wants: WHY? Show me the traces. Show me the error logs.
+
+Today's workflow:
+1. See spike in metrics at 10:23
+2. Open traces tab, filter by time
+3. Find slow traces manually
+4. Copy trace ID
+5. Open logs tab, search for trace ID
+6. Hope they're connected
+
+dogwatch workflow:
+1. Click on spike
+2. See correlated traces and logs automatically
+```
+
+**Implementation:**
+
+```go
+// Correlation engine maintains links between signals
+type CorrelationEngine struct {
+    // Index: trace_id → log entries
+    TraceToLogs map[string][]LogRef
+
+    // Index: trace_id → metric exemplars
+    TraceToMetrics map[string][]MetricRef
+
+    // Index: (service, time_bucket) → traces
+    ServiceTimeToTraces map[ServiceTimeKey][]TraceRef
+
+    // Index: (service, time_bucket) → logs
+    ServiceTimeToLogs map[ServiceTimeKey][]LogRef
+}
+
+// When ingesting a log, extract correlation keys
+func (e *CorrelationEngine) IndexLog(log *Log) {
+    // Try to find trace ID in various formats
+    traceID := e.extractTraceID(log)
+    if traceID != "" {
+        e.TraceToLogs[traceID] = append(e.TraceToLogs[traceID], log.Ref())
+    }
+
+    // Index by service + time for fuzzy correlation
+    key := ServiceTimeKey{
+        Service:    log.Service,
+        TimeBucket: log.Timestamp.Truncate(time.Second),
+    }
+    e.ServiceTimeToLogs[key] = append(e.ServiceTimeToLogs[key], log.Ref())
+}
+
+// Extract trace ID from various formats
+func (e *CorrelationEngine) extractTraceID(log *Log) string {
+    // Check structured fields first
+    for _, field := range []string{"trace_id", "traceId", "trace-id", "request_id", "X-Request-ID"} {
+        if val, ok := log.Fields[field]; ok {
+            return val
+        }
+    }
+
+    // Check common patterns in message
+    patterns := []*regexp.Regexp{
+        regexp.MustCompile(`trace_id=([a-f0-9]{32})`),
+        regexp.MustCompile(`traceId=([a-f0-9-]{36})`),
+        regexp.MustCompile(`\[([a-f0-9]{32})\]`),  // [traceid] format
+        regexp.MustCompile(`rid=([a-f0-9-]{36})`),
+    }
+
+    for _, p := range patterns {
+        if m := p.FindStringSubmatch(log.Message); m != nil {
+            return m[1]
+        }
+    }
+
+    return ""
+}
+
+// Metric exemplars: link metrics to traces
+type MetricPoint struct {
+    Timestamp time.Time
+    Value     float64
+    Labels    map[string]string
+
+    // Exemplar: a sample trace that contributed to this value
+    Exemplar  *Exemplar
+}
+
+type Exemplar struct {
+    TraceID   string
+    SpanID    string
+    Value     float64  // The specific value from this trace
+    Timestamp time.Time
+}
+
+// When recording a metric, optionally attach an exemplar
+func (r *MetricRecorder) RecordWithExemplar(name string, value float64, labels map[string]string, span *Span) {
+    point := &MetricPoint{
+        Timestamp: time.Now(),
+        Value:     value,
+        Labels:    labels,
+    }
+
+    // Attach exemplar with sampling
+    if r.shouldAttachExemplar(name) {
+        point.Exemplar = &Exemplar{
+            TraceID:   span.TraceID,
+            SpanID:    span.SpanID,
+            Value:     value,
+            Timestamp: span.StartTime,
+        }
+    }
+
+    r.store.Write(point)
+}
+```
+
+**Fuzzy correlation (when there's no trace ID):**
+
+```go
+// Correlate by service + time window + error signature
+type FuzzyCorrelator struct {
+    TimeWindow time.Duration  // e.g., 5 seconds
+}
+
+func (c *FuzzyCorrelator) FindRelatedLogs(span *Span) []*Log {
+    // Find logs from same service in time window
+    startTime := span.StartTime.Add(-c.TimeWindow)
+    endTime := span.EndTime.Add(c.TimeWindow)
+
+    logs := c.queryLogs(
+        span.Service,
+        startTime,
+        endTime,
+    )
+
+    // Rank by relevance
+    scored := make([]ScoredLog, len(logs))
+    for i, log := range logs {
+        scored[i] = ScoredLog{
+            Log:   log,
+            Score: c.scoreRelevance(span, log),
+        }
+    }
+
+    sort.Slice(scored, func(i, j int) bool {
+        return scored[i].Score > scored[j].Score
+    })
+
+    return top(scored, 10)
+}
+
+func (c *FuzzyCorrelator) scoreRelevance(span *Span, log *Log) float64 {
+    score := 0.0
+
+    // Time proximity (closer = higher score)
+    timeDiff := log.Timestamp.Sub(span.StartTime).Abs()
+    score += 1.0 / (1.0 + timeDiff.Seconds())
+
+    // Same error type?
+    if span.Status == ERROR && log.Level == "error" {
+        score += 2.0
+    }
+
+    // Same endpoint?
+    if strings.Contains(log.Message, span.Operation) {
+        score += 1.5
+    }
+
+    // Same user/request context?
+    if span.Tags["user_id"] != "" && strings.Contains(log.Message, span.Tags["user_id"]) {
+        score += 3.0
+    }
+
+    return score
+}
+```
+
+**The UI: Unified view**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  📊 Latency Spike Investigation                              │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Metric: http_request_duration_seconds (p99)                │
+│  Time: 2024-01-15 10:23:00 - 10:28:00                       │
+│  Spike: 450ms → 2.3s (5x increase)                          │
+│                                                              │
+│  ═══════════════════════════════════════════════════════    │
+│                                                              │
+│  🔗 Correlated Traces (47 found)                            │
+│  ├── GET /api/checkout  2.4s  ERROR  trace:abc123          │
+│  ├── GET /api/checkout  2.1s  ERROR  trace:def456          │
+│  ├── GET /api/checkout  1.9s  OK     trace:ghi789          │
+│  └── [View all 47 traces]                                   │
+│                                                              │
+│  📝 Correlated Logs (312 found)                             │
+│  ├── ERROR [payment-service] timeout connecting to stripe   │
+│  ├── ERROR [payment-service] retry 1/3 failed              │
+│  ├── WARN  [api-gateway] upstream latency exceeded SLO      │
+│  └── [View all 312 logs]                                    │
+│                                                              │
+│  🔄 Changes in Window                                       │
+│  ├── 10:21 Deploy: payment-service v2.4.1 → v2.4.2         │
+│  └── [View deploy diff]                                     │
+│                                                              │
+│  🎯 BubbleUp Analysis                                       │
+│  └── 94% of slow requests hit payment-service               │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Effort estimate:** 4-5 weeks for full correlation engine
+
+---
+
+### 11. SQLite Time-Series Optimization
+
+**The problem:** SQLite isn't designed for time-series. Naive implementation = slow queries.
+
+```
+Naive schema:
+CREATE TABLE metrics (
+    timestamp INTEGER,
+    name TEXT,
+    value REAL,
+    labels TEXT  -- JSON blob
+);
+
+Query: "Get cpu_usage for service=api, last hour, 1-minute buckets"
+
+SELECT
+    (timestamp / 60000) * 60000 as bucket,
+    AVG(value)
+FROM metrics
+WHERE name = 'cpu_usage'
+  AND json_extract(labels, '$.service') = 'api'
+  AND timestamp > ?
+GROUP BY bucket;
+
+Problem: Full table scan, JSON parsing on every row = SLOW
+```
+
+**The moat: Domain-specific optimizations**
+
+```go
+// Optimized schema for time-series
+const schema = `
+-- Metric names are interned (stored once)
+CREATE TABLE metric_names (
+    id INTEGER PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL
+);
+
+-- Label sets are interned and indexed
+CREATE TABLE label_sets (
+    id INTEGER PRIMARY KEY,
+    hash INTEGER NOT NULL,           -- Fast lookup
+    labels BLOB NOT NULL,            -- Compressed label key-values
+    UNIQUE(hash, labels)
+);
+
+-- Separate tables per metric (Prometheus-style)
+-- Created dynamically: metrics_cpu_usage, metrics_http_requests, etc.
+-- This avoids the "name = ?" filter on every query
+
+-- Time-partitioned tables (one per day)
+-- metrics_cpu_usage_20240115, metrics_cpu_usage_20240116, etc.
+-- Old partitions can be dropped without VACUUM
+
+-- Actual data storage (per metric, per day)
+CREATE TABLE metrics_cpu_usage_20240115 (
+    timestamp INTEGER NOT NULL,
+    label_set_id INTEGER NOT NULL,
+    value REAL NOT NULL
+);
+
+-- Covering index: timestamp + labels for range queries
+CREATE INDEX idx_metrics_cpu_usage_20240115_ts_labels
+ON metrics_cpu_usage_20240115(timestamp, label_set_id);
+`
+
+// Write path: batch and compress
+type MetricWriter struct {
+    buffer    []MetricPoint
+    batchSize int
+    labelCache *LRUCache  // Avoid repeated label lookups
+}
+
+func (w *MetricWriter) Write(point MetricPoint) error {
+    // Intern label set
+    labelSetID := w.getOrCreateLabelSet(point.Labels)
+
+    w.buffer = append(w.buffer, MetricPoint{
+        Timestamp:   point.Timestamp,
+        LabelSetID:  labelSetID,
+        Value:       point.Value,
+    })
+
+    if len(w.buffer) >= w.batchSize {
+        return w.flush()
+    }
+    return nil
+}
+
+func (w *MetricWriter) flush() error {
+    // Sort by timestamp for sequential writes
+    sort.Slice(w.buffer, func(i, j int) bool {
+        return w.buffer[i].Timestamp < w.buffer[j].Timestamp
+    })
+
+    // Batch insert
+    tx, _ := w.db.Begin()
+    stmt, _ := tx.Prepare("INSERT INTO metrics_cpu_usage_? VALUES (?, ?, ?)")
+
+    for _, p := range w.buffer {
+        partition := p.Timestamp.Format("20060102")
+        stmt.Exec(partition, p.Timestamp.UnixMilli(), p.LabelSetID, p.Value)
+    }
+
+    tx.Commit()
+    w.buffer = w.buffer[:0]
+    return nil
+}
+```
+
+**Query optimizations:**
+
+```go
+// Query planner that uses partitions and indexes effectively
+type QueryPlanner struct {
+    db *sql.DB
+}
+
+func (p *QueryPlanner) PlanQuery(q *MetricQuery) (*QueryPlan, error) {
+    plan := &QueryPlan{}
+
+    // Determine which partitions to query
+    startDay := q.Start.Truncate(24 * time.Hour)
+    endDay := q.End.Truncate(24 * time.Hour)
+
+    for day := startDay; !day.After(endDay); day = day.Add(24 * time.Hour) {
+        partition := fmt.Sprintf("metrics_%s_%s", q.MetricName, day.Format("20060102"))
+        if p.partitionExists(partition) {
+            plan.Partitions = append(plan.Partitions, partition)
+        }
+    }
+
+    // Resolve label filters to label_set_ids
+    if len(q.LabelFilters) > 0 {
+        plan.LabelSetIDs = p.resolveLabelSets(q.LabelFilters)
+        // If we know the exact label sets, use IN clause (fast)
+        // Otherwise, fall back to join
+    }
+
+    // Choose aggregation strategy
+    if q.Step >= time.Minute {
+        // Pre-aggregate at query time using SQLite window functions
+        plan.Strategy = "window_agg"
+    } else {
+        // Raw data, aggregate in Go
+        plan.Strategy = "raw_then_agg"
+    }
+
+    return plan, nil
+}
+
+// Example optimized query
+func (p *QueryPlanner) BuildSQL(plan *QueryPlan) string {
+    if len(plan.LabelSetIDs) > 0 && len(plan.LabelSetIDs) < 1000 {
+        // Fast path: we know exactly which label sets
+        return fmt.Sprintf(`
+            SELECT
+                (timestamp / %d) * %d as bucket,
+                AVG(value) as value
+            FROM %s
+            WHERE timestamp BETWEEN ? AND ?
+              AND label_set_id IN (%s)
+            GROUP BY bucket
+            ORDER BY bucket
+        `, plan.BucketMs, plan.BucketMs,
+           plan.Partitions[0],
+           joinInts(plan.LabelSetIDs))
+    }
+
+    // Slower path: join with label_sets table
+    return `...`
+}
+```
+
+**Compression for older data:**
+
+```go
+// Downsample old data to save space
+type RetentionManager struct {
+    rules []RetentionRule
+}
+
+type RetentionRule struct {
+    Age       time.Duration
+    Action    RetentionAction
+}
+
+var DefaultRetention = []RetentionRule{
+    // Last 24 hours: full resolution
+    {Age: 24 * time.Hour, Action: KEEP_RAW},
+
+    // 1-7 days: 1-minute resolution
+    {Age: 7 * 24 * time.Hour, Action: DOWNSAMPLE_1M},
+
+    // 7-30 days: 5-minute resolution
+    {Age: 30 * 24 * time.Hour, Action: DOWNSAMPLE_5M},
+
+    // 30-90 days: 1-hour resolution
+    {Age: 90 * 24 * time.Hour, Action: DOWNSAMPLE_1H},
+
+    // Older: delete
+    {Age: 0, Action: DELETE},
+}
+
+func (m *RetentionManager) Compact(partition string) error {
+    // Read old data
+    // Aggregate into buckets
+    // Write to new partition
+    // Drop old partition
+}
+```
+
+**Benchmarks to target:**
+
+| Query | Naive | Optimized | Target |
+|-------|-------|-----------|--------|
+| Last hour, single metric | 2s | 50ms | <100ms |
+| Last day, 10 metrics | 30s | 200ms | <500ms |
+| Last week, aggregated | 5min | 1s | <2s |
+| Last month, 1h buckets | timeout | 3s | <5s |
+
+**Effort estimate:** 4-6 weeks for full optimization
+
+---
+
+### 12. Cardinality Bomb Prevention
+
+**The problem:** One bad label can create millions of metric series and kill your storage.
+
+```
+Innocent-looking metric:
+  http_requests_total{method="GET", path="/api/users", user_id="12345"}
+
+Seems fine until:
+  - 1 million users
+  - 100 endpoints
+  - 5 methods
+  = 500 million series
+
+Storage: explodes
+Queries: timeout
+Bill (if Datadog): $$$$$
+```
+
+**The moat: Real-time cardinality detection and prevention**
+
+```go
+// Cardinality tracker with bloom filters for efficiency
+type CardinalityTracker struct {
+    // Per-metric cardinality estimates
+    Metrics map[string]*MetricCardinality
+
+    // Global limits
+    MaxSeriesPerMetric int64
+    MaxTotalSeries     int64
+
+    // Alert thresholds
+    WarnThreshold float64  // 0.7 = warn at 70% of limit
+}
+
+type MetricCardinality struct {
+    MetricName string
+
+    // HyperLogLog for cardinality estimation (memory efficient)
+    SeriesHLL *hyperloglog.Sketch
+
+    // Per-label cardinality
+    LabelCardinality map[string]*hyperloglog.Sketch
+
+    // Exact count for small cardinalities
+    ExactCount int64
+    UseExact   bool  // Switch to HLL after threshold
+
+    // Tracking
+    FirstSeen time.Time
+    LastSeen  time.Time
+
+    // Alerts
+    OverLimit bool
+    Warnings  []CardinalityWarning
+}
+
+// On every metric write
+func (t *CardinalityTracker) Track(metric string, labels map[string]string) error {
+    mc := t.getOrCreate(metric)
+
+    // Build series key
+    seriesKey := buildSeriesKey(metric, labels)
+
+    // Update HLL
+    mc.SeriesHLL.Insert([]byte(seriesKey))
+    estimatedCardinality := mc.SeriesHLL.Estimate()
+
+    // Check limits
+    if estimatedCardinality > float64(t.MaxSeriesPerMetric) {
+        if !mc.OverLimit {
+            mc.OverLimit = true
+            t.alertCardinalityExplosion(mc)
+        }
+        return ErrCardinalityLimitExceeded
+    }
+
+    // Track per-label cardinality
+    for label, value := range labels {
+        if mc.LabelCardinality[label] == nil {
+            mc.LabelCardinality[label] = hyperloglog.New14()
+        }
+        mc.LabelCardinality[label].Insert([]byte(value))
+    }
+
+    return nil
+}
+
+// Find the problematic labels
+func (mc *MetricCardinality) FindHighCardinalityLabels() []LabelAnalysis {
+    results := []LabelAnalysis{}
+
+    totalCardinality := mc.SeriesHLL.Estimate()
+
+    for label, hll := range mc.LabelCardinality {
+        labelCardinality := hll.Estimate()
+
+        // This label contributes to cardinality explosion if:
+        // - It has many unique values
+        // - Removing it would significantly reduce total cardinality
+        results = append(results, LabelAnalysis{
+            Label:           label,
+            UniqueValues:    int64(labelCardinality),
+            ContributionPct: (labelCardinality / totalCardinality) * 100,
+            Recommendation:  recommendAction(label, labelCardinality),
+        })
+    }
+
+    sort.Slice(results, func(i, j int) bool {
+        return results[i].UniqueValues > results[j].UniqueValues
+    })
+
+    return results
+}
+
+func recommendAction(label string, cardinality float64) string {
+    // Known high-cardinality labels that are usually mistakes
+    badLabels := map[string]string{
+        "user_id":     "Consider removing or using bucket ranges",
+        "request_id":  "Remove - unique per request, useless for metrics",
+        "timestamp":   "Remove - already in time dimension",
+        "trace_id":    "Remove - use exemplars instead",
+        "session_id":  "Remove or sample",
+        "ip":          "Consider using IP ranges or geo",
+        "url":         "Consider using path templates",
+        "query":       "Remove - use logs for full queries",
+    }
+
+    if rec, ok := badLabels[label]; ok {
+        return rec
+    }
+
+    if cardinality > 10000 {
+        return "High cardinality - consider aggregating or removing"
+    }
+
+    return "OK"
+}
+```
+
+**Prevention at ingest:**
+
+```go
+// Configurable cardinality limits
+type CardinalityLimiter struct {
+    Rules []CardinalityRule
+}
+
+type CardinalityRule struct {
+    MetricMatch string           // Regex for metric name
+    MaxSeries   int64            // Max series for this metric
+    LabelRules  []LabelRule
+    Action      LimitAction      // REJECT, DROP_LABELS, AGGREGATE
+}
+
+type LabelRule struct {
+    Label       string
+    MaxValues   int64            // Max unique values
+    Action      LimitAction
+}
+
+func (l *CardinalityLimiter) Check(metric string, labels map[string]string) (*LimitResult, error) {
+    for _, rule := range l.Rules {
+        if !rule.Matches(metric) {
+            continue
+        }
+
+        // Check metric-level limit
+        if rule.MaxSeries > 0 {
+            current := l.tracker.GetCardinality(metric)
+            if current >= rule.MaxSeries {
+                switch rule.Action {
+                case REJECT:
+                    return &LimitResult{Rejected: true, Reason: "series limit exceeded"}, nil
+                case DROP_LABELS:
+                    labels = l.dropHighCardinalityLabels(metric, labels)
+                case AGGREGATE:
+                    labels = l.aggregateLabels(metric, labels)
+                }
+            }
+        }
+
+        // Check label-level limits
+        for _, lr := range rule.LabelRules {
+            if val, ok := labels[lr.Label]; ok {
+                labelCard := l.tracker.GetLabelCardinality(metric, lr.Label)
+                if labelCard >= lr.MaxValues {
+                    switch lr.Action {
+                    case DROP_LABELS:
+                        delete(labels, lr.Label)
+                    case AGGREGATE:
+                        labels[lr.Label] = l.bucketize(lr.Label, val)
+                    }
+                }
+            }
+        }
+    }
+
+    return &LimitResult{Labels: labels}, nil
+}
+
+// Auto-bucketize high-cardinality values
+func (l *CardinalityLimiter) bucketize(label, value string) string {
+    switch label {
+    case "user_id":
+        // user_id=12345 → user_id_bucket=12000-13000
+        if id, err := strconv.ParseInt(value, 10, 64); err == nil {
+            bucket := (id / 1000) * 1000
+            return fmt.Sprintf("%d-%d", bucket, bucket+1000)
+        }
+    case "latency_ms":
+        // latency_ms=347 → latency_bucket=200-500
+        if ms, err := strconv.ParseInt(value, 10, 64); err == nil {
+            for _, bound := range []int64{10, 50, 100, 200, 500, 1000, 5000} {
+                if ms < bound {
+                    return fmt.Sprintf("<%d", bound)
+                }
+            }
+            return ">=5000"
+        }
+    }
+    return value
+}
+```
+
+**The UI: Cardinality dashboard**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  ⚠️ Cardinality Alert: http_requests_total                   │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Current series: 847,234 (limit: 1,000,000)                 │
+│  Growth rate: +12,000/hour                                   │
+│  Time to limit: ~12 hours                                    │
+│                                                              │
+│  High-cardinality labels:                                   │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │  Label        Unique Values    Recommendation          │  │
+│  │  ─────────────────────────────────────────────────────│  │
+│  │  user_id      234,847          ⚠️ Remove or bucket     │  │
+│  │  path         12,847           ⚠️ Use path templates   │  │
+│  │  method       5                ✅ OK                   │  │
+│  │  status       8                ✅ OK                   │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                              │
+│  💡 Suggestion: Remove 'user_id' label                      │
+│     Impact: Reduces to ~847 series (99.9% reduction)        │
+│     Queries affected: None (label never used in dashboards) │
+│                                                              │
+│  [Apply Fix] [Ignore] [Set Up Alert Rule]                   │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Effort estimate:** 3-4 weeks
+
+---
+
+### 13. Hot Probe Reload
+
+**The problem:** Updating eBPF probes requires restart. Restart = data gap.
+
+```
+Traditional flow:
+1. New probe version ready
+2. Stop dogwatch
+3. Start dogwatch with new probes
+4. Gap: 30-60 seconds of missing data
+5. Users notice. Alerts fire. Panic.
+```
+
+**The moat: Zero-downtime probe updates**
+
+```go
+// Probe manager that supports hot reload
+type ProbeManager struct {
+    // Currently loaded probes
+    active map[string]*LoadedProbe
+
+    // Pending probes (being loaded)
+    pending map[string]*LoadedProbe
+
+    // BPF filesystem for pinning
+    bpfFS string
+}
+
+type LoadedProbe struct {
+    Name       string
+    Version    string
+    Collection *ebpf.Collection
+    Links      []link.Link
+    StartTime  time.Time
+}
+
+func (m *ProbeManager) HotReload(name string, newProbe []byte) error {
+    old := m.active[name]
+
+    // 1. Load new probe (doesn't attach yet)
+    newCollection, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(newProbe))
+    if err != nil {
+        return fmt.Errorf("failed to load new probe: %w", err)
+    }
+
+    // 2. Pin new maps to BPF filesystem (for persistence)
+    for mapName, m := range newCollection.Maps {
+        pinPath := filepath.Join(m.bpfFS, name, mapName)
+        if err := m.Pin(pinPath); err != nil {
+            return fmt.Errorf("failed to pin map %s: %w", mapName, err)
+        }
+    }
+
+    // 3. Attach new probe (now collecting data)
+    var newLinks []link.Link
+    for progName, prog := range newCollection.Programs {
+        l, err := m.attachProgram(prog, progName)
+        if err != nil {
+            // Rollback: close new links, keep old probe
+            for _, l := range newLinks {
+                l.Close()
+            }
+            return fmt.Errorf("failed to attach %s: %w", progName, err)
+        }
+        newLinks = append(newLinks, l)
+    }
+
+    // 4. Brief overlap: both probes collecting (dedup in userspace)
+    m.pending[name] = &LoadedProbe{
+        Name:       name,
+        Version:    extractVersion(newProbe),
+        Collection: newCollection,
+        Links:      newLinks,
+        StartTime:  time.Now(),
+    }
+
+    // 5. Drain old probe (wait for in-flight events)
+    time.Sleep(100 * time.Millisecond)
+
+    // 6. Detach old probe
+    if old != nil {
+        for _, l := range old.Links {
+            l.Close()
+        }
+        old.Collection.Close()
+    }
+
+    // 7. Promote new probe to active
+    m.active[name] = m.pending[name]
+    delete(m.pending, name)
+
+    log.Printf("Hot reloaded probe %s: %s → %s", name, old.Version, m.active[name].Version)
+    return nil
+}
+
+// Map reuse: share maps between old and new probes
+func (m *ProbeManager) reuseMaps(old, new *ebpf.CollectionSpec) {
+    for mapName := range new.Maps {
+        if oldMap, ok := old.Maps[mapName]; ok {
+            // Reuse existing map (preserves data)
+            pinPath := filepath.Join(m.bpfFS, mapName)
+            if pinnedMap, err := ebpf.LoadPinnedMap(pinPath, nil); err == nil {
+                new.Maps[mapName] = pinnedMap
+            }
+        }
+    }
+}
+```
+
+**Graceful version transition:**
+
+```go
+// During reload, both versions may send events
+// Deduplicate based on event ID
+type EventDeduplicator struct {
+    // Recent event IDs (bloom filter for memory efficiency)
+    seen *bloom.BloomFilter
+
+    // Window for deduplication
+    window time.Duration
+}
+
+func (d *EventDeduplicator) IsDuplicate(event *Event) bool {
+    key := fmt.Sprintf("%d:%d:%d", event.PID, event.TID, event.Timestamp)
+
+    if d.seen.Test([]byte(key)) {
+        return true
+    }
+
+    d.seen.Add([]byte(key))
+    return false
+}
+```
+
+**API for remote reload:**
+
+```go
+// HTTP endpoint for triggering reload
+func (s *Server) handleProbeReload(w http.ResponseWriter, r *http.Request) {
+    probeName := r.URL.Query().Get("probe")
+
+    // Option 1: Reload from embedded (new binary)
+    if r.URL.Query().Get("source") == "embedded" {
+        probeBytes := embeddedProbes[probeName]
+        if err := s.probeManager.HotReload(probeName, probeBytes); err != nil {
+            http.Error(w, err.Error(), 500)
+            return
+        }
+    }
+
+    // Option 2: Reload from URL (remote update)
+    if url := r.URL.Query().Get("url"); url != "" {
+        probeBytes, err := fetchProbe(url)
+        if err != nil {
+            http.Error(w, err.Error(), 500)
+            return
+        }
+        if err := s.probeManager.HotReload(probeName, probeBytes); err != nil {
+            http.Error(w, err.Error(), 500)
+            return
+        }
+    }
+
+    w.Write([]byte("OK"))
+}
+```
+
+**Effort estimate:** 2-3 weeks
+
+---
+
+### 14. Clock Skew Tolerance
+
+**The problem:** Distributed systems have clock drift. Traces look wrong when clocks disagree.
+
+```
+Reality:
+  Host A clock: 10:00:00.000 (correct)
+  Host B clock: 10:00:00.500 (500ms ahead)
+  Host C clock: 09:59:59.200 (800ms behind)
+
+What happened:
+  A → B → C (sequential)
+
+What trace shows with raw timestamps:
+  C: 09:59:59.200 (appears first!)
+  A: 10:00:00.000
+  B: 10:00:00.500 (appears last!)
+
+User sees: "C started before A even sent the request?!"
+```
+
+**The moat: Automatic clock skew detection and correction**
+
+```go
+// Clock skew detector using span relationships
+type ClockSkewDetector struct {
+    // Per-host estimated skew
+    HostSkew map[string]*SkewEstimate
+
+    // Reference host (assumed correct, or uses external NTP)
+    ReferenceHost string
+}
+
+type SkewEstimate struct {
+    Host      string
+    Offset    time.Duration  // How far ahead/behind
+    Confidence float64       // 0-1, based on sample count
+    Samples   int
+    LastUpdate time.Time
+}
+
+// Detect skew from parent-child span relationships
+func (d *ClockSkewDetector) DetectSkew(parent, child *Span) {
+    if parent.Host == child.Host {
+        return  // Same host, no skew to detect
+    }
+
+    // Child should start AFTER parent starts
+    // Child should end BEFORE parent ends (usually)
+
+    // If child appears to start before parent sent request,
+    // child's clock is behind
+    expectedChildStart := parent.StartTime.Add(parent.NetworkLatency)
+    observedChildStart := child.StartTime
+
+    skew := observedChildStart.Sub(expectedChildStart)
+
+    // Update estimate with exponential moving average
+    d.updateSkew(child.Host, skew)
+}
+
+func (d *ClockSkewDetector) updateSkew(host string, observedSkew time.Duration) {
+    est := d.HostSkew[host]
+    if est == nil {
+        est = &SkewEstimate{Host: host}
+        d.HostSkew[host] = est
+    }
+
+    // Exponential moving average
+    alpha := 0.1
+    est.Offset = time.Duration(float64(est.Offset)*(1-alpha) + float64(observedSkew)*alpha)
+    est.Samples++
+    est.Confidence = math.Min(1.0, float64(est.Samples)/100)
+    est.LastUpdate = time.Now()
+}
+
+// Apply correction when displaying traces
+func (d *ClockSkewDetector) Correct(span *Span) *Span {
+    corrected := *span
+
+    if est, ok := d.HostSkew[span.Host]; ok && est.Confidence > 0.5 {
+        corrected.StartTime = span.StartTime.Add(-est.Offset)
+        corrected.EndTime = span.EndTime.Add(-est.Offset)
+        corrected.ClockCorrected = true
+        corrected.CorrectionApplied = est.Offset
+    }
+
+    return &corrected
+}
+```
+
+**Causal ordering enforcement:**
+
+```go
+// Even after correction, enforce causal ordering
+type TraceOrderer struct{}
+
+func (o *TraceOrderer) EnforceOrdering(trace *Trace) *Trace {
+    // Build parent-child relationships
+    children := make(map[string][]*Span)
+    for _, span := range trace.Spans {
+        if span.ParentID != "" {
+            children[span.ParentID] = append(children[span.ParentID], span)
+        }
+    }
+
+    // Recursively fix ordering
+    root := trace.RootSpan()
+    o.fixOrdering(root, children)
+
+    return trace
+}
+
+func (o *TraceOrderer) fixOrdering(parent *Span, children map[string][]*Span) {
+    for _, child := range children[parent.SpanID] {
+        // Child must start after parent starts
+        if child.StartTime.Before(parent.StartTime) {
+            child.StartTime = parent.StartTime.Add(1 * time.Microsecond)
+            child.ClockAdjusted = true
+        }
+
+        // Child must end before parent ends (with some slack for async)
+        if child.EndTime.After(parent.EndTime.Add(100 * time.Millisecond)) {
+            // This might be legitimate async - flag but don't adjust
+            child.MayBeAsync = true
+        }
+
+        // Recurse
+        o.fixOrdering(child, children)
+    }
+}
+```
+
+**Effort estimate:** 2-3 weeks
+
+---
+
+### 15. Memory-Efficient Operation
+
+**The problem:** Observability tools are memory hogs. Can't run on small instances.
+
+```
+Typical observability memory usage:
+  Prometheus: 2-8 GB
+  Elasticsearch: 4-32 GB
+  Datadog Agent: 500 MB - 2 GB
+
+dogwatch target:
+  Base: 100-200 MB
+  Per 1000 spans/sec: +50 MB
+  Per 10000 metrics: +20 MB
+```
+
+**The moat: Aggressive memory optimization**
+
+```go
+// Object pooling to reduce GC pressure
+var spanPool = sync.Pool{
+    New: func() interface{} {
+        return &Span{
+            Tags: make(map[string]string, 8),  // Pre-allocate common size
+        }
+    },
+}
+
+func NewSpan() *Span {
+    span := spanPool.Get().(*Span)
+    // Reset fields
+    span.TraceID = ""
+    span.SpanID = ""
+    span.ParentID = ""
+    for k := range span.Tags {
+        delete(span.Tags, k)
+    }
+    return span
+}
+
+func ReleaseSpan(span *Span) {
+    spanPool.Put(span)
+}
+
+// String interning for repeated values
+type StringInterner struct {
+    mu      sync.RWMutex
+    strings map[string]string
+    size    int
+    maxSize int
+}
+
+func (i *StringInterner) Intern(s string) string {
+    i.mu.RLock()
+    if interned, ok := i.strings[s]; ok {
+        i.mu.RUnlock()
+        return interned
+    }
+    i.mu.RUnlock()
+
+    i.mu.Lock()
+    defer i.mu.Unlock()
+
+    // Double-check after acquiring write lock
+    if interned, ok := i.strings[s]; ok {
+        return interned
+    }
+
+    // Evict if too large
+    if i.size >= i.maxSize {
+        i.evictOldest()
+    }
+
+    i.strings[s] = s
+    i.size++
+    return s
+}
+
+// Use interning for common fields
+func (p *Parser) parseSpan(data []byte) *Span {
+    span := NewSpan()
+
+    // These fields have low cardinality - intern them
+    span.Service = p.interner.Intern(extractService(data))
+    span.Operation = p.interner.Intern(extractOperation(data))
+
+    // These fields are high cardinality - don't intern
+    span.TraceID = extractTraceID(data)
+    span.SpanID = extractSpanID(data)
+
+    return span
+}
+
+// Streaming aggregation (don't buffer everything)
+type StreamingAggregator struct {
+    // Current bucket being aggregated
+    currentBucket time.Time
+    aggregates    map[string]*RunningStats
+
+    // Flush completed buckets
+    flushChan chan *CompletedBucket
+}
+
+type RunningStats struct {
+    Count int64
+    Sum   float64
+    Min   float64
+    Max   float64
+    // For percentiles: t-digest or DDSketch (memory-bounded)
+    Sketch *tdigest.TDigest
+}
+
+func (a *StreamingAggregator) Add(metric string, value float64, ts time.Time) {
+    bucket := ts.Truncate(time.Minute)
+
+    // Flush old bucket if we've moved on
+    if bucket.After(a.currentBucket) {
+        a.flush()
+        a.currentBucket = bucket
+    }
+
+    // Update running stats (constant memory)
+    stats := a.aggregates[metric]
+    if stats == nil {
+        stats = &RunningStats{
+            Min:    math.MaxFloat64,
+            Max:    -math.MaxFloat64,
+            Sketch: tdigest.NewWithCompression(100),
+        }
+        a.aggregates[metric] = stats
+    }
+
+    stats.Count++
+    stats.Sum += value
+    stats.Min = math.Min(stats.Min, value)
+    stats.Max = math.Max(stats.Max, value)
+    stats.Sketch.Add(value, 1)
+}
+
+// Memory-mapped storage for large datasets
+type MmapStorage struct {
+    file *os.File
+    mmap mmap.MMap
+    size int64
+}
+
+func (s *MmapStorage) Read(offset, length int64) []byte {
+    return s.mmap[offset : offset+length]
+}
+
+// Compaction to recover memory
+func (s *Storage) Compact() error {
+    // SQLite VACUUM
+    _, err := s.db.Exec("VACUUM")
+    return err
+}
+
+// Memory pressure response
+type MemoryManager struct {
+    limit     int64
+    current   int64
+    onPressure func()
+}
+
+func (m *MemoryManager) Monitor() {
+    ticker := time.NewTicker(10 * time.Second)
+    for range ticker.C {
+        var stats runtime.MemStats
+        runtime.ReadMemStats(&stats)
+
+        m.current = int64(stats.Alloc)
+
+        if m.current > int64(float64(m.limit)*0.8) {
+            // Memory pressure - take action
+            log.Printf("Memory pressure: %d / %d", m.current, m.limit)
+
+            // 1. Force GC
+            runtime.GC()
+
+            // 2. Clear caches
+            m.onPressure()
+
+            // 3. Increase sampling rate (ingest less)
+            // 4. Drop oldest data
+        }
+    }
+}
+```
+
+**Memory budget enforcement:**
+
+```go
+// Limit memory per component
+type MemoryBudget struct {
+    Total      int64
+    Components map[string]int64
+}
+
+var DefaultBudget = MemoryBudget{
+    Total: 500 * 1024 * 1024,  // 500 MB total
+    Components: map[string]int64{
+        "traces":     100 * 1024 * 1024,
+        "metrics":    100 * 1024 * 1024,
+        "logs":       100 * 1024 * 1024,
+        "indexes":    50 * 1024 * 1024,
+        "cache":      50 * 1024 * 1024,
+        "buffers":    50 * 1024 * 1024,
+        "overhead":   50 * 1024 * 1024,
+    },
+}
+```
+
+**Effort estimate:** 3-4 weeks for comprehensive optimization
+
+---
+
+### Summary: Technical Moat Investment (Updated)
+
+| Moat Area | Effort | Defensibility | Priority |
+|-----------|--------|---------------|----------|
+| **Kernel compatibility** | 4-6 weeks | High | P1 - Do early |
+| **TLS interception** | 6-8 weeks | Very High | P1 - Core feature |
+| **Protocol edge cases** | 8-12 weeks | High | P0 - This IS the product |
+| **Correlation accuracy** | 4-6 weeks | High | P0 - This IS the product |
+| **Continuous profiling** | 2-3 weeks (integrate) | Medium | P2 - Can use Pyroscope |
+| **Security false positives** | 4-6 weeks | High | P2 - After core works |
+| **Migration fidelity** | 4-6 weeks | Very High | P1 - Your unique advantage |
+| **Intelligent sampling** | 3-4 weeks | High | P1 - Required for scale |
+| **Log field extraction** | 3-4 weeks | Medium | P2 - Nice to have |
+| **Multi-signal correlation** | 4-5 weeks | High | P1 - Key differentiator |
+| **SQLite optimization** | 4-6 weeks | High | P1 - Performance is table stakes |
+| **Cardinality prevention** | 3-4 weeks | High | P1 - Saves users from themselves |
+| **Hot probe reload** | 2-3 weeks | Medium | P2 - Nice for operations |
+| **Clock skew tolerance** | 2-3 weeks | Medium | P2 - Polish |
+| **Memory efficiency** | 3-4 weeks | High | P1 - Run on small instances |
+
+**Total investment for deep technical moats: 55-85 weeks**
+
+This isn't feature work. This is the hard engineering that makes competitors say "we'll just integrate with something else" instead of building it themselves.
+
+---
+
+## Competitive Weaknesses to Exploit
+
+Every established player has pain points they can't easily fix due to architecture decisions, business model constraints, or organizational inertia. These are opportunities for dogwatch to iterate faster and win.
+
+---
+
+### Pixie (New Relic) Weaknesses
+
+**Background:** Pixie was the eBPF tracing pioneer. Acquired by New Relic in 2021. Now tightly coupled to New Relic's ecosystem.
+
+#### 1. Kubernetes-Only
+
+```
+Pixie's limitation:
+├── ONLY works on Kubernetes
+├── No bare metal support
+├── No VM support (EC2, GCE without K8s)
+├── No Docker Compose / Swarm
+└── No edge devices / IoT
+
+Reality check:
+├── 40% of workloads still run on VMs
+├── Many companies have mixed environments
+├── Edge computing is growing
+└── Not everyone is on K8s yet
+```
+
+**dogwatch advantage:**
+```go
+// Works everywhere Linux runs
+func main() {
+    // Detect environment automatically
+    switch detectEnvironment() {
+    case "kubernetes":
+        enrichWithK8sMetadata()
+    case "docker":
+        enrichWithDockerMetadata()
+    case "systemd":
+        enrichWithSystemdMetadata()
+    case "bare_metal":
+        enrichWithHostMetadata()
+    }
+
+    // Same eBPF probes work everywhere
+    startProbes()
+}
+```
+
+**Iteration opportunity:**
+- First-class support for non-K8s environments
+- "Works on your $5 VPS" messaging
+- Target the 40% not on Kubernetes
+- Edge/IoT deployments (single binary is perfect)
+
+#### 2. No Long-Term Retention
+
+```
+Pixie's architecture:
+├── Data stays in-cluster (privacy feature)
+├── Stored in memory only
+├── Default retention: ~24 hours
+├── Can't query last week's data
+└── No historical analysis
+
+Why they can't fix it:
+├── "Data never leaves your cluster" is their pitch
+├── Adding storage breaks the simplicity
+├── New Relic wants you to export to their cloud ($$$)
+└── Architectural decision baked in
+```
+
+**dogwatch advantage:**
+```go
+// SQLite = persistent by default
+// Can query data from months ago
+// Simple retention policies
+
+type RetentionConfig struct {
+    Traces   time.Duration  // default: 7 days
+    Metrics  time.Duration  // default: 30 days
+    Logs     time.Duration  // default: 14 days
+}
+
+// "What was happening last Tuesday at 3am?"
+// Pixie: "Sorry, that data is gone"
+// dogwatch: "Here you go"
+```
+
+**Iteration opportunity:**
+- "Keep your data as long as you want"
+- Historical analysis features (compare this week vs last week)
+- Long-term trend detection
+- Compliance requirements (some need 90+ days retention)
+
+#### 3. Complex Query Language (PxL)
+
+```python
+# Pixie's PxL - it's... different
+import px
+
+df = px.DataFrame('http_events')
+df = df[df['service'] == 'api-server']
+df = df.groupby('req_path').agg(
+    latency_p99=('latency', px.quantiles, 0.99),
+    count=('latency', px.count),
+)
+px.display(df)
+```
+
+```
+Problems:
+├── Python-like but not Python
+├── Can't use in dashboards easily
+├── Learning curve for non-Python devs
+├── No PromQL compatibility
+├── Hard to share queries
+└── IDE support is limited
+```
+
+**dogwatch advantage:**
+```sql
+-- DQL: Familiar SQL-like syntax
+SELECT
+    req_path,
+    percentile(latency, 0.99) as p99,
+    count(*) as count
+FROM http_events
+WHERE service = 'api-server'
+GROUP BY req_path
+
+-- Or use PromQL for metrics (everyone knows it)
+histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m]))
+```
+
+**Iteration opportunity:**
+- PromQL compatibility (people already know it)
+- SQL-like query language (everyone knows SQL)
+- Copy-paste queries from Stack Overflow
+- Better IDE/editor support
+
+#### 4. Resource Hungry
+
+```
+Pixie resource usage:
+├── Vizier (control plane): 2+ GB RAM
+├── PEM (per-node agent): 500MB-2GB RAM per node
+├── Requires dedicated resources
+└── Doesn't work on small instances
+
+Complaints from users:
+├── "Pixie OOMKilled on my t3.small nodes"
+├── "Had to add dedicated node pool just for Pixie"
+├── "Using 20% of my cluster resources for observability"
+```
+
+**dogwatch advantage:**
+```
+dogwatch resource usage:
+├── Base: 100-200 MB RAM
+├── Scales with data volume, not node count
+├── Works on t3.micro
+├── No dedicated resources needed
+└── Single process, not distributed system
+```
+
+**Iteration opportunity:**
+- "Runs on a Raspberry Pi" marketing
+- Cost-conscious customers (small clusters)
+- Edge deployments where resources are limited
+- Development environments
+
+#### 5. New Relic Lock-In
+
+```
+Post-acquisition reality:
+├── Pixie UI being deprecated
+├── "Export to New Relic" is the path forward
+├── Open source version getting less love
+├── Community contributions slowing
+└── Feature development focused on NR integration
+```
+
+**dogwatch advantage:**
+- Truly independent, no corporate parent
+- No hidden agenda to upsell
+- Community-focused development
+- Your data stays yours
+
+---
+
+### Grafana Stack Weaknesses
+
+**Background:** Grafana Labs offers Loki (logs), Tempo (traces), Mimir (metrics), plus Grafana for visualization. Industry standard but operationally complex.
+
+#### 1. Five Components to Deploy
+
+```
+Grafana Stack components:
+├── Grafana (visualization)
+├── Loki (logs)
+├── Tempo (traces)
+├── Mimir or Prometheus (metrics)
+├── Grafana Agent or OTel Collector
+└── Often also: Alertmanager, various exporters
+
+Each component:
+├── Has its own configuration
+├── Has its own scaling concerns
+├── Has its own storage backend
+├── Has its own upgrade path
+├── Can fail independently
+└── Needs monitoring itself
+```
+
+```yaml
+# Grafana stack Helm values - this is the SIMPLE version
+grafana:
+  enabled: true
+  persistence:
+    enabled: true
+    size: 10Gi
+
+loki:
+  enabled: true
+  persistence:
+    enabled: true
+    size: 50Gi
+  config:
+    chunk_store_config:
+      max_look_back_period: 168h
+
+tempo:
+  enabled: true
+  persistence:
+    enabled: true
+    size: 50Gi
+
+mimir:
+  enabled: true
+  # ... 200 more lines of config
+```
+
+**dogwatch advantage:**
+```bash
+# dogwatch deployment
+curl -L https://dogwatch.dev/install.sh | sh
+./dogwatch
+
+# That's it. One binary. One config file. Done.
+```
+
+**Iteration opportunity:**
+- "One binary vs five services" messaging
+- Time-to-value: 60 seconds vs hours
+- Operational simplicity
+- No "which component is broken?" debugging
+
+#### 2. Three Query Languages
+
+```
+Grafana query languages:
+├── PromQL for metrics
+│   rate(http_requests_total{status="500"}[5m])
+│
+├── LogQL for logs
+│   {service="api"} |= "error" | json | duration > 1s
+│
+└── TraceQL for traces
+    {resource.service.name="api" && duration > 1s}
+
+Problems:
+├── Learn three syntaxes
+├── Can't join across signals easily
+├── Copy-paste between panels doesn't work
+├── Documentation spread across three places
+└── Mental context switching
+```
+
+**dogwatch advantage:**
+```sql
+-- One language for everything (DQL)
+
+-- Logs
+SELECT * FROM logs WHERE service = 'api' AND level = 'error'
+
+-- Metrics
+SELECT avg(value) FROM metrics
+WHERE name = 'http_requests_total'
+GROUP BY time_bucket('1m', timestamp)
+
+-- Traces
+SELECT * FROM traces WHERE service = 'api' AND duration > 1s
+
+-- CROSS-SIGNAL JOIN (the magic)
+SELECT
+    t.trace_id,
+    t.duration,
+    l.message as error_message,
+    m.value as concurrent_requests
+FROM traces t
+LEFT JOIN logs l ON l.trace_id = t.trace_id AND l.level = 'error'
+LEFT JOIN metrics m ON m.timestamp BETWEEN t.start_time AND t.end_time
+WHERE t.status = 'error'
+```
+
+**Iteration opportunity:**
+- Single query language
+- Cross-signal queries (join logs + traces + metrics)
+- Familiar SQL-like syntax
+- One set of documentation
+
+#### 3. Correlation Is Manual
+
+```
+Grafana correlation workflow:
+1. See spike in metrics dashboard
+2. Mentally note the time range
+3. Switch to Logs dashboard
+4. Manually enter the same time range
+5. Search for relevant logs
+6. Find a trace ID in logs
+7. Switch to Traces dashboard
+8. Paste trace ID
+9. Finally see the trace
+
+Total clicks: ~15
+Time: 2-5 minutes
+User experience: Frustrating
+```
+
+**dogwatch advantage:**
+```
+dogwatch correlation workflow:
+1. See spike in metrics
+2. Click on spike
+3. See correlated logs and traces immediately
+
+Total clicks: 2
+Time: 3 seconds
+User experience: Magic
+```
+
+**Iteration opportunity:**
+- Automatic correlation is THE feature
+- Click-through from any signal to related data
+- Unified timeline view
+- "Show me everything related to this"
+
+#### 4. Complex Storage Configuration
+
+```yaml
+# Loki storage config - and this is just ONE component
+loki:
+  storage:
+    type: s3
+    bucketNames:
+      chunks: loki-chunks
+      ruler: loki-ruler
+      admin: loki-admin
+    s3:
+      endpoint: s3.amazonaws.com
+      region: us-east-1
+      accessKeyId: ${AWS_ACCESS_KEY_ID}
+      secretAccessKey: ${AWS_SECRET_ACCESS_KEY}
+      s3ForcePathStyle: false
+    boltdb_shipper:
+      active_index_directory: /loki/index
+      shared_store: s3
+      cache_ttl: 24h
+
+# Now repeat for Tempo...
+# Now repeat for Mimir...
+# Now configure retention for each...
+# Now configure compaction for each...
+```
+
+**dogwatch advantage:**
+```yaml
+# dogwatch config
+storage:
+  path: /var/lib/dogwatch  # SQLite, done
+  retention:
+    traces: 7d
+    metrics: 30d
+    logs: 14d
+```
+
+**Iteration opportunity:**
+- Zero storage configuration
+- Works out of the box
+- Retention just works
+- No S3/GCS/Azure setup required
+
+#### 5. No Auto-Discovery
+
+```
+Grafana setup for a new service:
+1. Add service to scrape config (or deploy exporter)
+2. Reload Prometheus/Agent
+3. Create dashboard for service
+4. Create alert rules for service
+5. Add service to service catalog (if you have one)
+6. Configure log labels for service
+7. Set up trace sampling for service
+
+For 50 services: 50 × above = weeks of work
+```
+
+**dogwatch advantage:**
+```
+dogwatch setup for a new service:
+1. Deploy the service
+2. Done. dogwatch sees it automatically via eBPF.
+
+For 50 services: deploy them. dogwatch handles the rest.
+```
+
+**Iteration opportunity:**
+- Zero configuration for new services
+- Automatic service discovery
+- Automatic dashboard generation
+- "It just works" experience
+
+---
+
+### OpenTelemetry Weaknesses
+
+**Background:** OTel is the standard for instrumentation. But it's ONLY instrumentation - no storage, query, or visualization.
+
+#### 1. Instrumentation Still Required
+
+```
+"Zero-code instrumentation" reality:
+
+Java:
+  java -javaagent:opentelemetry-javaagent.jar -jar app.jar
+  # Plus: set OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_SERVICE_NAME, etc.
+
+Python:
+  opentelemetry-instrument python app.py
+  # Plus: pip install opentelemetry-instrumentation-*
+  # Plus: configure exporters
+
+Node:
+  node --require @opentelemetry/auto-instrumentations-node app.js
+  # Plus: npm install 15 packages
+  # Plus: configure
+
+Go:
+  # No auto-instrumentation. Manual only.
+  # Add tracing to every function you care about.
+```
+
+```
+Still required:
+├── Modify deployment (add agent/flags)
+├── Set environment variables
+├── Install language-specific packages
+├── Rebuild/redeploy containers
+├── Configure exporters
+└── Handle per-language quirks
+```
+
+**dogwatch advantage:**
+```
+eBPF instrumentation:
+├── No code changes
+├── No rebuilds
+├── No redeployment
+├── No per-language setup
+├── Works on binaries you don't have source for
+└── Deploy dogwatch, see everything
+```
+
+**Iteration opportunity:**
+- "Truly zero-config" vs OTel's "mostly zero-config"
+- Works with languages OTel doesn't auto-instrument well (Go, Rust)
+- Works with third-party binaries
+- No coordination needed across teams
+
+#### 2. Backend Fragmentation
+
+```
+OTel gives you data. Now you need:
+├── Somewhere to store traces (Jaeger? Tempo? Zipkin? X-Ray?)
+├── Somewhere to store metrics (Prometheus? Mimir? Datadog?)
+├── Somewhere to store logs (Loki? Elasticsearch? CloudWatch?)
+├── Something to visualize (Grafana? Custom? Vendor UI?)
+├── Something to alert (Alertmanager? PagerDuty integration?)
+└── Something to correlate (???)
+
+OTel explicitly does NOT solve:
+├── Storage
+├── Querying
+├── Visualization
+├── Alerting
+└── Correlation
+```
+
+**dogwatch advantage:**
+- All-in-one: collect, store, query, visualize, alert
+- Plus we accept OTLP, so you get the best of both worlds
+- No backend decision paralysis
+
+**Iteration opportunity:**
+- "OTel + dogwatch = complete solution"
+- Accept OTLP for teams that have it
+- eBPF fills gaps for teams that don't
+- One tool instead of five
+
+#### 3. Configuration Complexity
+
+```yaml
+# OTel Collector config - this is a "simple" example
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 2000
+  resource:
+    attributes:
+      - key: environment
+        value: production
+        action: upsert
+
+exporters:
+  otlp:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+  prometheus:
+    endpoint: 0.0.0.0:8889
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [loki]
+```
+
+**dogwatch advantage:**
+```yaml
+# dogwatch config
+listen: :9999
+```
+
+**Iteration opportunity:**
+- Sensible defaults that work
+- Configuration optional, not required
+- "It just works" out of the box
+
+---
+
+### Datadog Weaknesses
+
+**Background:** Market leader, but expensive and closed.
+
+#### 1. Pricing Trap
+
+```
+Datadog pricing reality:
+├── Infrastructure: $15-23/host/month
+├── APM: $31-40/host/month
+├── Logs: $0.10/GB ingested + $1.70/million events
+├── Custom metrics: $0.05 per 100 metrics
+├── Synthetics: $5-12 per 10K runs
+└── Everything adds up FAST
+
+Real example:
+├── 100 hosts with APM: $4,000/month
+├── 500GB logs: $50/month + events
+├── Custom metrics (50K): $25/month
+├── Synthetics: $500/month
+└── Total: $5,000+/month
+└── Annual: $60,000+
+
+And that's BEFORE:
+├── Log retention beyond 15 days
+├── High cardinality metrics
+├── Trace retention
+└── Additional users
+```
+
+**dogwatch advantage:**
+```
+dogwatch pricing:
+├── Self-hosted: $0
+├── Everything included
+├── No per-host fees
+├── No per-GB fees
+├── No surprise bills
+└── Your hardware, your cost
+```
+
+**Iteration opportunity:**
+- Cost Intelligence showing "you'd pay $X on Datadog"
+- Flat pricing (if you have a paid tier)
+- "Migration savings" calculator
+- Target companies with Datadog bill shock
+
+#### 2. SaaS Only
+
+```
+Datadog limitations:
+├── Data must leave your infrastructure
+├── No on-premises option
+├── No air-gapped deployment
+├── Subject to their data retention policies
+├── Dependent on their uptime
+└── Compliance concerns for some industries
+```
+
+**dogwatch advantage:**
+- Self-hosted: data never leaves
+- Air-gapped deployment possible
+- Full control over retention
+- No dependency on external service
+- Compliance-friendly (data sovereignty)
+
+**Iteration opportunity:**
+- Target regulated industries (finance, healthcare, government)
+- Target security-conscious companies
+- Target companies with data residency requirements
+- "Your data stays yours" messaging
+
+#### 3. SDK Required for APM
+
+```
+Datadog APM setup:
+├── Install dd-trace-* for your language
+├── Modify application startup
+├── Set DD_* environment variables
+├── Rebuild and redeploy
+├── Configure sampling
+├── Repeat for every service
+└── Coordinate across teams
+```
+
+**dogwatch advantage:**
+- eBPF sees everything without SDKs
+- No code changes
+- No team coordination
+- Works immediately
+
+---
+
+### Iteration Opportunities Summary
+
+**Where to focus for maximum competitive advantage:**
+
+| Weakness | Who Has It | dogwatch Opportunity |
+|----------|-----------|---------------------|
+| **K8s-only** | Pixie | Support VMs, bare metal, edge |
+| **No retention** | Pixie | Long-term storage, historical queries |
+| **Complex query languages** | Pixie, Grafana | Single SQL-like language |
+| **Resource hungry** | Pixie, Grafana | Run on t3.micro |
+| **Many components** | Grafana | Single binary |
+| **Manual correlation** | Grafana, most | Automatic cross-signal correlation |
+| **Complex configuration** | Grafana, OTel | Sensible defaults, zero-config |
+| **No auto-discovery** | Grafana, OTel | eBPF sees everything |
+| **Still needs instrumentation** | OTel | True zero-code with eBPF |
+| **Expensive** | Datadog | Self-hosted, flat pricing |
+| **SaaS only** | Datadog | Self-hosted, air-gapped |
+| **SDK required** | Datadog | eBPF, no SDK |
+
+---
+
+### Technical Iterations to Prioritize
+
+Based on competitive weaknesses, prioritize these iterations:
+
+#### Tier 1: Immediate Differentiation
+
+| Iteration | Exploits Weakness In | Effort |
+|-----------|---------------------|--------|
+| **Non-K8s support** | Pixie | 2-3 weeks |
+| **Single binary simplicity** | Grafana | Already done |
+| **Auto-correlation** | Grafana, all | 4-5 weeks |
+| **Low memory footprint** | Pixie, Grafana | 3-4 weeks |
+| **Long-term retention** | Pixie | Already have (SQLite) |
+
+#### Tier 2: Strong Differentiation
+
+| Iteration | Exploits Weakness In | Effort |
+|-----------|---------------------|--------|
+| **Unified query language** | Grafana, Pixie | 4-6 weeks |
+| **Zero-config auto-discovery** | Grafana, OTel | Core feature |
+| **Cross-signal joins** | Everyone | 3-4 weeks |
+| **Cost Intelligence** | Datadog | 1-2 weeks |
+| **Migration tooling** | Everyone | 4-6 weeks |
+
+#### Tier 3: Long-Term Moats
+
+| Iteration | Exploits Weakness In | Effort |
+|-----------|---------------------|--------|
+| **Air-gapped deployment** | Datadog | 1-2 weeks |
+| **Edge device support** | Pixie | 2-3 weeks |
+| **Compliance features** | Datadog | 4-6 weeks |
+| **PromQL compatibility** | None (table stakes) | 3-4 weeks |
+
+---
+
+### Messaging Against Each Competitor
+
+**vs Pixie:**
+> "Like Pixie, but works everywhere Linux runs—not just Kubernetes. Plus you keep your data forever, not just 24 hours."
+
+**vs Grafana Stack:**
+> "All of Grafana's capabilities in a single binary. No Loki + Tempo + Mimir + Grafana + Agent. Just dogwatch."
+
+**vs OpenTelemetry:**
+> "OTel still needs instrumentation. dogwatch sees everything via eBPF—even services you can't modify."
+
+**vs Datadog:**
+> "See what you're paying Datadog for. Then see the same data in dogwatch for free. We'll even migrate your dashboards."
+
+---
+
 ## Roadmap
+
+> **📋 AUTHORITATIVE PRIORITIES:** See [Summary: Cost vs Impact Matrix](#summary-cost-vs-impact-matrix) for the definitive build order. Other priority lists in this document provide context but defer to that matrix.
 
 ### Phase 1: Foundation (Now)
 
@@ -1814,18 +5294,31 @@ Reality check: What does it actually take to build these features?
 
 ### Summary: Cost vs Impact Matrix
 
-| Feature | Min Effort | Full Effort | Impact | Build Order |
-|---------|-----------|-------------|--------|-------------|
-| Cost Intelligence | 1 week | 3 weeks | ★★★★★ | 1st |
-| Change Correlation | 3 weeks | 5 weeks | ★★★★★ | 2nd |
-| Production Essentials | 10 weeks | 10 weeks | ★★★★★ | 3rd |
-| BubbleUp | 4 weeks | 7 weeks | ★★★★☆ | 4th |
-| Pre-Built Scripts | 4 weeks | 7 weeks | ★★★★☆ | 5th |
-| Protocol Parsing | 6 weeks | 20 weeks | ★★★★☆ | 6th |
-| Control Plane | 6 weeks | 16 weeks | ★★★★☆ | 7th |
-| Migration Assistant | 4 weeks | 13 weeks | ★★★☆☆ | 8th |
-| Continuous Profiling | 3 weeks | 10 weeks | ★★★☆☆ | 9th |
-| Security | 3 weeks | 13 weeks | ★★☆☆☆ | 10th |
+> **📋 THIS IS THE AUTHORITATIVE BUILD ORDER.** Other priority lists in this document provide context, but this matrix is the definitive sequence. When priorities conflict, follow this table.
+
+| # | Feature | Effort | Impact | Rationale |
+|---|---------|--------|--------|-----------|
+| 1 | **Protocol Parsing (MySQL/PG/Redis)** | 6-20 wks | ★★★★★ | Core differentiator - can't demo without it |
+| 2 | **Production Essentials** | 10 wks | ★★★★★ | OTLP, backup, health checks - blocks production |
+| 3 | **Cost Intelligence** | 1-3 wks | ★★★★★ | Highest ROI - 1 week = viral screenshots |
+| 4 | **LogCompare** | 2-3 wks | ★★★★☆ | Stolen from Sumo Logic, unique value |
+| 5 | **Pattern Detection (LogReduce)** | 3-6 wks | ★★★★☆ | Stolen from Splunk, clusters logs |
+| 6 | **BubbleUp** | 4-7 wks | ★★★★☆ | Automatic root cause analysis |
+| 7 | **Change Correlation** | 3-5 wks | ★★★★☆ | Deploys on graphs, cheap win |
+| 8 | **Entity Synthesis** | 4-6 wks | ★★★☆☆ | Auto service catalog from telemetry |
+| 9 | **Control Plane (read-only)** | 6 wks | ★★★☆☆ | Cardinality explorer, usage analysis |
+| 10 | **Migration Assistant** | 4-13 wks | ★★★☆☆ | Sales enabler, scan + report |
+| 11 | **Continuous Profiling** | 3-10 wks | ★★☆☆☆ | Integrate Pyroscope, don't build |
+| 12 | **Security Observability** | 3-13 wks | ★★☆☆☆ | Nice-to-have, not core mission |
+
+**Reconciliation with other sections:**
+
+| Document Section | Use It For | Defer to This Matrix For |
+|------------------|------------|--------------------------|
+| [Technical Gaps](#technical-gaps-vs-chronosphere-datadog-etc) | Understanding enterprise expectations | What to actually build next |
+| [Modern Pain Points](#modern-pain-points-we-could-address) | Market context, positioning | Which pain points to address first |
+| [Stealing Killer Features](#stealing-killer-features-from-competitors) | Feature specs and inspiration | When to build each feature |
+| [Summary: Priority Ranking](#summary-priority-ranking) | Pain point analysis | Build sequence |
 
 ---
 
@@ -1959,54 +5452,421 @@ type ClickHouseLogsStore struct { ... }
 
 ### eBPF Protocol Parsing
 
-The core differentiator. Each protocol parser needs:
+The core differentiator. This section specifies exactly how we detect and parse each protocol.
+
+#### Kernel Requirements
+
+| Feature | Minimum Kernel | Recommended | Notes |
+|---------|----------------|-------------|-------|
+| Basic TCP tracking | 4.14 | 5.8+ | `tcp_connect`, `inet_csk_accept` kprobes |
+| Protocol parsing | 4.18 | 5.8+ | BPF_MAP_TYPE_RINGBUF for efficient data transfer |
+| SSL/TLS interception | 5.5 | 5.10+ | uprobes on OpenSSL/BoringSSL/GnuTLS |
+| HTTP/2 parsing | 5.8 | 5.15+ | Requires larger BPF stack for frame parsing |
+| BTF support | 5.2 | 5.8+ | CO-RE (Compile Once, Run Everywhere) |
+
+**Startup compatibility check:**
+```bash
+# dogwatch runs these checks at startup and warns/exits if incompatible
+uname -r                                    # Kernel version >= 4.14
+cat /sys/kernel/btf/vmlinux 2>/dev/null     # BTF available (optional but recommended)
+ls /sys/kernel/debug/tracing 2>/dev/null    # Tracing filesystem mounted
+```
+
+#### Protocol Detection State Machine
+
+When TCP data arrives, identify protocol from first packet:
+
+```go
+// Detection runs once per connection, result cached
+var defaultDetectors = []Detector{
+    &MySQLDetector{},      // Binary: check packet header format
+    &PostgreSQLDetector{}, // Binary: check message type + length
+    &RedisDetector{},      // Text: check RESP prefix characters
+    &HTTP2Detector{},      // Binary: check preface or SETTINGS frame
+    &HTTPDetector{},       // Text: check for methods (GET/POST/etc.)
+}
+
+type ConnectionState struct {
+    Tuple    ConnectionTuple
+    Protocol Protocol         // Detected protocol
+    State    ProtocolState    // Request sent, awaiting response, etc.
+    Pending  []PendingRequest // For pipelined protocols
+}
+```
+
+#### MySQL Protocol Parser
+
+**Wire format:** https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basics.html
 
 ```c
-// Example: MySQL protocol parser structure
+// MySQL packet: [3-byte length][1-byte seq][payload]
+// Detection: valid length + recognized command byte
+
+#define COM_QUERY          0x03  // Text query
+#define COM_STMT_PREPARE   0x16  // Prepared statement
+#define COM_STMT_EXECUTE   0x17  // Execute prepared
+#define COM_QUIT           0x01  // Connection close
+
 struct mysql_event {
-    u64 timestamp;
+    u64 timestamp_ns;
     u32 pid;
-    u32 tid;
-    u64 connection_id;    // For correlation
-    u8  command_type;     // COM_QUERY, COM_STMT_EXECUTE, etc.
-    u16 error_code;
-    u32 affected_rows;
-    u64 latency_ns;
-    char query[256];      // First 256 bytes of query
+    u64 conn_id;          // Hash of connection tuple
+    u8  command;          // COM_QUERY, etc.
+    u64 latency_ns;       // Request to first response byte
+    u32 affected_rows;    // From OK packet
+    u16 error_code;       // 0 = success
+    char query[4096];     // Query text (truncated)
+    char error_msg[256];  // Error message if error_code != 0
 };
 
-// Hook points:
-// - kprobe/tcp_sendmsg (outbound queries)
-// - kprobe/tcp_recvmsg (responses)
-// - Protocol detection from first bytes (MySQL: packet header + command byte)
+// Detection: first payload byte is valid MySQL command
+static __always_inline bool is_mysql(const u8 *data, u32 len) {
+    if (len < 5) return false;
+    u32 pkt_len = data[0] | (data[1] << 8) | (data[2] << 16);
+    u8 cmd = data[4];
+    return (pkt_len <= 0xFFFFFF) &&
+           (cmd == 0x03 || cmd == 0x16 || cmd == 0x17 || cmd == 0x01 ||
+            cmd == 0x00 || cmd == 0xFF);  // OK/ERR responses
+}
+```
+
+#### PostgreSQL Protocol Parser
+
+**Wire format:** https://www.postgresql.org/docs/current/protocol-message-formats.html
+
+```c
+// PostgreSQL: [1-byte type][4-byte length BE][payload]
+// Exception: startup message has no type byte
+
+#define PG_QUERY           'Q'  // Simple query
+#define PG_PARSE           'P'  // Prepared statement
+#define PG_BIND            'B'  // Bind parameters
+#define PG_EXECUTE         'E'  // Execute (also error response)
+#define PG_COMMAND_COMPLETE 'C' // Success
+#define PG_DATA_ROW        'D'  // Result row
+
+struct pg_event {
+    u64 timestamp_ns;
+    u64 conn_id;
+    u8  msg_type;         // 'Q', 'P', 'C', etc.
+    u64 latency_ns;
+    u32 row_count;        // Number of 'D' messages
+    char sqlstate[6];     // Error code like "42P01"
+    char query[4096];
+    char error_msg[256];
+};
+
+// Detection: valid type byte + big-endian length
+static __always_inline bool is_postgres(const u8 *data, u32 len) {
+    if (len < 5) return false;
+    u8 type = data[0];
+    u32 msg_len = __builtin_bswap32(*(u32*)(data+1));
+    return (type == 'Q' || type == 'P' || type == 'B' || type == 'E' ||
+            type == 'C' || type == 'D' || type == 'Z') &&
+           (msg_len >= 4 && msg_len <= 0x40000000);
+}
+```
+
+#### Redis Protocol Parser
+
+**Wire format:** https://redis.io/docs/reference/protocol-spec/ (RESP)
+
+```c
+// RESP: type prefix + data + \r\n
+// '+' simple string, '-' error, ':' integer, '$' bulk, '*' array
+
+struct redis_event {
+    u64 timestamp_ns;
+    u64 conn_id;
+    char command[32];     // GET, SET, HGET, etc.
+    char key[256];        // First key argument
+    u64 latency_ns;
+    bool is_error;        // Response starts with '-'
+    char error_msg[256];
+};
+
+// Detection: first byte is RESP type indicator
+static __always_inline bool is_redis(const u8 *data, u32 len) {
+    if (len < 3) return false;
+    u8 type = data[0];
+    return (type == '+' || type == '-' || type == ':' ||
+            type == '$' || type == '*');
+}
+```
+
+#### HTTP/2 and gRPC Parser
+
+```c
+// HTTP/2 frame: [3-byte length BE][1-byte type][1-byte flags][4-byte stream_id]
+// Connection preface: "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+
+struct h2_event {
+    u64 timestamp_ns;
+    u64 conn_id;
+    u32 stream_id;
+    char method[16];      // From :method header
+    char path[256];       // From :path header (gRPC: /pkg.Svc/Method)
+    u64 latency_ns;
+    u32 status;           // From :status header
+    i32 grpc_status;      // From grpc-status trailer (-1 if not gRPC)
+};
+```
+
+#### Encrypted Traffic (TLS/HTTPS)
+
+Three approaches, in order of preference:
+
+```go
+// 1. SSL library uprobes (recommended)
+// Hook OpenSSL/BoringSSL SSL_read/SSL_write to capture plaintext
+type SSLUprobe struct {
+    Library  string // e.g., "/usr/lib/libssl.so.3"
+    ReadSym  string // "SSL_read" or "SSL_read_ex"
+    WriteSym string // "SSL_write" or "SSL_write_ex"
+}
+
+// Discover at startup by scanning /proc/*/maps
+func discoverSSLLibraries() []SSLUprobe
+
+// 2. kTLS interception (kernel 4.13+)
+// If kernel TLS offload is used, hook tls_sw_sendmsg/recvmsg
+
+// 3. Fallback: capture metadata only
+// Connection timing, bytes transferred, TLS version, cipher suite
+// Mark as "encrypted - content not visible" in UI
+```
+
+#### Pipelining and Multiplexing
+
+```go
+// MySQL: sequential (one request at a time)
+// PostgreSQL: pipelined (multiple requests, responses in order)
+// Redis: pipelined (multiple commands, responses in order)
+// HTTP/2: multiplexed (multiple streams, out-of-order)
+
+// For pipelined: queue pending requests, match responses in order
+type PipelineTracker struct {
+    pending []PendingRequest // FIFO queue
+}
+
+// For multiplexed: map stream ID to pending request
+type MultiplexTracker struct {
+    streams map[uint32]*PendingRequest
+}
 ```
 
 **Priority order:**
-1. MySQL (most common, highest debugging value)
+1. MySQL (most common database)
 2. PostgreSQL (second most common)
-3. Redis (simple protocol, cache debugging)
+3. Redis (simple protocol, high value)
 4. HTTP/2 + gRPC (modern microservices)
 5. DNS (often overlooked latency source)
 
 ### Cross-Service Trace Correlation
 
-The magic that makes zero-config tracing work:
+The magic that makes zero-config tracing work. Three methods, applied in priority order:
+
+#### Method 1: Trace Header Parsing (Highest Confidence)
+
+If services already propagate trace context, we extract it from HTTP headers:
 
 ```go
-type TraceCorrelator struct {
-    // Method 1: Parse existing trace headers
-    // If services already propagate W3C traceparent, B3, X-Request-ID
-    ParseTraceHeaders(httpRequest) -> traceID, spanID
-
-    // Method 2: Timing-based correlation
-    // When A calls B, the outbound timestamp from A should be
-    // within ~1ms of inbound timestamp at B
-    CorrelateByTiming(outbound, inbound) -> confidence
-
-    // Method 3: Connection tuple matching
-    // A's (srcIP:srcPort -> dstIP:dstPort) = B's accept()
-    CorrelateByConnection(clientConn, serverConn) -> match
+// Supported header formats (checked in order)
+var traceHeaderParsers = []HeaderParser{
+    W3CTraceContext{},  // traceparent: 00-{traceId}-{spanId}-{flags}
+    B3Multi{},          // X-B3-TraceId, X-B3-SpanId, X-B3-ParentSpanId
+    B3Single{},         // b3: {traceId}-{spanId}-{sampling}-{parentSpanId}
+    Jaeger{},           // uber-trace-id: {traceId}:{spanId}:{parentSpanId}:{flags}
+    XRequestID{},       // X-Request-ID (fallback, generates trace from request ID)
 }
+
+func (c *TraceCorrelator) ExtractTraceContext(headers http.Header) (*TraceContext, bool) {
+    for _, parser := range traceHeaderParsers {
+        if ctx, ok := parser.Parse(headers); ok {
+            return ctx, true
+        }
+    }
+    return nil, false
+}
+```
+
+**Confidence: 100%** — If headers exist, correlation is definitive.
+
+#### Method 2: Connection Tuple Matching (High Confidence)
+
+When no headers exist, we correlate using TCP connection 5-tuples:
+
+```go
+// When Service A connects to Service B:
+// A's outbound: (A_IP:ephemeral_port -> B_IP:service_port)
+// B's inbound:  (A_IP:ephemeral_port -> B_IP:service_port)
+// These MUST match exactly - enforced by TCP/IP.
+
+type ConnectionTuple struct {
+    SrcIP   net.IP
+    SrcPort uint16
+    DstIP   net.IP
+    DstPort uint16
+    // Tracked via eBPF tcp_connect (client) and inet_csk_accept (server)
+}
+
+func (c *TraceCorrelator) CorrelateByConnection(
+    clientSpan *Span,
+    serverSpans []*Span,
+) (*Span, float64) {
+    clientTuple := clientSpan.ConnectionTuple
+
+    for _, serverSpan := range serverSpans {
+        if serverSpan.ConnectionTuple.Matches(clientTuple) {
+            // Exact match on all 4 fields
+            return serverSpan, 1.0 // 100% confidence
+        }
+    }
+    return nil, 0
+}
+```
+
+**Confidence: 100%** — TCP guarantees tuple uniqueness for connection lifetime.
+
+**Limitation:** Only works when both client and server run dogwatch eBPF probes.
+
+#### Method 3: Timing-Window Correlation (Medium Confidence)
+
+When we can't match connections directly (e.g., load balancer in between), use timing:
+
+```go
+const (
+    // Timing window for correlation
+    // Network latency is typically 0.1-5ms within a datacenter
+    // We use 50ms to account for:
+    // - Clock skew between machines (NTP typically <10ms)
+    // - Kernel scheduling jitter
+    // - Load balancer processing time
+    MaxTimingWindow = 50 * time.Millisecond
+
+    // Minimum overlap required to consider a match
+    MinOverlapRatio = 0.8 // Child span must overlap 80%+ with potential parent
+)
+
+type TimingCorrelation struct {
+    // Client span: started at T1, made outbound call at T2, received response at T3
+    // Server span: received request at T4, sent response at T5
+    // For valid correlation: T2 <= T4 <= T5 <= T3 (with timing window tolerance)
+}
+
+func (c *TraceCorrelator) CorrelateByTiming(
+    clientSpan *Span,
+    candidateServerSpans []*Span,
+) (*Span, float64) {
+    var bestMatch *Span
+    var bestConfidence float64
+
+    for _, server := range candidateServerSpans {
+        // Check if server span fits within client span's timing window
+        if !c.fitsTimingWindow(clientSpan, server) {
+            continue
+        }
+
+        // Calculate confidence based on:
+        // 1. How closely the timing aligns
+        // 2. Whether endpoints match (A calls B's /api/users, B received /api/users)
+        // 3. Whether the response size/status matches
+        confidence := c.calculateTimingConfidence(clientSpan, server)
+
+        if confidence > bestConfidence {
+            bestMatch = server
+            bestConfidence = confidence
+        }
+    }
+
+    return bestMatch, bestConfidence
+}
+
+func (c *TraceCorrelator) calculateTimingConfidence(client, server *Span) float64 {
+    confidence := 0.0
+
+    // Base: timing alignment (0.0 - 0.4)
+    timeDelta := abs(client.OutboundTime.Sub(server.StartTime))
+    if timeDelta < 5*time.Millisecond {
+        confidence += 0.4
+    } else if timeDelta < 20*time.Millisecond {
+        confidence += 0.3
+    } else if timeDelta < MaxTimingWindow {
+        confidence += 0.2
+    }
+
+    // Endpoint match (0.0 - 0.3)
+    if client.TargetEndpoint == server.Endpoint {
+        confidence += 0.3
+    } else if pathMatches(client.TargetEndpoint, server.Endpoint) {
+        confidence += 0.2 // Path matches but method differs
+    }
+
+    // Response correlation (0.0 - 0.2)
+    if client.ResponseStatus == server.ResponseStatus {
+        confidence += 0.1
+    }
+    if abs(client.ResponseSize-server.ResponseSize) < 100 {
+        confidence += 0.1
+    }
+
+    // Service topology prior (0.0 - 0.1)
+    // If we've seen A->B calls before, boost confidence
+    if c.hasHistoricalConnection(client.Service, server.Service) {
+        confidence += 0.1
+    }
+
+    return confidence
+}
+```
+
+**Confidence: 50-90%** depending on timing alignment and endpoint matching.
+
+**Thresholds:**
+- `confidence >= 0.8`: Auto-link spans
+- `0.5 <= confidence < 0.8`: Link with "inferred" marker in UI
+- `confidence < 0.5`: Don't link, show as separate traces
+
+#### Clock Skew Handling
+
+```go
+// We don't require synchronized clocks. Instead:
+// 1. Record monotonic time (kernel timestamps) for ordering within a host
+// 2. Use wall-clock time for cross-host correlation with tolerance window
+// 3. Periodically estimate skew between hosts by comparing bidirectional call timings
+
+type ClockSkewEstimator struct {
+    // For each host pair, track observed skew
+    skewEstimates map[HostPair]time.Duration
+}
+
+func (e *ClockSkewEstimator) EstimateSkew(hostA, hostB string, samples []RTTSample) time.Duration {
+    // If A calls B and B responds:
+    // A's view: sent at T1, received at T2 (RTT = T2 - T1)
+    // B's view: received at T3, sent at T4
+    // Skew ≈ T3 - T1 - (RTT/2)
+    // Average over multiple samples to reduce noise
+
+    var skewSum time.Duration
+    for _, s := range samples {
+        estimatedSkew := s.ServerReceiveTime.Sub(s.ClientSendTime) - (s.RTT / 2)
+        skewSum += estimatedSkew
+    }
+    return skewSum / time.Duration(len(samples))
+}
+```
+
+#### Algorithm Summary
+
+```
+For each outbound span from Service A:
+1. Check for trace headers → if found, use those (done)
+2. Find server spans where connection tuple matches → link with 100% confidence
+3. If no tuple match, find candidate spans:
+   a. Filter by target service (from DNS/connection)
+   b. Filter by timing window (±50ms adjusted for estimated clock skew)
+   c. Score by endpoint match, timing precision, response correlation
+   d. Link if confidence >= threshold
 ```
 
 ### Cost Intelligence Implementation
@@ -4969,6 +8829,8 @@ Priority: **P2** initially (single binary scales far). **P0** when customers gro
 ---
 
 ### Summary: Priority Ranking
+
+> **Note:** This section analyzes pain points by urgency. For the actual build order, see [Summary: Cost vs Impact Matrix](#summary-cost-vs-impact-matrix) which is the authoritative priority list.
 
 #### P0 - Must Have (Build First)
 
@@ -10140,6 +14002,546 @@ When switching from Datadog:
 No SDKs. No configuration. No bill shock. No hunting for root cause. No switching cost.
 
 **That's the product.**
+
+---
+
+## Cutting-Edge Research & Future Technologies
+
+This section tracks breakthrough technologies and academic research that could provide significant competitive advantage. Updated January 2025.
+
+### eBPF-Level Breakthroughs (2025-2026)
+
+These are paradigm-shifting technologies at the same level of impact as eBPF itself.
+
+#### 1. eGPU: eBPF on GPUs
+
+**Status:** Working code, HCDS '25 paper published
+
+The most significant breakthrough for AI workload observability. Extends eBPF's programmability directly into GPU kernels.
+
+```
+BEFORE:                          AFTER:
+CPU ████ (eBPF)                  CPU ████ (eBPF)
+GPU ░░░░ (blind)                 GPU ████ (eBPF via PTX injection)
+                                      └── Same toolchain, unified traces
+```
+
+**How it works:**
+- Converts eBPF bytecode to PTX (NVIDIA GPU assembly)
+- Injects into running GPU kernels dynamically
+- Same eBPF toolchain for CPU AND GPU
+- Works on NVIDIA and AMD GPUs
+
+**Key resources:**
+- [bpftime GitHub](https://github.com/eunomia-bpf/bpftime) - Working implementation
+- [eGPU Paper (HCDS '25)](https://dl.acm.org/doi/10.1145/3723851.3726984)
+- [GPU Observability Gap Analysis](https://eunomia.dev/blog/2025/10/14/the-gpu-observability-gap-why-we-need-ebpf-on-gpu-devices/)
+
+**dogwatch opportunity:** First single-binary observability tool with unified CPU+GPU visibility. Critical for AI/ML workloads.
+
+#### 2. sched_ext: Programmable CPU Scheduler
+
+**Status:** In mainline Linux 6.12, shipping in production
+
+Load custom BPF schedulers at runtime without kernel recompilation.
+
+```
+Traditional: Fixed scheduler algorithms (CFS, EEVDF)
+sched_ext:   Load custom BPF scheduler → instant deployment
+             ├── Gaming-optimized (LAVD on Steam Deck)
+             ├── GPU-aware scheduling (2026 roadmap)
+             └── Workload-specific optimization
+```
+
+**Key resources:**
+- [sched_ext Future Plans](https://www.phoronix.com/news/sched-ext-future-plans-2026)
+- [LAVD Gaming Scheduler](https://lwn.net/Articles/1051430/)
+- [CachyOS sched_ext Guide](https://wiki.cachyos.org/configuration/sched-ext/)
+
+**dogwatch opportunity:** Not just observe scheduling—CONTROL it. "Your latency-sensitive service gets dedicated cores."
+
+#### 3. kTLS + eBPF: HTTPS Without Uprobes
+
+**Status:** Maturing, growing adoption
+
+Solves the HTTPS visibility problem elegantly without fragile uprobe hacks.
+
+```
+Current (broken):     App → OpenSSL (userspace) → Encrypted
+                                   ↑
+                              uprobe here (FRAGILE)
+
+kTLS solution:        App → kTLS (kernel) → Encrypted
+                                 ↑
+                            eBPF hook here (STABLE)
+                            See plaintext BEFORE encryption
+```
+
+**Key insight:** Many apps (nginx, HAProxy) support kTLS. Hook kernel TLS layer instead of userspace libraries.
+
+**Key resources:**
+- [kTLS + SPIFFE Research](https://blog.riptides.io/seamless-kernel-based-non-human-identity-with-ktls-and-spiffe/)
+- [eBPF Ecosystem 2024-2025](https://eunomia.dev/blog/2025/02/12/ebpf-ecosystem-progress-in-20242025-a-technical-deep-dive/)
+
+**dogwatch opportunity:** Fix the HTTPS problem permanently without maintaining uprobe compatibility matrices.
+
+#### 4. Continuous GPU Profiling
+
+**Status:** Released October 2025 by Polar Signals
+
+First open-source NVIDIA CUDA profiler suitable for always-on production use.
+
+```
+Traditional GPU profiling: Manual, high overhead, dev-only
+Continuous GPU profiling:  Always-on, <1% overhead, production
+                           └── GPU flames alongside CPU flames
+                           └── Correlate GPU kernels to requests
+```
+
+**Key resources:**
+- [Polar Signals GPU Profiling](https://www.polarsignals.com/blog/posts/2025/10/22/gpu-profiling)
+- [Parca Agent v0.43.0](https://github.com/parca-dev/parca)
+
+**dogwatch opportunity:** Integrate continuous GPU profiling. Show GPU bottlenecks in unified flame graphs.
+
+#### 5. eBPF for Windows
+
+**Status:** Active development by Microsoft
+
+Cross-platform eBPF enabling write-once observability.
+
+```
+Write once, run on:
+├── Linux (native eBPF)
+├── Windows 11/Server 2022+ (eBPF for Windows)
+└── Same bytecode, same tools
+```
+
+**Key resources:**
+- [microsoft/ebpf-for-windows](https://github.com/microsoft/ebpf-for-windows)
+- [Retina - Cross-platform K8s observability](https://github.com/microsoft/retina)
+
+**dogwatch opportunity:** Single binary that works on Linux AND Windows. Massive market expansion.
+
+---
+
+### Graph Neural Networks for Trace Analysis
+
+The hottest area in academic observability research. Replace rule-based anomaly detection with learned patterns.
+
+#### Key Papers
+
+| Paper | Venue | Innovation | Performance |
+|-------|-------|------------|-------------|
+| [GAL-MAD](https://arxiv.org/html/2504.00058v2) | arXiv Apr 2025 | Graph Attention + Explainability | Explains WHY anomalous |
+| [GNN + Temporal](https://arxiv.org/abs/2511.03285) | arXiv Nov 2025 | GNN + GRU temporal | Captures time evolution |
+| [GAMMA](https://dl.acm.org/doi/10.1145/3589334.3645665) | WWW 2024 | Multi-bottleneck | Finds multiple root causes |
+| [CHASE](https://arxiv.org/html/2406.19711v1) | arXiv Jun 2024 | Heterogeneous graphs | 36.2% improvement A@1 |
+| [Sleuth](https://dl.acm.org/doi/10.1145/3623278.3624758) | ASPLOS 2023 | Trace-based GNN at scale | Production-ready |
+
+#### The Technique
+
+```
+Traditional:     Trace → Rules → Alert
+                 (misses complex patterns)
+
+GNN-based:       Trace → Service Graph → GNN embedding
+                     → Learn normal patterns
+                     → Detect deviations
+                     → Localize root cause
+
+Key insight: Services form a GRAPH. Use graph learning.
+```
+
+#### Implementation Approach
+
+```python
+# Conceptual architecture
+class TraceGNN:
+    def __init__(self):
+        self.graph_encoder = GATConv(...)  # Graph attention
+        self.temporal = GRU(...)            # Time dynamics
+        self.anomaly_head = MLP(...)        # Detection
+        self.localization_head = MLP(...)   # Root cause
+
+    def forward(self, trace_graph, timestamps):
+        # 1. Build service graph from trace spans
+        # 2. Encode with graph attention (captures topology)
+        # 3. Add temporal dynamics (captures evolution)
+        # 4. Detect anomalies without explicit rules
+        # 5. Localize root cause service
+```
+
+**dogwatch opportunity:** eBPF generates traces → Build dynamic service graph → GNN learns patterns → Auto-detect anomalies without rules.
+
+---
+
+### Causal Inference for Root Cause Analysis
+
+Move beyond correlation ("A and B happened together") to causation ("A caused B").
+
+#### Key Papers
+
+| Paper | Venue | Innovation | Accuracy |
+|-------|-------|------------|----------|
+| [Neural Granger Causal](https://arxiv.org/abs/2402.01140) | AAAI 2024 | Temporal causal discovery | Respects time ordering |
+| [CIRCA](https://dl.acm.org/doi/10.1145/3534678.3539041) | KDD 2022 | Intervention recognition | 25% better recall |
+| [Multi-Modal Causal](https://www.sciencedirect.com/science/article/abs/pii/S0951832025007203) | 2025 | Logs + metrics + traces | Finds trigger values |
+| [FaultInsight](https://arxiv.org/pdf/2509.12231) | arXiv 2025 | Temporal perturbation | 15-20% better than VAR |
+| [Causely Analysis](https://www.infoq.com/articles/causal-reasoning-observability/) | InfoQ 2025 | Production system | 90% accuracy (Instana) |
+
+#### The Difference
+
+```
+Correlation:  "CPU spike and latency spike happened together"
+              (could be coincidence, could be effect not cause)
+
+Causation:    "CPU spike CAUSED latency spike"
+              "If we fix CPU, latency will improve with 94% confidence"
+              "Counterfactual: if CPU hadn't spiked, latency = 50ms"
+```
+
+#### Methods
+
+| Method | Best For | Limitation |
+|--------|----------|------------|
+| **Structural Causal Models** | Explicit dependencies | Requires domain knowledge |
+| **Granger Causality** | Time series | Only linear relationships |
+| **Bayesian Networks** | Uncertainty quantification | Computationally expensive |
+| **Intervention Analysis** | "What-if" scenarios | Needs historical interventions |
+| **Counterfactual Reasoning** | Explaining outcomes | Requires good causal model |
+
+**dogwatch opportunity:** Don't just correlate metrics. Build causal graphs. Answer "what caused this?" not just "what happened?"
+
+---
+
+### Time Series Foundation Models
+
+Pre-trained models that work across any metric without task-specific training.
+
+#### Key Models
+
+| Model | Architecture | Capabilities | Paper |
+|-------|--------------|--------------|-------|
+| **Chronos** | Tokenized TS | Zero-shot forecasting | [arXiv](https://arxiv.org/html/2504.04011v1) |
+| **TimeGPT** | Transformer | Multi-horizon prediction | [arXiv](https://arxiv.org/html/2412.19286v1) |
+| **MOMENT** | Masked modeling | Forecast + anomaly + classify | [arXiv](https://arxiv.org/html/2405.02358v3) |
+| **UniTS** | Unified multitask | Single model, all tasks | [Survey](https://arxiv.org/abs/2504.04011) |
+| **Timer** | Generative | Unified as generation task | [Survey](https://arxiv.org/html/2405.02358v3) |
+
+#### The Breakthrough
+
+```
+Before:  Train model per metric, per task
+         (thousands of models, expensive, slow)
+
+After:   One foundation model
+         ├── Zero-shot on new metrics (no training!)
+         ├── Forecasting
+         ├── Anomaly detection
+         ├── Classification
+         └── Imputation
+         All from same model!
+```
+
+#### Survey Reference
+
+[Foundation Models for Time Series: A Survey](https://arxiv.org/abs/2504.04011) (April 2025) - Comprehensive taxonomy of 50+ models.
+
+**dogwatch opportunity:** Don't train anomaly detectors per metric. Use a time series foundation model for zero-shot anomaly detection on ANY metric.
+
+---
+
+### LLM-Powered AIOps
+
+Large language models for incident investigation, alert correlation, and automated diagnosis.
+
+#### Comprehensive Survey
+
+[A Survey of AIOps in the Era of Large Language Models](https://arxiv.org/abs/2507.12472) (July 2025) analyzed 183 papers from 2020-2024.
+
+#### Key Applications
+
+| Application | LLM Capability | State of Art |
+|-------------|----------------|--------------|
+| **Alert aggregation** | NLP understanding | Reduce "alert storms" by grouping |
+| **Incident analysis** | Semantic reasoning | Auto-diagnose + suggest fixes |
+| **Log parsing** | Pattern recognition | No regex rules needed |
+| **Root cause** | Multi-step reasoning | [OpenRCA](https://arxiv.org/abs/2503.00981) (ICLR 2025) |
+| **Runbook generation** | Knowledge synthesis | Auto-create from incidents |
+
+#### Key Papers
+
+| Paper | Venue | Focus |
+|-------|-------|-------|
+| [OpenRCA](https://arxiv.org/abs/2503.00981) | ICLR 2025 | "Can LLMs Locate Root Cause?" |
+| [AIOpsLab](https://arxiv.org/abs/2407.12165) | MLSys 2025 | Agent evaluation framework |
+| [ITBench](https://arxiv.org/abs/2410.16890) | ICML 2025 | IT automation benchmark |
+| [Flow-of-Action](https://netman.aiops.org/publications/) | Tsinghua 2025 | SOP-enhanced multi-agent RCA |
+
+#### Integration Pattern
+
+```python
+# Not just "ask AI" but structured reasoning
+def investigate_incident(incident, context):
+    # 1. Gather relevant data (eBPF traces, metrics, logs)
+    evidence = collect_evidence(incident.time_range)
+
+    # 2. Build causal context
+    causal_graph = build_causal_model(evidence)
+
+    # 3. LLM reasons over structured data
+    analysis = llm.analyze(
+        incident=incident,
+        evidence=evidence,
+        causal_graph=causal_graph,
+        runbooks=get_relevant_runbooks()
+    )
+
+    # 4. Return actionable diagnosis
+    return {
+        "root_cause": analysis.root_cause,
+        "confidence": analysis.confidence,
+        "remediation": analysis.suggested_fix,
+        "evidence": analysis.supporting_traces
+    }
+```
+
+**dogwatch opportunity:** LLMs for natural language incident investigation. "Why is checkout slow?" → actual answer with evidence, not dashboard links.
+
+---
+
+### Self-Healing Infrastructure
+
+The end goal: fully autonomous detection, diagnosis, and remediation.
+
+#### Key Papers
+
+| Paper | Venue | Approach | Results |
+|-------|-------|----------|---------|
+| [IFSHM](https://arxiv.org/html/2506.07411v1) | arXiv Jun 2025 | LLM + Deep RL | Semantic understanding + policy optimization |
+| [Cloud Self-Healing](https://arxiv.org/html/2505.11743v1) | arXiv May 2025 | LLM fault detection | Best accuracy, fast recovery |
+| [Self-Healing ML](https://arxiv.org/abs/2411.00186) | arXiv Oct 2024 | Autonomous adaptation | Handles distribution shift |
+
+#### The Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                   SELF-HEALING LOOP                          │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  1. OBSERVE (eBPF + eGPU)                                   │
+│     └── Real-time telemetry from CPU, GPU, network          │
+│                                                              │
+│  2. DETECT (Foundation Model + GNN)                         │
+│     └── Anomaly detection without explicit rules            │
+│                                                              │
+│  3. DIAGNOSE (Causal AI + LLM)                              │
+│     └── Root cause, not just symptoms                       │
+│                                                              │
+│  4. DECIDE (LLM + Reinforcement Learning)                   │
+│     └── Select optimal remediation action                   │
+│                                                              │
+│  5. ACT (Agentic Execution)                                 │
+│     └── Execute runbook, verify fix                         │
+│                                                              │
+│  6. LEARN (Continuous Improvement)                          │
+│     └── Update models from outcomes                         │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### Industry Adoption
+
+- [Gartner: 60% of enterprises moving to self-healing by 2026](https://ennetix.com/the-rise-of-autonomous-it-operations-what-aiops-platforms-must-enable-by-2026/)
+- [Results: 96% improvement in MTTD, 83% in MTTR](https://www.algomox.com/resources/blog/self_healing_infrastructure_with_agentic_ai/)
+
+**dogwatch opportunity:** Full autonomy loop. See → Diagnose → Fix → Learn. Human notified after resolution.
+
+---
+
+### Kernel Safety: Rex and Safe Rust Extensions
+
+Replace fragile eBPF verifier with compile-time safety guarantees.
+
+#### Key Papers
+
+| Paper | Venue | Innovation |
+|-------|-------|------------|
+| [Rex](https://arxiv.org/html/2502.18832v2) | arXiv Apr 2025 | Safe Rust kernel extensions |
+| [SafeBPF](https://arxiv.org/pdf/2409.07508) | arXiv Sep 2024 | Hardware MTE for eBPF defense |
+| [CapsLock](https://arxiv.org/pdf/2507.03344) | arXiv Jul 2025 | Hardware capabilities for Rust |
+| [eBPF Runtime](https://arxiv.org/html/2410.00026v2) | arXiv Oct 2024 | Comprehensive runtime analysis |
+
+#### The Shift
+
+```
+Current eBPF:     C code → Verifier (complex, limits)
+                  └── Verifier bugs = kernel compromise
+                  └── Verifier limits = can't express some programs
+
+Future (Rex):     Rust code → Compiler guarantees
+                  └── Memory safety by construction
+                  └── No verifier limitations
+                  └── More expressive programs
+                  └── Type safety extends to kernel
+```
+
+**dogwatch opportunity:** Write probes in safe Rust. More powerful, safer, easier to maintain than C eBPF.
+
+---
+
+### Agent Observability (AgentSight)
+
+As AI agents proliferate, need visibility into agent reasoning and actions.
+
+#### Key Paper
+
+[AgentSight](https://arxiv.org/html/2508.02736v1) (Aug 2025) - System-level observability for AI agents using eBPF.
+
+```
+Problem: AI agents make tool calls, API requests, file writes
+         Traditional observability sees syscalls
+         Missing: Agent INTENT and REASONING
+
+AgentSight solution:
+├── eBPF captures system events
+├── "Boundary tracing" links LLM calls to effects
+├── Hybrid correlation engine
+├── Detects: prompt injection, reasoning loops, bottlenecks
+└── <3% overhead
+```
+
+#### Trace Example
+
+```
+agent-request (user: "book a flight")
+  └── llm.reason() (200ms, "I need to search flights")
+      └── tool.search_flights() (API call, 500ms)
+          └── syscall: connect(api.flights.com)  ← eBPF sees this
+      └── llm.reason() (150ms, "Found 3 options, selecting cheapest")
+      └── tool.book_flight() (API call, 800ms)
+          └── syscall: connect(api.bookings.com)  ← eBPF sees this
+  └── response (total: 1.8s, $0.02 LLM cost)
+```
+
+**dogwatch opportunity:** First-class AI agent tracing. See agent reasoning + system effects in unified view.
+
+---
+
+### Emerging Areas to Watch
+
+#### QUIC/HTTP3 Observability
+
+**Problem:** QUIC is UDP-based, fully encrypted, connection IDs rotate. Traditional inspection doesn't work.
+
+**Research:**
+- [VisQUIC Dataset](https://arxiv.org/html/2410.03728v6) - 100K+ labeled QUIC traces
+- ML achieving 97% accuracy on encrypted traffic classification
+
+**Opportunity:** First-mover advantage in HTTP/3 world as QUIC becomes default.
+
+#### Confidential Computing Observability
+
+**Problem:** AMD SEV-SNP / Intel TDX encrypt VM memory. Hypervisor can't see inside.
+
+**Research:**
+- [SIGMETRICS 2025](https://dl.acm.org/doi/10.1145/3700418) - CVM analysis
+- AMD working on "Performance Counter Virtualization"
+
+**Opportunity:** Observability that works inside confidential VMs.
+
+#### Telemetry Compression at Edge
+
+**Problem:** IoT generates 180 zettabytes/year. Can't send everything.
+
+**Key papers:**
+- [TSCom-Bench](https://arxiv.org/abs/2509.21002) - Foundation models for compression
+- [Semantic Compression](https://arxiv.org/html/2503.13246v2) - Compress for goals, not bits
+
+**Opportunity:** Smart edge filtering that keeps anomalies, drops noise.
+
+---
+
+### Research-Informed Product Roadmap
+
+Based on the research above, here's the technology adoption timeline:
+
+#### Phase 1: Near-term (6-12 months)
+| Technology | Maturity | Action |
+|------------|----------|--------|
+| kTLS + eBPF | Ready | Implement to fix HTTPS |
+| Time series foundation model | Products exist | Integrate for zero-shot anomaly |
+| LLM investigation | Mature | Add natural language queries |
+
+#### Phase 2: Medium-term (12-24 months)
+| Technology | Maturity | Action |
+|------------|----------|--------|
+| GNN for traces | Papers → code | Build trace-based anomaly detection |
+| Causal inference | Early products | Replace correlation with causation |
+| eGPU | Working code | Add GPU visibility for AI workloads |
+
+#### Phase 3: Long-term (24-36 months)
+| Technology | Maturity | Action |
+|------------|----------|--------|
+| Self-healing loop | Research | Full autonomy: detect → fix → learn |
+| Rex (Rust eBPF) | New research | Migrate probes to safe Rust |
+| Agent observability | Emerging | First-class AI agent tracing |
+
+---
+
+### The Killer Stack (Research-Backed)
+
+```
+dogwatch 2027 (research-informed architecture):
+─────────────────────────────────────────────────
+
+COLLECTION:     eBPF (CPU) + eGPU (GPU) + kTLS (HTTPS)
+                       │
+                       ▼
+REPRESENTATION: Dynamic service graph from traces
+                       │
+                       ▼
+DETECTION:      GNN for topology anomalies
+                + Time series foundation model for metrics
+                + No explicit rules needed
+                       │
+                       ▼
+DIAGNOSIS:      Causal inference (not correlation)
+                + LLM for natural language reasoning
+                + Counterfactual "what-if" analysis
+                       │
+                       ▼
+REMEDIATION:    Agentic AI + Reinforcement Learning
+                + Runbook execution
+                + Outcome-based learning
+                       │
+                       ▼
+RESULT:         "We see everything (CPU, GPU, encrypted)
+                 We understand causation (not just correlation)
+                 We fix it automatically (self-healing)"
+```
+
+---
+
+### Key Research Resources
+
+**Surveys & Overviews:**
+- [eBPF Ecosystem 2024-2025](https://eunomia.dev/blog/2025/02/12/ebpf-ecosystem-progress-in-20242025-a-technical-deep-dive/)
+- [Foundation Models for Time Series](https://arxiv.org/abs/2504.04011)
+- [AIOps in Era of LLMs](https://arxiv.org/abs/2507.12472)
+- [RCA in Microservices Survey](https://arxiv.org/html/2408.00803v1)
+- [Causal RCA Survey](https://arxiv.org/html/2510.19593v1)
+
+**GitHub Repositories:**
+- [bpftime](https://github.com/eunomia-bpf/bpftime) - Userspace eBPF + GPU
+- [Awesome LLM-AIOps](https://github.com/Jun-jie-Huang/awesome-LLM-AIOps) - Curated papers
+- [eBPF for Windows](https://github.com/microsoft/ebpf-for-windows)
+- [Retina](https://github.com/microsoft/retina) - Cross-platform observability
+
+**Academic Labs:**
+- [Tsinghua NetMan Lab](https://netman.aiops.org/publications/) - Leading AIOps research
+- [eunomia-bpf](https://github.com/eunomia-bpf) - eBPF innovation
 
 ---
 
