@@ -4785,9 +4785,5870 @@ Based on competitive weaknesses, prioritize these iterations:
 
 ---
 
-## Roadmap
+## Benchmark Targets
 
-> **📋 AUTHORITATIVE PRIORITIES:** See [Summary: Cost vs Impact Matrix](#summary-cost-vs-impact-matrix) for the definitive build order. Other priority lists in this document provide context but defer to that matrix.
+Specific, measurable performance targets dogwatch must hit to be competitive. These aren't aspirational—they're requirements.
+
+### Resource Usage Benchmarks
+
+**Memory Footprint**
+
+| Scenario | Target | Competitor Reality |
+|----------|--------|-------------------|
+| Idle (no traffic) | < 50 MB | Pixie PEM: 500MB+, Grafana Agent: 200MB+ |
+| Light (100 spans/sec) | < 100 MB | Pixie: 1GB+, Datadog Agent: 400MB+ |
+| Medium (1K spans/sec) | < 200 MB | Most tools: 2GB+ |
+| Heavy (10K spans/sec) | < 500 MB | Most tools: 4GB+ or crash |
+| Extreme (50K spans/sec) | < 1 GB | Most tools: dedicated node required |
+
+```go
+// Memory budget enforcement
+const (
+    MemoryBudgetIdle   = 50 * 1024 * 1024   // 50 MB
+    MemoryBudgetLight  = 100 * 1024 * 1024  // 100 MB
+    MemoryBudgetMedium = 200 * 1024 * 1024  // 200 MB
+    MemoryBudgetHeavy  = 500 * 1024 * 1024  // 500 MB
+    MemoryBudgetMax    = 1024 * 1024 * 1024 // 1 GB hard cap
+)
+
+// CI test: fail build if idle memory exceeds budget
+func TestMemoryBudget(t *testing.T) {
+    dw := startDogwatch()
+    defer dw.Stop()
+
+    time.Sleep(10 * time.Second) // Let it stabilize
+
+    var stats runtime.MemStats
+    runtime.ReadMemStats(&stats)
+
+    if stats.Alloc > MemoryBudgetIdle {
+        t.Errorf("Idle memory %d exceeds budget %d", stats.Alloc, MemoryBudgetIdle)
+    }
+}
+```
+
+**CPU Overhead (eBPF Probes)**
+
+| Scenario | Target | Notes |
+|----------|--------|-------|
+| eBPF probe overhead | < 1% CPU | Per host, not per core |
+| Per 1K HTTP requests traced | < 0.1% CPU | Amortized |
+| Per 1K DB queries traced | < 0.1% CPU | Amortized |
+| TLS interception overhead | < 0.5% CPU | More expensive than plaintext |
+| Profiling enabled (100Hz) | < 2% CPU | Stack sampling |
+
+```bash
+# Benchmark: measure CPU overhead
+# Before dogwatch
+stress-ng --cpu 4 --timeout 60s --metrics-brief
+# Result: 4000 bogo-ops/s
+
+# With dogwatch running
+stress-ng --cpu 4 --timeout 60s --metrics-brief
+# Target: > 3960 bogo-ops/s (< 1% degradation)
+```
+
+**Disk Usage**
+
+| Data Type | Target | Compression Ratio |
+|-----------|--------|-------------------|
+| Per span (avg) | < 500 bytes | 5-10x from raw |
+| Per metric point | < 16 bytes | Time + value + label ref |
+| Per log line (avg) | < 200 bytes | After field extraction |
+| Index overhead | < 20% of data | SQLite indexes |
+
+```
+Storage efficiency targets:
+├── 1 million spans: < 500 MB
+├── 1 million metric points: < 16 MB
+├── 1 million log lines: < 200 MB
+└── Total for medium deployment (24hr): < 5 GB
+```
+
+---
+
+### Throughput Benchmarks
+
+**Ingestion Rates**
+
+| Signal | Minimum | Target | Stretch |
+|--------|---------|--------|---------|
+| Spans | 5K/sec | 20K/sec | 100K/sec |
+| Metrics (points) | 50K/sec | 200K/sec | 1M/sec |
+| Logs (lines) | 10K/sec | 50K/sec | 200K/sec |
+| OTLP gRPC | 5K spans/sec | 20K/sec | 50K/sec |
+| Prometheus scrape | 100K series | 500K series | 1M series |
+
+```go
+// Benchmark test
+func BenchmarkSpanIngestion(b *testing.B) {
+    store := NewSpanStore()
+
+    span := &Span{
+        TraceID:   "abc123",
+        SpanID:    "def456",
+        Service:   "api",
+        Operation: "GET /users",
+        Duration:  45 * time.Millisecond,
+    }
+
+    b.ResetTimer()
+    for i := 0; i < b.N; i++ {
+        store.Write(span)
+    }
+
+    // Target: > 20,000 ops/sec on single core
+    // go test -bench=BenchmarkSpanIngestion -benchtime=10s
+}
+```
+
+**Throughput vs Competitors**
+
+| Tool | Spans/sec (single node) | Notes |
+|------|------------------------|-------|
+| Jaeger | ~10K | Needs Cassandra/ES for more |
+| Tempo | ~30K | With S3 backend |
+| Zipkin | ~5K | Memory storage |
+| **dogwatch target** | **20K** | SQLite, single binary |
+
+---
+
+### Query Latency Benchmarks
+
+**Trace Queries**
+
+| Query Type | p50 Target | p99 Target | Data Size |
+|------------|------------|------------|-----------|
+| Get trace by ID | < 5ms | < 20ms | Any |
+| List traces (last 1hr) | < 50ms | < 200ms | 100K traces |
+| List traces (last 24hr) | < 100ms | < 500ms | 1M traces |
+| Search by tag | < 100ms | < 500ms | 1M traces |
+| Service map generation | < 200ms | < 1s | 1M traces |
+
+```sql
+-- Benchmark queries (must complete in target time)
+
+-- Query 1: Get trace by ID (target: < 5ms p50)
+SELECT * FROM spans WHERE trace_id = ? ORDER BY start_time;
+
+-- Query 2: List recent traces (target: < 50ms p50)
+SELECT DISTINCT trace_id, MIN(start_time), MAX(end_time)
+FROM spans
+WHERE start_time > datetime('now', '-1 hour')
+GROUP BY trace_id
+LIMIT 100;
+
+-- Query 3: Search by tag (target: < 100ms p50)
+SELECT * FROM spans
+WHERE json_extract(tags, '$.user_id') = '12345'
+  AND start_time > datetime('now', '-24 hours');
+```
+
+**Metric Queries**
+
+| Query Type | p50 Target | p99 Target | Data Size |
+|------------|------------|------------|-----------|
+| Single metric, last 1hr | < 10ms | < 50ms | 3600 points |
+| Single metric, last 24hr | < 50ms | < 200ms | 86400 points |
+| Single metric, last 7d | < 100ms | < 500ms | 604800 points |
+| Aggregation (rate/avg) | < 50ms | < 200ms | 1hr range |
+| Multi-metric (10 series) | < 100ms | < 500ms | 1hr range |
+| High cardinality (10K series) | < 500ms | < 2s | 1hr range |
+
+```go
+// PromQL query benchmarks
+queries := []struct {
+    name    string
+    query   string
+    target  time.Duration
+}{
+    {"instant", `http_requests_total{service="api"}`, 10 * time.Millisecond},
+    {"rate_1h", `rate(http_requests_total[1h])`, 50 * time.Millisecond},
+    {"rate_24h", `rate(http_requests_total[24h])`, 100 * time.Millisecond},
+    {"aggregation", `sum(rate(http_requests_total[5m])) by (service)`, 50 * time.Millisecond},
+    {"high_cardinality", `topk(10, http_requests_total)`, 500 * time.Millisecond},
+}
+```
+
+**Log Queries**
+
+| Query Type | p50 Target | p99 Target | Data Size |
+|------------|------------|------------|-----------|
+| Full-text search (last 1hr) | < 100ms | < 500ms | 1M logs |
+| Full-text search (last 24hr) | < 500ms | < 2s | 10M logs |
+| Filter by field | < 50ms | < 200ms | 1M logs |
+| Aggregation (count by level) | < 100ms | < 500ms | 1M logs |
+| Pattern detection | < 1s | < 5s | 1M logs |
+
+---
+
+### Startup & Time-to-Value Benchmarks
+
+**Startup Time**
+
+| Phase | Target | Notes |
+|-------|--------|-------|
+| Binary starts | < 1 second | Before probes load |
+| eBPF probes loaded | < 5 seconds | All probes attached |
+| Web UI accessible | < 3 seconds | Can open browser |
+| First data visible | < 10 seconds | From cold start |
+| Full functionality | < 15 seconds | All systems operational |
+
+```bash
+# Benchmark startup time
+time ./dogwatch &
+curl --retry 10 --retry-delay 1 http://localhost:9999/healthz
+# Target: completes in < 10 seconds
+```
+
+**Time-to-First-Value (New User)**
+
+| Milestone | Target | Competitor Reality |
+|-----------|--------|-------------------|
+| Download binary | < 10 seconds | Same |
+| Start dogwatch | < 5 seconds | Grafana stack: minutes of YAML |
+| See first trace | < 60 seconds | Pixie: 2-5 minutes (K8s required) |
+| See service map | < 60 seconds | OTel: hours (needs instrumentation) |
+| Create first alert | < 5 minutes | Datadog: immediate (but $$$) |
+| Full deployment | < 10 minutes | Grafana: hours to days |
+
+```
+The "60-second challenge":
+
+0:00  curl -L https://dogwatch.dev/install.sh | sh
+0:05  ./dogwatch
+0:10  Open http://localhost:9999
+0:15  See auto-discovered services
+0:30  See first distributed trace
+0:45  See service map with dependencies
+0:60  "Holy shit, it actually works"
+
+If this takes longer than 60 seconds, we've failed.
+```
+
+---
+
+### Accuracy Benchmarks
+
+**Trace Correlation Accuracy**
+
+| Scenario | Accuracy Target | Notes |
+|----------|-----------------|-------|
+| With trace headers | > 99.9% | Should be perfect |
+| Without headers (timing-based) | > 90% | Acceptable loss |
+| Cross-service (same host) | > 95% | Easier |
+| Cross-service (different hosts) | > 85% | Harder |
+| Through load balancer | > 80% | Connection pooling complicates |
+
+```go
+// Correlation accuracy test
+func TestCorrelationAccuracy(t *testing.T) {
+    // Generate known trace (100 spans across 5 services)
+    knownTrace := generateTestTrace(100, 5)
+
+    // Send traffic that matches this trace
+    sendTestTraffic(knownTrace)
+
+    // Wait for dogwatch to process
+    time.Sleep(5 * time.Second)
+
+    // Query the trace
+    reconstructed := dogwatch.GetTrace(knownTrace.ID)
+
+    // Compare
+    accuracy := compareTraces(knownTrace, reconstructed)
+
+    if accuracy < 0.90 {
+        t.Errorf("Correlation accuracy %.2f%% below target 90%%", accuracy*100)
+    }
+}
+```
+
+**Protocol Parsing Accuracy**
+
+| Protocol | Target | Test Method |
+|----------|--------|-------------|
+| HTTP/1.1 | > 99.9% | Compare to tcpdump |
+| MySQL | > 99% | Compare to query log |
+| PostgreSQL | > 99% | Compare to pg_stat_statements |
+| Redis | > 99.5% | Compare to MONITOR output |
+| gRPC | > 98% | Compare to interceptor |
+
+```go
+// Protocol parsing accuracy test
+func TestMySQLParsingAccuracy(t *testing.T) {
+    // Enable MySQL general log
+    db.Exec("SET GLOBAL general_log = 'ON'")
+
+    // Run test queries
+    queries := []string{
+        "SELECT * FROM users WHERE id = 1",
+        "INSERT INTO logs (msg) VALUES ('test')",
+        "UPDATE users SET name = 'foo' WHERE id = 1",
+    }
+
+    for _, q := range queries {
+        db.Exec(q)
+    }
+
+    // Get queries from dogwatch
+    captured := dogwatch.GetMySQLQueries(time.Now().Add(-1*time.Minute), time.Now())
+
+    // Get queries from MySQL log
+    expected := parseMySQLLog("/var/log/mysql/general.log")
+
+    // Compare
+    if !queriesMatch(captured, expected) {
+        t.Errorf("MySQL parsing mismatch")
+    }
+}
+```
+
+**Sampling Accuracy (When Enabled)**
+
+| Scenario | Target | Notes |
+|----------|--------|-------|
+| Errors kept | 100% | Never drop errors |
+| Slow requests kept (>1s) | 100% | Never drop slow |
+| Base sample rate accuracy | ± 5% | If 10% configured, should be 9.5-10.5% |
+| Trace completeness | > 95% | If trace kept, all spans kept |
+
+---
+
+### Scalability Benchmarks
+
+**Horizontal Scale (Future)**
+
+| Metric | Single Node | Target (3 nodes) | Notes |
+|--------|-------------|------------------|-------|
+| Spans/sec | 20K | 50K | Linear-ish scaling |
+| Metrics series | 500K | 1M | Sharded by series |
+| Concurrent queries | 50 | 150 | Load balanced |
+| Storage | 1 TB | 3 TB | Each node stores subset |
+
+**Vertical Scale**
+
+| Instance Type | Expected Throughput | Memory | Notes |
+|---------------|---------------------|--------|-------|
+| t3.micro (1GB) | 1K spans/sec | 200MB usable | Dev/test only |
+| t3.small (2GB) | 5K spans/sec | 500MB usable | Small production |
+| t3.medium (4GB) | 15K spans/sec | 1GB usable | Medium production |
+| t3.large (8GB) | 30K spans/sec | 2GB usable | Large production |
+| c5.xlarge (8GB) | 50K spans/sec | 2GB usable | High throughput |
+
+```bash
+# Vertical scaling test matrix
+for instance in t3.micro t3.small t3.medium t3.large; do
+    echo "Testing on $instance"
+    ./benchmark --target=dogwatch:9999 --duration=5m --rate=auto
+    # Record: max sustained throughput, p99 latency, memory usage
+done
+```
+
+---
+
+### Reliability Benchmarks
+
+**Uptime & Availability**
+
+| Metric | Target | Notes |
+|--------|--------|-------|
+| Process uptime | > 99.9% | 8.7 hours downtime/year max |
+| Data durability | > 99.99% | SQLite with WAL |
+| Query availability | > 99.9% | During normal operations |
+| Graceful degradation | Yes | Shed load before crash |
+
+**Recovery Time**
+
+| Scenario | Target | Notes |
+|----------|--------|-------|
+| Cold start | < 15 seconds | Full functionality |
+| Crash recovery | < 30 seconds | Auto-restart + catch up |
+| Probe reload | < 1 second | Zero data gap |
+| Database recovery | < 1 minute | WAL replay |
+
+```go
+// Crash recovery test
+func TestCrashRecovery(t *testing.T) {
+    // Start dogwatch
+    dw := startDogwatch()
+
+    // Send some data
+    sendTestSpans(1000)
+
+    // Kill it hard (SIGKILL)
+    dw.Kill()
+
+    // Restart
+    start := time.Now()
+    dw = startDogwatch()
+    waitForHealthy(dw)
+    recovery := time.Since(start)
+
+    if recovery > 30*time.Second {
+        t.Errorf("Recovery took %v, target is 30s", recovery)
+    }
+
+    // Verify data survived
+    spans := dw.QuerySpans(time.Now().Add(-5*time.Minute), time.Now())
+    if len(spans) < 1000 {
+        t.Errorf("Data loss after crash: expected 1000, got %d", len(spans))
+    }
+}
+```
+
+**Data Loss Scenarios**
+
+| Scenario | Acceptable Loss | Notes |
+|----------|-----------------|-------|
+| Clean shutdown | 0 | All data flushed |
+| SIGTERM | 0 | Graceful with 30s drain |
+| SIGKILL | < 1 second | WAL replay covers |
+| Power failure | < 5 seconds | Last checkpoint |
+| Disk full | 0 | Stop ingestion, don't corrupt |
+
+---
+
+### Comparison Matrix vs Competitors
+
+**Resource Efficiency**
+
+| Tool | Memory (idle) | Memory (10K spans/sec) | CPU Overhead |
+|------|---------------|------------------------|--------------|
+| Pixie PEM | 500 MB | 2+ GB | 2-5% |
+| Datadog Agent | 200 MB | 400 MB | 1-2% |
+| Grafana Agent | 150 MB | 300 MB | 1-2% |
+| OTel Collector | 100 MB | 500 MB | 1-3% |
+| **dogwatch** | **50 MB** | **200 MB** | **< 1%** |
+
+**Query Performance**
+
+| Tool | Trace by ID | Trace search (1M) | Metric query (1hr) |
+|------|-------------|-------------------|-------------------|
+| Jaeger | 10ms | 500ms | N/A |
+| Tempo | 50ms | 200ms | N/A |
+| Grafana (Loki) | N/A | N/A | 100ms |
+| Datadog | 20ms | 100ms | 50ms |
+| **dogwatch** | **5ms** | **100ms** | **50ms** |
+
+**Time to First Value**
+
+| Tool | Download to First Trace | Full Setup |
+|------|------------------------|------------|
+| Pixie | 5 minutes | 30 minutes (K8s required) |
+| Grafana Stack | N/A (manual instrumentation) | 2-4 hours |
+| Datadog | 10 minutes | 1 hour |
+| OTel + Backend | N/A (manual instrumentation) | 2-4 hours |
+| **dogwatch** | **60 seconds** | **60 seconds** |
+
+---
+
+### Benchmark CI Integration
+
+```yaml
+# .github/workflows/benchmarks.yml
+name: Performance Benchmarks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  benchmarks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: go build ./cmd/dogwatch
+
+      - name: Memory benchmark (idle)
+        run: |
+          ./dogwatch &
+          sleep 10
+          MEM=$(ps -o rss= -p $!)
+          if [ $MEM -gt 51200 ]; then  # 50 MB in KB
+            echo "FAIL: Idle memory ${MEM}KB exceeds 50MB"
+            exit 1
+          fi
+
+      - name: Startup benchmark
+        run: |
+          START=$(date +%s%N)
+          ./dogwatch &
+          while ! curl -s localhost:9999/healthz > /dev/null; do sleep 0.1; done
+          END=$(date +%s%N)
+          DURATION=$(( (END - START) / 1000000 ))
+          if [ $DURATION -gt 10000 ]; then  # 10 seconds in ms
+            echo "FAIL: Startup took ${DURATION}ms, target is 10000ms"
+            exit 1
+          fi
+
+      - name: Throughput benchmark
+        run: |
+          ./dogwatch &
+          sleep 5
+          go run ./test/benchmark/spans.go --rate=20000 --duration=30s
+          # Fails if sustained throughput < 20K spans/sec
+
+      - name: Query latency benchmark
+        run: |
+          ./dogwatch &
+          sleep 5
+          # Load test data
+          go run ./test/benchmark/load.go --spans=1000000
+          # Run query benchmarks
+          go test -bench=BenchmarkQueries ./internal/storage/...
+          # Fails if p99 exceeds targets
+```
+
+---
+
+### Benchmark Reporting
+
+**Dashboard Metrics (Internal)**
+
+```
+dogwatch_benchmark_memory_bytes{phase="idle"}
+dogwatch_benchmark_memory_bytes{phase="light"}
+dogwatch_benchmark_memory_bytes{phase="heavy"}
+dogwatch_benchmark_spans_per_second
+dogwatch_benchmark_query_latency_seconds{query="trace_by_id", quantile="0.99"}
+dogwatch_benchmark_startup_seconds
+dogwatch_benchmark_correlation_accuracy
+```
+
+**Public Benchmark Page**
+
+```markdown
+# dogwatch Performance
+
+Last updated: 2024-01-15 (automated)
+
+| Metric | Target | Actual | Status |
+|--------|--------|--------|--------|
+| Idle memory | < 50 MB | 42 MB | ✅ |
+| Startup time | < 10s | 7.2s | ✅ |
+| Spans/sec (sustained) | 20K | 23K | ✅ |
+| Trace query p99 | < 20ms | 12ms | ✅ |
+| Time to first trace | < 60s | 45s | ✅ |
+
+[View full benchmark history →]
+```
+
+---
+
+### Regression Prevention
+
+```go
+// internal/benchmark/regression_test.go
+
+// These tests FAIL THE BUILD if performance regresses
+
+func TestNoMemoryRegression(t *testing.T) {
+    baseline := loadBaseline("memory_idle")
+    current := measureIdleMemory()
+
+    // Allow 10% regression, no more
+    if current > baseline*1.10 {
+        t.Fatalf("Memory regression: baseline=%d, current=%d (+%.1f%%)",
+            baseline, current, (float64(current)/float64(baseline)-1)*100)
+    }
+}
+
+func TestNoStartupRegression(t *testing.T) {
+    baseline := loadBaseline("startup_time")
+    current := measureStartupTime()
+
+    // Allow 20% regression, no more
+    if current > baseline*1.20 {
+        t.Fatalf("Startup regression: baseline=%v, current=%v (+%.1f%%)",
+            baseline, current, (float64(current)/float64(baseline)-1)*100)
+    }
+}
+
+func TestNoQueryRegression(t *testing.T) {
+    baseline := loadBaseline("trace_query_p99")
+    current := measureTraceQueryP99()
+
+    // Allow 25% regression, no more
+    if current > baseline*1.25 {
+        t.Fatalf("Query regression: baseline=%v, current=%v (+%.1f%%)",
+            baseline, current, (float64(current)/float64(baseline)-1)*100)
+    }
+}
+```
+
+---
+
+## Test Suite Strategy
+
+A comprehensive test suite is critical for dogwatch. We're dealing with kernel-level code, multiple protocols, distributed systems concepts, and security-sensitive features. Bugs here can crash systems or lose data.
+
+### Test Categories Overview
+
+```
+test/
+├── unit/                 # Fast, isolated tests
+│   ├── storage/
+│   ├── query/
+│   ├── correlation/
+│   └── sampling/
+├── integration/          # Component interaction tests
+│   ├── otlp/
+│   ├── prometheus/
+│   └── api/
+├── ebpf/                 # Kernel probe tests (require root)
+│   ├── http/
+│   ├── mysql/
+│   ├── postgres/
+│   ├── redis/
+│   └── tls/
+├── protocol/             # Protocol parsing tests
+│   ├── captures/         # Real packet captures
+│   ├── mysql/
+│   ├── postgres/
+│   └── redis/
+├── e2e/                  # Full system tests
+│   ├── scenarios/
+│   └── smoke/
+├── performance/          # Benchmark tests
+│   ├── throughput/
+│   ├── latency/
+│   └── memory/
+├── security/             # Security-focused tests
+│   ├── auth/
+│   ├── injection/
+│   └── fuzzing/
+├── compatibility/        # Cross-version tests
+│   ├── kernel/
+│   └── tls/
+├── chaos/                # Reliability tests
+│   ├── crash/
+│   ├── network/
+│   └── disk/
+└── fixtures/             # Test data
+    ├── traces/
+    ├── metrics/
+    └── logs/
+```
+
+---
+
+### 1. Unit Tests
+
+**Purpose:** Test individual functions and components in isolation. Fast, no external dependencies.
+
+**Coverage targets:**
+- Storage layer: 90%+
+- Query engine: 90%+
+- Correlation logic: 95%+ (critical path)
+- Sampling logic: 95%+ (critical path)
+- API handlers: 80%+
+- Utility functions: 80%+
+
+```go
+// internal/correlation/correlator_test.go
+package correlation
+
+import (
+    "testing"
+    "time"
+)
+
+func TestTimingCorrelation(t *testing.T) {
+    tests := []struct {
+        name     string
+        parent   *Span
+        child    *Span
+        expected bool
+    }{
+        {
+            name: "child within parent timeframe",
+            parent: &Span{
+                StartTime: time.Unix(1000, 0),
+                EndTime:   time.Unix(1100, 0),
+                Service:   "api",
+            },
+            child: &Span{
+                StartTime: time.Unix(1010, 0),
+                EndTime:   time.Unix(1050, 0),
+                Service:   "db",
+            },
+            expected: true,
+        },
+        {
+            name: "child starts before parent",
+            parent: &Span{
+                StartTime: time.Unix(1000, 0),
+                EndTime:   time.Unix(1100, 0),
+            },
+            child: &Span{
+                StartTime: time.Unix(900, 0),  // Before parent!
+                EndTime:   time.Unix(1050, 0),
+            },
+            expected: false,
+        },
+        {
+            name: "child ends after parent",
+            parent: &Span{
+                StartTime: time.Unix(1000, 0),
+                EndTime:   time.Unix(1100, 0),
+            },
+            child: &Span{
+                StartTime: time.Unix(1010, 0),
+                EndTime:   time.Unix(1200, 0),  // After parent!
+            },
+            expected: false,  // Or true with async flag
+        },
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            c := NewCorrelator()
+            result := c.CouldBeChild(tt.parent, tt.child)
+            if result != tt.expected {
+                t.Errorf("expected %v, got %v", tt.expected, result)
+            }
+        })
+    }
+}
+
+func TestSamplingConsistency(t *testing.T) {
+    // Same trace ID should always get same sampling decision
+    sampler := NewSampler(0.1) // 10% sample rate
+
+    traceID := "abc123def456"
+    decisions := make([]bool, 1000)
+
+    for i := 0; i < 1000; i++ {
+        decisions[i] = sampler.ShouldSample(traceID)
+    }
+
+    // All decisions should be identical
+    first := decisions[0]
+    for i, d := range decisions {
+        if d != first {
+            t.Errorf("Inconsistent sampling at iteration %d", i)
+        }
+    }
+}
+
+func TestCardinalityEstimation(t *testing.T) {
+    tracker := NewCardinalityTracker()
+
+    // Add 10,000 unique series
+    for i := 0; i < 10000; i++ {
+        tracker.Track("http_requests", map[string]string{
+            "path":   fmt.Sprintf("/api/users/%d", i),
+            "method": "GET",
+        })
+    }
+
+    // HyperLogLog estimate should be within 5%
+    estimate := tracker.GetCardinality("http_requests")
+    if estimate < 9500 || estimate > 10500 {
+        t.Errorf("Cardinality estimate %d not within 5%% of 10000", estimate)
+    }
+}
+```
+
+**Run:**
+```bash
+go test ./internal/... -short -v
+```
+
+---
+
+### 2. Integration Tests
+
+**Purpose:** Test components working together. May use real databases, real network.
+
+```go
+// test/integration/otlp_test.go
+package integration
+
+import (
+    "context"
+    "testing"
+
+    "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+    "go.opentelemetry.io/otel/sdk/trace"
+)
+
+func TestOTLPIngestion(t *testing.T) {
+    // Start dogwatch
+    dw := startDogwatch(t)
+    defer dw.Stop()
+
+    // Create OTLP exporter pointing to dogwatch
+    exporter, err := otlptracegrpc.New(context.Background(),
+        otlptracegrpc.WithEndpoint("localhost:4317"),
+        otlptracegrpc.WithInsecure(),
+    )
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    // Create and export spans
+    tp := trace.NewTracerProvider(trace.WithBatcher(exporter))
+    tracer := tp.Tracer("test")
+
+    ctx, span := tracer.Start(context.Background(), "test-operation")
+    span.SetAttributes(attribute.String("test.key", "test.value"))
+    span.End()
+
+    tp.Shutdown(context.Background())
+
+    // Verify span was ingested
+    time.Sleep(2 * time.Second) // Wait for processing
+
+    spans := dw.QuerySpans(QueryParams{
+        Operation: "test-operation",
+    })
+
+    if len(spans) != 1 {
+        t.Errorf("Expected 1 span, got %d", len(spans))
+    }
+
+    if spans[0].Attributes["test.key"] != "test.value" {
+        t.Error("Attribute not preserved")
+    }
+}
+
+func TestPrometheusRemoteWrite(t *testing.T) {
+    dw := startDogwatch(t)
+    defer dw.Stop()
+
+    // Send Prometheus remote write request
+    req := &prompb.WriteRequest{
+        Timeseries: []prompb.TimeSeries{
+            {
+                Labels: []prompb.Label{
+                    {Name: "__name__", Value: "test_metric"},
+                    {Name: "service", Value: "api"},
+                },
+                Samples: []prompb.Sample{
+                    {Value: 42.0, Timestamp: time.Now().UnixMilli()},
+                },
+            },
+        },
+    }
+
+    err := sendRemoteWrite("http://localhost:9999/api/v1/write", req)
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    // Query it back
+    time.Sleep(1 * time.Second)
+
+    result := dw.QueryMetrics("test_metric{service='api'}")
+    if len(result) != 1 {
+        t.Errorf("Expected 1 result, got %d", len(result))
+    }
+}
+
+func TestAPIAuthentication(t *testing.T) {
+    dw := startDogwatch(t)
+    defer dw.Stop()
+
+    // Create API key
+    key := dw.CreateAPIKey("test-key", []string{"read"})
+
+    tests := []struct {
+        name       string
+        authHeader string
+        wantStatus int
+    }{
+        {"no auth", "", 401},
+        {"invalid key", "Bearer invalid", 401},
+        {"valid key", "Bearer " + key, 200},
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            req, _ := http.NewRequest("GET", "http://localhost:9999/api/v1/traces", nil)
+            if tt.authHeader != "" {
+                req.Header.Set("Authorization", tt.authHeader)
+            }
+
+            resp, err := http.DefaultClient.Do(req)
+            if err != nil {
+                t.Fatal(err)
+            }
+
+            if resp.StatusCode != tt.wantStatus {
+                t.Errorf("expected status %d, got %d", tt.wantStatus, resp.StatusCode)
+            }
+        })
+    }
+}
+
+func TestCrossSignalCorrelation(t *testing.T) {
+    dw := startDogwatch(t)
+    defer dw.Stop()
+
+    traceID := "test-trace-123"
+
+    // Send a trace
+    dw.IngestSpan(&Span{
+        TraceID:   traceID,
+        SpanID:    "span-1",
+        Service:   "api",
+        Operation: "handle-request",
+        StartTime: time.Now(),
+        Duration:  100 * time.Millisecond,
+    })
+
+    // Send a log with the same trace ID
+    dw.IngestLog(&Log{
+        Timestamp: time.Now(),
+        Service:   "api",
+        Level:     "error",
+        Message:   "Something went wrong",
+        Fields: map[string]string{
+            "trace_id": traceID,
+        },
+    })
+
+    // Query trace and verify log is correlated
+    time.Sleep(2 * time.Second)
+
+    trace := dw.GetTrace(traceID)
+    if len(trace.CorrelatedLogs) != 1 {
+        t.Errorf("Expected 1 correlated log, got %d", len(trace.CorrelatedLogs))
+    }
+}
+```
+
+**Run:**
+```bash
+go test ./test/integration/... -v -timeout 5m
+```
+
+---
+
+### 3. eBPF Tests
+
+**Purpose:** Test kernel-level probes. Require root privileges and specific kernel versions.
+
+```go
+// test/ebpf/http_test.go
+//go:build linux
+
+package ebpf
+
+import (
+    "net/http"
+    "testing"
+    "time"
+)
+
+func TestHTTPProbe(t *testing.T) {
+    if os.Getuid() != 0 {
+        t.Skip("eBPF tests require root")
+    }
+
+    // Load HTTP probe
+    probe, err := LoadHTTPProbe()
+    if err != nil {
+        t.Fatalf("Failed to load probe: %v", err)
+    }
+    defer probe.Close()
+
+    // Start a test HTTP server
+    server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.WriteHeader(200)
+        w.Write([]byte("OK"))
+    }))
+    defer server.Close()
+
+    // Collect events
+    events := make(chan *HTTPEvent, 100)
+    go probe.ReadEvents(events)
+
+    // Make HTTP request
+    resp, err := http.Get(server.URL + "/test/path")
+    if err != nil {
+        t.Fatal(err)
+    }
+    resp.Body.Close()
+
+    // Wait for event
+    select {
+    case event := <-events:
+        if event.Method != "GET" {
+            t.Errorf("Expected method GET, got %s", event.Method)
+        }
+        if event.Path != "/test/path" {
+            t.Errorf("Expected path /test/path, got %s", event.Path)
+        }
+        if event.StatusCode != 200 {
+            t.Errorf("Expected status 200, got %d", event.StatusCode)
+        }
+    case <-time.After(5 * time.Second):
+        t.Error("Timeout waiting for HTTP event")
+    }
+}
+
+func TestMySQLProbe(t *testing.T) {
+    if os.Getuid() != 0 {
+        t.Skip("eBPF tests require root")
+    }
+
+    // Skip if no MySQL running
+    db, err := sql.Open("mysql", "root:@tcp(localhost:3306)/test")
+    if err != nil {
+        t.Skip("MySQL not available")
+    }
+    defer db.Close()
+
+    // Load MySQL probe
+    probe, err := LoadMySQLProbe()
+    if err != nil {
+        t.Fatalf("Failed to load probe: %v", err)
+    }
+    defer probe.Close()
+
+    events := make(chan *MySQLEvent, 100)
+    go probe.ReadEvents(events)
+
+    // Execute query
+    testQuery := "SELECT 1 + 1 AS result"
+    _, err = db.Exec(testQuery)
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    // Wait for event
+    select {
+    case event := <-events:
+        if !strings.Contains(event.Query, "SELECT 1 + 1") {
+            t.Errorf("Query mismatch: %s", event.Query)
+        }
+    case <-time.After(5 * time.Second):
+        t.Error("Timeout waiting for MySQL event")
+    }
+}
+
+func TestTLSProbe(t *testing.T) {
+    if os.Getuid() != 0 {
+        t.Skip("eBPF tests require root")
+    }
+
+    probe, err := LoadTLSProbe()
+    if err != nil {
+        t.Fatalf("Failed to load probe: %v", err)
+    }
+    defer probe.Close()
+
+    events := make(chan *TLSEvent, 100)
+    go probe.ReadEvents(events)
+
+    // Make HTTPS request
+    resp, err := http.Get("https://httpbin.org/get")
+    if err != nil {
+        t.Fatal(err)
+    }
+    resp.Body.Close()
+
+    // Should capture decrypted HTTP inside TLS
+    select {
+    case event := <-events:
+        if event.Method != "GET" {
+            t.Errorf("Expected GET, got %s", event.Method)
+        }
+        // Verify we got decrypted content, not encrypted
+        if strings.Contains(event.Path, "\x00") {
+            t.Error("Got encrypted data, TLS interception failed")
+        }
+    case <-time.After(10 * time.Second):
+        t.Error("Timeout waiting for TLS event")
+    }
+}
+```
+
+**Kernel version matrix test:**
+
+```go
+// test/ebpf/kernel_compat_test.go
+
+func TestKernelCompatibility(t *testing.T) {
+    kernel := detectKernelVersion()
+
+    tests := []struct {
+        minKernel string
+        feature   string
+        test      func() error
+    }{
+        {"4.14", "basic kprobes", testBasicKprobes},
+        {"4.18", "BTF", testBTFAvailable},
+        {"5.2", "CO-RE", testCOREWorks},
+        {"5.8", "ringbuf", testRingbufWorks},
+        {"5.18", "kprobe_multi", testKprobeMulti},
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.feature, func(t *testing.T) {
+            if !kernel.AtLeast(tt.minKernel) {
+                t.Skipf("Kernel %s required, have %s", tt.minKernel, kernel)
+            }
+
+            if err := tt.test(); err != nil {
+                t.Errorf("%s failed: %v", tt.feature, err)
+            }
+        })
+    }
+}
+```
+
+**Run:**
+```bash
+sudo go test ./test/ebpf/... -v -timeout 10m
+```
+
+---
+
+### 4. Protocol Parsing Tests
+
+**Purpose:** Test wire protocol parsers with real captured traffic.
+
+```go
+// test/protocol/mysql_test.go
+package protocol
+
+import (
+    "testing"
+
+    "github.com/dogwatch/dogwatch/internal/protocol/mysql"
+)
+
+// Test data from real MySQL traffic captures
+//go:embed captures/mysql_simple_query.bin
+var mysqlSimpleQuery []byte
+
+//go:embed captures/mysql_prepared_stmt.bin
+var mysqlPreparedStmt []byte
+
+//go:embed captures/mysql_compressed.bin
+var mysqlCompressed []byte
+
+//go:embed captures/mysql_ssl_upgrade.bin
+var mysqlSSLUpgrade []byte
+
+func TestMySQLSimpleQuery(t *testing.T) {
+    parser := mysql.NewParser()
+
+    events, err := parser.Parse(mysqlSimpleQuery)
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    if len(events) != 1 {
+        t.Fatalf("Expected 1 event, got %d", len(events))
+    }
+
+    if events[0].Query != "SELECT * FROM users WHERE id = 1" {
+        t.Errorf("Query mismatch: %s", events[0].Query)
+    }
+}
+
+func TestMySQLPreparedStatement(t *testing.T) {
+    parser := mysql.NewParser()
+
+    events, err := parser.Parse(mysqlPreparedStmt)
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    // Should reconstruct full query with parameters
+    if len(events) != 1 {
+        t.Fatalf("Expected 1 event, got %d", len(events))
+    }
+
+    // Original: "SELECT * FROM users WHERE id = ?"
+    // With params: "SELECT * FROM users WHERE id = 42"
+    if !strings.Contains(events[0].Query, "id = 42") {
+        t.Errorf("Parameter not substituted: %s", events[0].Query)
+    }
+}
+
+func TestMySQLCompressed(t *testing.T) {
+    parser := mysql.NewParser()
+    parser.SetCompression(true)
+
+    events, err := parser.Parse(mysqlCompressed)
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    // Should decompress and parse correctly
+    if len(events) == 0 {
+        t.Error("No events from compressed stream")
+    }
+}
+
+func TestMySQLEdgeCases(t *testing.T) {
+    parser := mysql.NewParser()
+
+    tests := []struct {
+        name     string
+        data     []byte
+        wantErr  bool
+        validate func(*mysql.Event) error
+    }{
+        {
+            name: "multi_statement",
+            data: loadCapture("mysql_multi_statement.bin"),
+            validate: func(e *mysql.Event) error {
+                // "SELECT 1; SELECT 2; SELECT 3" should produce 3 queries
+                return nil
+            },
+        },
+        {
+            name: "binary_data_in_query",
+            data: loadCapture("mysql_binary_blob.bin"),
+            validate: func(e *mysql.Event) error {
+                // Should handle binary data without crashing
+                return nil
+            },
+        },
+        {
+            name: "connection_reset_mid_query",
+            data: loadCapture("mysql_reset.bin"),
+            wantErr: false, // Should handle gracefully
+        },
+        {
+            name: "malformed_packet",
+            data: []byte{0xff, 0xff, 0xff, 0xff},
+            wantErr: true,
+        },
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            events, err := parser.Parse(tt.data)
+
+            if tt.wantErr && err == nil {
+                t.Error("Expected error, got none")
+            }
+            if !tt.wantErr && err != nil {
+                t.Errorf("Unexpected error: %v", err)
+            }
+            if tt.validate != nil && len(events) > 0 {
+                if err := tt.validate(events[0]); err != nil {
+                    t.Error(err)
+                }
+            }
+        })
+    }
+}
+```
+
+**Capture real traffic for test fixtures:**
+
+```bash
+# Capture MySQL traffic for test fixtures
+tcpdump -i lo port 3306 -w test/protocol/captures/mysql_session.pcap
+
+# In another terminal, run queries
+mysql -e "SELECT * FROM users WHERE id = 1"
+mysql -e "PREPARE stmt FROM 'SELECT * FROM users WHERE id = ?'; SET @id = 42; EXECUTE stmt USING @id"
+
+# Convert to binary for embedding
+tcpdump -r mysql_session.pcap -w mysql_simple_query.bin 'tcp[13] & 8 != 0' # PSH packets only
+```
+
+---
+
+### 5. End-to-End Tests
+
+**Purpose:** Test complete user scenarios from installation to querying.
+
+```go
+// test/e2e/scenarios_test.go
+package e2e
+
+import (
+    "testing"
+)
+
+func TestScenario_NewUserOnboarding(t *testing.T) {
+    // Simulate new user experience
+
+    // 1. Start dogwatch (simulates curl | sh && ./dogwatch)
+    dw := startFreshDogwatch(t)
+    defer dw.Stop()
+
+    // 2. Start a sample application
+    app := startSampleApp(t) // HTTP server + MySQL + Redis
+    defer app.Stop()
+
+    // 3. Generate traffic
+    for i := 0; i < 100; i++ {
+        app.MakeRequest("/api/users")
+    }
+
+    // 4. Wait for auto-discovery
+    time.Sleep(30 * time.Second)
+
+    // 5. Verify services discovered
+    services := dw.GetServices()
+    if !containsService(services, "sample-app") {
+        t.Error("Sample app not discovered")
+    }
+    if !containsService(services, "mysql") {
+        t.Error("MySQL not discovered")
+    }
+
+    // 6. Verify traces exist
+    traces := dw.QueryTraces(QueryParams{Service: "sample-app", Limit: 10})
+    if len(traces) == 0 {
+        t.Error("No traces captured")
+    }
+
+    // 7. Verify spans linked correctly
+    trace := traces[0]
+    if len(trace.Spans) < 2 {
+        t.Error("Expected multi-span trace (HTTP + DB)")
+    }
+
+    // 8. Verify service map
+    serviceMap := dw.GetServiceMap()
+    if !hasEdge(serviceMap, "sample-app", "mysql") {
+        t.Error("Service map missing sample-app -> mysql edge")
+    }
+
+    t.Logf("New user onboarding: SUCCESS in %v", time.Since(start))
+}
+
+func TestScenario_DatadogMigration(t *testing.T) {
+    dw := startDogwatch(t)
+    defer dw.Stop()
+
+    // Load sample Datadog dashboard JSON
+    ddDashboard := loadFixture("datadog_dashboard.json")
+
+    // Import it
+    result, err := dw.ImportDatadogDashboard(ddDashboard)
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    // Verify conversion
+    if result.WidgetsImported < 5 {
+        t.Errorf("Expected 5+ widgets, got %d", result.WidgetsImported)
+    }
+
+    // Verify dashboard is functional
+    dashboard := dw.GetDashboard(result.DashboardID)
+    if dashboard == nil {
+        t.Error("Dashboard not created")
+    }
+
+    // Verify widgets render (with sample data)
+    dw.LoadSampleData()
+    for _, widget := range dashboard.Widgets {
+        _, err := dw.RenderWidget(widget.ID)
+        if err != nil {
+            t.Errorf("Widget %s failed to render: %v", widget.ID, err)
+        }
+    }
+}
+
+func TestScenario_IncidentInvestigation(t *testing.T) {
+    dw := startDogwatch(t)
+    defer dw.Stop()
+
+    // Load realistic test data
+    dw.LoadFixture("incident_scenario.json")
+
+    // Simulate: user notices latency spike in dashboard
+    metrics := dw.QueryMetrics(`http_request_duration_seconds{service="api"}`)
+    spike := findSpike(metrics)
+    if spike == nil {
+        t.Fatal("Test data should contain latency spike")
+    }
+
+    // Click on spike - should show correlated data
+    correlatedData := dw.GetCorrelatedData(spike.Timestamp, "api")
+
+    // Should find error traces
+    if len(correlatedData.Traces) == 0 {
+        t.Error("Expected correlated traces")
+    }
+
+    // Should find error logs
+    errorLogs := filterLogs(correlatedData.Logs, "level", "error")
+    if len(errorLogs) == 0 {
+        t.Error("Expected error logs")
+    }
+
+    // Should find the deploy that caused it
+    if len(correlatedData.Changes) == 0 {
+        t.Error("Expected correlated changes")
+    }
+
+    // BubbleUp should identify root cause
+    bubbleUp := dw.BubbleUp(correlatedData.Traces)
+    if bubbleUp.TopDimension != "db_shard" {
+        t.Errorf("BubbleUp should identify db_shard, got %s", bubbleUp.TopDimension)
+    }
+}
+
+func TestScenario_HighCardinalityPrevention(t *testing.T) {
+    dw := startDogwatch(t)
+    defer dw.Stop()
+
+    // Enable cardinality limits
+    dw.SetConfig("cardinality.max_series_per_metric", 10000)
+
+    // Try to create cardinality bomb
+    for i := 0; i < 100000; i++ {
+        dw.IngestMetric(&Metric{
+            Name: "http_requests",
+            Labels: map[string]string{
+                "user_id": fmt.Sprintf("%d", i), // High cardinality!
+                "method":  "GET",
+            },
+            Value: 1,
+        })
+    }
+
+    // Should have stopped at limit
+    cardinality := dw.GetCardinality("http_requests")
+    if cardinality > 11000 { // Allow some buffer
+        t.Errorf("Cardinality limit not enforced: %d", cardinality)
+    }
+
+    // Should have alert
+    alerts := dw.GetAlerts()
+    if !hasAlert(alerts, "cardinality_limit_reached") {
+        t.Error("Expected cardinality alert")
+    }
+
+    // Should have recommendation
+    recommendations := dw.GetRecommendations()
+    found := false
+    for _, r := range recommendations {
+        if r.Metric == "http_requests" && r.Type == "drop_label" && r.Label == "user_id" {
+            found = true
+        }
+    }
+    if !found {
+        t.Error("Expected recommendation to drop user_id label")
+    }
+}
+```
+
+**Smoke tests (fast, run on every commit):**
+
+```go
+// test/e2e/smoke_test.go
+package e2e
+
+func TestSmoke_StartupShutdown(t *testing.T) {
+    dw := startDogwatch(t)
+
+    // Should be healthy
+    if !dw.IsHealthy() {
+        t.Error("Not healthy after startup")
+    }
+
+    // Should stop gracefully
+    err := dw.Stop()
+    if err != nil {
+        t.Errorf("Shutdown error: %v", err)
+    }
+}
+
+func TestSmoke_BasicIngestion(t *testing.T) {
+    dw := startDogwatch(t)
+    defer dw.Stop()
+
+    // Ingest one of each signal type
+    dw.IngestSpan(&Span{TraceID: "test", SpanID: "1", Service: "test"})
+    dw.IngestMetric(&Metric{Name: "test", Value: 1})
+    dw.IngestLog(&Log{Message: "test"})
+
+    time.Sleep(1 * time.Second)
+
+    // Query each back
+    if len(dw.QuerySpans(QueryParams{Service: "test"})) == 0 {
+        t.Error("Span not ingested")
+    }
+    if len(dw.QueryMetrics("test")) == 0 {
+        t.Error("Metric not ingested")
+    }
+    if len(dw.QueryLogs(QueryParams{Message: "test"})) == 0 {
+        t.Error("Log not ingested")
+    }
+}
+
+func TestSmoke_WebUILoads(t *testing.T) {
+    dw := startDogwatch(t)
+    defer dw.Stop()
+
+    pages := []string{
+        "/",
+        "/traces",
+        "/metrics",
+        "/logs",
+        "/services",
+        "/alerts",
+    }
+
+    for _, page := range pages {
+        resp, err := http.Get("http://localhost:9999" + page)
+        if err != nil {
+            t.Errorf("Failed to load %s: %v", page, err)
+            continue
+        }
+        if resp.StatusCode != 200 {
+            t.Errorf("Page %s returned %d", page, resp.StatusCode)
+        }
+        resp.Body.Close()
+    }
+}
+```
+
+---
+
+### 6. Security Tests
+
+**Purpose:** Test authentication, authorization, and common vulnerabilities.
+
+```go
+// test/security/auth_test.go
+package security
+
+func TestSQLInjection(t *testing.T) {
+    dw := startDogwatch(t)
+    defer dw.Stop()
+
+    // SQL injection attempts in various inputs
+    payloads := []string{
+        "'; DROP TABLE spans; --",
+        "1 OR 1=1",
+        "1; DELETE FROM spans",
+        "' UNION SELECT * FROM users --",
+        `"'; EXEC xp_cmdshell('whoami'); --`,
+    }
+
+    for _, payload := range payloads {
+        t.Run(payload, func(t *testing.T) {
+            // Try in trace query
+            _, err := dw.QueryTraces(QueryParams{Service: payload})
+            if err != nil && strings.Contains(err.Error(), "syntax error") {
+                t.Errorf("Possible SQL injection vector: %s", payload)
+            }
+
+            // Try in metric query
+            _, err = dw.QueryMetrics(fmt.Sprintf(`test{service="%s"}`, payload))
+            // Should either reject or escape properly
+
+            // Verify database intact
+            count := dw.CountSpans()
+            if count == 0 {
+                t.Error("Data was deleted!")
+            }
+        })
+    }
+}
+
+func TestXSSPrevention(t *testing.T) {
+    dw := startDogwatch(t)
+    defer dw.Stop()
+
+    // XSS payloads
+    payloads := []string{
+        `<script>alert('xss')</script>`,
+        `<img src=x onerror=alert('xss')>`,
+        `javascript:alert('xss')`,
+        `<svg onload=alert('xss')>`,
+    }
+
+    for _, payload := range payloads {
+        // Ingest data with XSS payload
+        dw.IngestSpan(&Span{
+            TraceID:   "test",
+            SpanID:    "1",
+            Operation: payload,
+        })
+    }
+
+    // Fetch via API
+    resp, _ := http.Get("http://localhost:9999/api/v1/traces/test")
+    body, _ := io.ReadAll(resp.Body)
+
+    // Should be escaped in JSON
+    if strings.Contains(string(body), "<script>") {
+        t.Error("XSS payload not escaped in API response")
+    }
+
+    // Check Content-Type header
+    if !strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json") {
+        t.Error("API should return application/json")
+    }
+}
+
+func TestAuthenticationBypass(t *testing.T) {
+    dw := startDogwatch(t, WithAuth(true))
+    defer dw.Stop()
+
+    // Endpoints that should require auth
+    protectedEndpoints := []string{
+        "/api/v1/traces",
+        "/api/v1/metrics/query",
+        "/api/v1/logs",
+        "/api/v1/settings",
+        "/api/v1/users",
+    }
+
+    for _, endpoint := range protectedEndpoints {
+        t.Run(endpoint, func(t *testing.T) {
+            // No auth
+            resp, _ := http.Get("http://localhost:9999" + endpoint)
+            if resp.StatusCode != 401 {
+                t.Errorf("Expected 401, got %d", resp.StatusCode)
+            }
+
+            // Invalid token
+            req, _ := http.NewRequest("GET", "http://localhost:9999"+endpoint, nil)
+            req.Header.Set("Authorization", "Bearer invalid")
+            resp, _ = http.DefaultClient.Do(req)
+            if resp.StatusCode != 401 {
+                t.Errorf("Invalid token should return 401, got %d", resp.StatusCode)
+            }
+
+            // Expired token
+            expiredToken := generateExpiredJWT()
+            req.Header.Set("Authorization", "Bearer "+expiredToken)
+            resp, _ = http.DefaultClient.Do(req)
+            if resp.StatusCode != 401 {
+                t.Errorf("Expired token should return 401, got %d", resp.StatusCode)
+            }
+        })
+    }
+}
+
+func TestRBACEnforcement(t *testing.T) {
+    dw := startDogwatch(t, WithAuth(true))
+    defer dw.Stop()
+
+    // Create users with different roles
+    viewerToken := dw.CreateUser("viewer", RoleViewer)
+    editorToken := dw.CreateUser("editor", RoleEditor)
+    adminToken := dw.CreateUser("admin", RoleAdmin)
+
+    tests := []struct {
+        endpoint string
+        method   string
+        role     string
+        token    string
+        expected int
+    }{
+        // Viewer can read
+        {"/api/v1/traces", "GET", "viewer", viewerToken, 200},
+        // Viewer cannot write
+        {"/api/v1/alerts", "POST", "viewer", viewerToken, 403},
+        // Editor can write
+        {"/api/v1/alerts", "POST", "editor", editorToken, 200},
+        // Editor cannot admin
+        {"/api/v1/users", "POST", "editor", editorToken, 403},
+        // Admin can do everything
+        {"/api/v1/users", "POST", "admin", adminToken, 200},
+    }
+
+    for _, tt := range tests {
+        name := fmt.Sprintf("%s_%s_%s", tt.role, tt.method, tt.endpoint)
+        t.Run(name, func(t *testing.T) {
+            req, _ := http.NewRequest(tt.method, "http://localhost:9999"+tt.endpoint, nil)
+            req.Header.Set("Authorization", "Bearer "+tt.token)
+
+            resp, _ := http.DefaultClient.Do(req)
+            if resp.StatusCode != tt.expected {
+                t.Errorf("Expected %d, got %d", tt.expected, resp.StatusCode)
+            }
+        })
+    }
+}
+
+func TestRateLimiting(t *testing.T) {
+    dw := startDogwatch(t, WithRateLimit(100)) // 100 req/sec
+    defer dw.Stop()
+
+    // Make 200 requests rapidly
+    var successCount, rateLimitedCount int
+    var wg sync.WaitGroup
+
+    for i := 0; i < 200; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            resp, _ := http.Get("http://localhost:9999/api/v1/traces")
+            if resp.StatusCode == 200 {
+                successCount++
+            } else if resp.StatusCode == 429 {
+                rateLimitedCount++
+            }
+        }()
+    }
+
+    wg.Wait()
+
+    // Should have rate limited some requests
+    if rateLimitedCount == 0 {
+        t.Error("Rate limiting not working")
+    }
+
+    // But not all
+    if successCount == 0 {
+        t.Error("Rate limiting too aggressive")
+    }
+
+    t.Logf("Success: %d, Rate limited: %d", successCount, rateLimitedCount)
+}
+```
+
+**Fuzzing:**
+
+```go
+// test/security/fuzz_test.go
+//go:build go1.18
+
+package security
+
+import (
+    "testing"
+
+    "github.com/dogwatch/dogwatch/internal/protocol/mysql"
+)
+
+func FuzzMySQLParser(f *testing.F) {
+    // Seed with valid packets
+    f.Add(loadCapture("mysql_simple_query.bin"))
+    f.Add(loadCapture("mysql_prepared_stmt.bin"))
+
+    // Seed with edge cases
+    f.Add([]byte{})
+    f.Add([]byte{0xff, 0xff, 0xff, 0xff})
+
+    f.Fuzz(func(t *testing.T, data []byte) {
+        parser := mysql.NewParser()
+
+        // Should not panic
+        defer func() {
+            if r := recover(); r != nil {
+                t.Errorf("Parser panicked on input: %x", data)
+            }
+        }()
+
+        parser.Parse(data)
+    })
+}
+
+func FuzzPromQLParser(f *testing.F) {
+    f.Add("rate(http_requests_total[5m])")
+    f.Add("sum(rate(requests{job='api'}[5m])) by (service)")
+    f.Add("")
+    f.Add(")))((((")
+
+    f.Fuzz(func(t *testing.T, query string) {
+        defer func() {
+            if r := recover(); r != nil {
+                t.Errorf("Parser panicked on: %s", query)
+            }
+        }()
+
+        parsePromQL(query)
+    })
+}
+```
+
+---
+
+### 7. Compatibility Tests
+
+**Purpose:** Test across kernel versions, TLS libraries, and environments.
+
+```yaml
+# .github/workflows/compatibility.yml
+name: Compatibility Tests
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly
+
+jobs:
+  kernel-matrix:
+    strategy:
+      matrix:
+        include:
+          - distro: ubuntu-20.04
+            kernel: "5.4"
+          - distro: ubuntu-22.04
+            kernel: "5.15"
+          - distro: debian-11
+            kernel: "5.10"
+          - distro: amazonlinux-2023
+            kernel: "6.1"
+
+    runs-on: ${{ matrix.distro }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: go build ./cmd/dogwatch
+
+      - name: Test eBPF probes
+        run: sudo go test ./test/ebpf/... -v
+
+      - name: Test protocols
+        run: sudo go test ./test/protocol/... -v
+
+  tls-matrix:
+    strategy:
+      matrix:
+        tls:
+          - openssl-1.1
+          - openssl-3.0
+          - boringssl
+          - go-tls
+
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install TLS library
+        run: |
+          case "${{ matrix.tls }}" in
+            openssl-1.1) sudo apt-get install libssl1.1 ;;
+            openssl-3.0) sudo apt-get install libssl3 ;;
+            boringssl) ./scripts/install-boringssl.sh ;;
+            go-tls) echo "Using Go stdlib" ;;
+          esac
+
+      - name: Test TLS interception
+        run: sudo go test ./test/ebpf/tls_test.go -v -tls-library=${{ matrix.tls }}
+
+  container-runtime:
+    strategy:
+      matrix:
+        runtime: [docker, containerd, cri-o]
+
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup runtime
+        run: ./scripts/setup-${{ matrix.runtime }}.sh
+
+      - name: Test container detection
+        run: sudo go test ./test/ebpf/container_test.go -v
+```
+
+---
+
+### 8. Chaos Tests
+
+**Purpose:** Test reliability under failure conditions.
+
+```go
+// test/chaos/crash_test.go
+package chaos
+
+func TestCrashRecovery(t *testing.T) {
+    dw := startDogwatch(t)
+
+    // Ingest data
+    for i := 0; i < 10000; i++ {
+        dw.IngestSpan(&Span{TraceID: fmt.Sprintf("trace-%d", i)})
+    }
+
+    // Count before crash
+    countBefore := dw.CountSpans()
+
+    // Kill hard (SIGKILL)
+    dw.Kill()
+
+    // Restart
+    dw = startDogwatch(t)
+
+    // Should recover
+    countAfter := dw.CountSpans()
+
+    // Allow minimal loss (last few seconds)
+    if countAfter < countBefore-100 {
+        t.Errorf("Data loss: before=%d, after=%d", countBefore, countAfter)
+    }
+}
+
+func TestDiskFull(t *testing.T) {
+    // Create small tmpfs
+    tmpDir := createTmpFS(t, "10M")
+    defer removeTmpFS(tmpDir)
+
+    dw := startDogwatch(t, WithDataDir(tmpDir))
+    defer dw.Stop()
+
+    // Fill disk
+    for i := 0; i < 1000000; i++ {
+        err := dw.IngestSpan(&Span{TraceID: fmt.Sprintf("trace-%d", i)})
+        if err != nil {
+            // Should get error, not crash
+            if !strings.Contains(err.Error(), "disk full") &&
+               !strings.Contains(err.Error(), "no space") {
+                t.Errorf("Unexpected error: %v", err)
+            }
+            break
+        }
+    }
+
+    // Should still be healthy (rejecting writes, but serving reads)
+    if !dw.IsHealthy() {
+        t.Error("Should remain healthy when disk full")
+    }
+
+    // Old data should still be queryable
+    spans := dw.QuerySpans(QueryParams{Limit: 10})
+    if len(spans) == 0 {
+        t.Error("Should still serve reads when disk full")
+    }
+}
+
+func TestNetworkPartition(t *testing.T) {
+    dw := startDogwatch(t)
+    defer dw.Stop()
+
+    // Start sending OTLP data
+    exporter := startOTLPExporter("localhost:4317")
+
+    // Send some data
+    exporter.SendSpans(100)
+    time.Sleep(1 * time.Second)
+
+    // Simulate network partition (block port)
+    blockPort(4317)
+
+    // Exporter should handle gracefully (buffer/retry)
+    exporter.SendSpans(100) // Should not crash
+
+    // Unblock
+    unblockPort(4317)
+
+    // Should resume
+    time.Sleep(5 * time.Second)
+
+    // Data should eventually arrive
+    count := dw.CountSpans()
+    if count < 150 { // Some loss acceptable during partition
+        t.Errorf("Too much data loss: expected ~200, got %d", count)
+    }
+}
+
+func TestMemoryPressure(t *testing.T) {
+    dw := startDogwatch(t, WithMemoryLimit("200M"))
+    defer dw.Stop()
+
+    // Generate high load
+    for i := 0; i < 100; i++ {
+        go func() {
+            for j := 0; j < 10000; j++ {
+                dw.IngestSpan(&Span{
+                    TraceID: fmt.Sprintf("trace-%d-%d", i, j),
+                    Tags:    generateLargeTags(), // 10KB of tags
+                })
+            }
+        }()
+    }
+
+    // Should not OOM
+    time.Sleep(30 * time.Second)
+
+    if !dw.IsHealthy() {
+        t.Error("Process died under memory pressure")
+    }
+
+    // Should have shed load gracefully
+    metrics := dw.GetInternalMetrics()
+    if metrics["dropped_spans"] == 0 {
+        t.Log("No spans dropped - might need more pressure")
+    }
+}
+```
+
+---
+
+### CI/CD Integration
+
+```yaml
+# .github/workflows/test.yml
+name: Tests
+
+on: [push, pull_request]
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Unit tests
+        run: go test ./internal/... -short -race -coverprofile=coverage.out
+
+      - name: Coverage check
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | tr -d '%')
+          if (( $(echo "$COVERAGE < 70" | bc -l) )); then
+            echo "Coverage $COVERAGE% is below 70% threshold"
+            exit 1
+          fi
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: test
+        ports:
+          - 3306:3306
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+
+      - name: Integration tests
+        run: go test ./test/integration/... -v -timeout 10m
+
+  ebpf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+
+      - name: eBPF tests (require root)
+        run: sudo go test ./test/ebpf/... -v -timeout 15m
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+
+      - name: Build
+        run: go build ./cmd/dogwatch
+
+      - name: E2E smoke tests
+        run: go test ./test/e2e/smoke_test.go -v
+
+      - name: E2E scenario tests
+        run: go test ./test/e2e/scenarios_test.go -v -timeout 20m
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+
+      - name: Security tests
+        run: go test ./test/security/... -v
+
+      - name: Fuzz tests (short)
+        run: go test ./test/security/... -fuzz=. -fuzztime=1m
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  benchmarks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+
+      - name: Benchmark tests
+        run: go test ./test/performance/... -bench=. -benchmem
+
+      - name: Regression check
+        run: go test ./internal/benchmark/regression_test.go -v
+```
+
+---
+
+### Test Coverage Targets
+
+| Component | Target | Critical |
+|-----------|--------|----------|
+| Storage layer | 90% | Yes |
+| Query engine | 90% | Yes |
+| Correlation | 95% | Yes |
+| Sampling | 95% | Yes |
+| Protocol parsers | 85% | Yes |
+| API handlers | 80% | No |
+| eBPF probes | 70% | Yes (hard to test) |
+| Web UI | 60% | No |
+| **Overall** | **80%** | |
+
+---
+
+### Test Data Management
+
+```go
+// test/fixtures/fixtures.go
+package fixtures
+
+//go:embed traces/*.json
+var TraceFixtures embed.FS
+
+//go:embed metrics/*.json
+var MetricFixtures embed.FS
+
+//go:embed captures/*.bin
+var PacketCaptures embed.FS
+
+// Load realistic test scenarios
+func LoadIncidentScenario() *TestScenario {
+    // Latency spike with correlated errors
+    return &TestScenario{
+        Traces:  loadJSON("traces/incident_latency_spike.json"),
+        Metrics: loadJSON("metrics/incident_latency_spike.json"),
+        Logs:    loadJSON("logs/incident_latency_spike.json"),
+        Changes: loadJSON("changes/incident_deploy.json"),
+    }
+}
+
+func LoadHighCardinalityScenario() *TestScenario {
+    // Cardinality explosion scenario
+}
+
+func LoadMigrationScenario() *TestScenario {
+    // Datadog dashboards/alerts for migration testing
+}
+```
+
+---
+
+### Summary: Test Pyramid
+
+```
+                    ┌─────────┐
+                    │   E2E   │  Slow, few
+                    │  Tests  │  (10-20 scenarios)
+                    └────┬────┘
+                         │
+                ┌────────┴────────┐
+                │   Integration   │  Medium
+                │     Tests       │  (50-100 tests)
+                └────────┬────────┘
+                         │
+        ┌────────────────┴────────────────┐
+        │           Unit Tests            │  Fast, many
+        │     (500+ tests, <1 min)        │  (run on every commit)
+        └─────────────────────────────────┘
+```
+
+**Run times:**
+- Unit tests: < 1 minute
+- Integration tests: < 5 minutes
+- eBPF tests: < 10 minutes
+- E2E tests: < 15 minutes
+- Full suite: < 30 minutes
+- Compatibility matrix: 1-2 hours (weekly)
+
+---
+
+## Load Testing Strategy
+
+Load testing is critical for an observability tool. Users will push thousands of spans/sec at you and expect queries to stay fast. You need to know your limits before they do.
+
+### Framework Recommendations
+
+| Use Case | Tool | Why |
+|----------|------|-----|
+| **OTLP gRPC ingestion** | ghz | Purpose-built for gRPC, constant rate |
+| **OTLP HTTP ingestion** | k6 | Scriptable, great reporting |
+| **Prometheus remote_write** | Custom Go | Protocol-specific |
+| **HTTP API queries** | k6 or wrk2 | Industry standard |
+| **eBPF throughput** | Custom Go + traffic gen | Need real network traffic |
+| **Sustained load** | Custom Go harness | Long-running, metrics collection |
+
+**Primary recommendation: k6 + ghz + custom Go**
+
+---
+
+### Tool Setup
+
+#### k6 (HTTP Load Testing)
+
+```bash
+# Install
+brew install k6  # macOS
+# or
+go install go.k6.io/k6@latest
+```
+
+```javascript
+// load/k6/api_queries.js
+import http from 'k6/http';
+import { check, sleep } from 'k6';
+import { Rate, Trend } from 'k6/metrics';
+
+// Custom metrics
+const errorRate = new Rate('errors');
+const queryDuration = new Trend('query_duration');
+
+export const options = {
+    scenarios: {
+        // Ramp up to target load
+        ramp_up: {
+            executor: 'ramping-vus',
+            startVUs: 0,
+            stages: [
+                { duration: '1m', target: 10 },   // Ramp to 10 users
+                { duration: '3m', target: 50 },   // Ramp to 50 users
+                { duration: '5m', target: 50 },   // Hold at 50
+                { duration: '1m', target: 0 },    // Ramp down
+            ],
+        },
+        // Constant rate for throughput testing
+        constant_rate: {
+            executor: 'constant-arrival-rate',
+            rate: 100,           // 100 requests per second
+            timeUnit: '1s',
+            duration: '5m',
+            preAllocatedVUs: 50,
+            maxVUs: 100,
+        },
+    },
+    thresholds: {
+        http_req_duration: ['p(95)<500', 'p(99)<1000'],  // 95% < 500ms, 99% < 1s
+        errors: ['rate<0.01'],                            // Error rate < 1%
+    },
+};
+
+const BASE_URL = __ENV.DOGWATCH_URL || 'http://localhost:9999';
+
+export default function() {
+    // Query traces
+    const traceRes = http.get(`${BASE_URL}/api/v1/traces?service=api&limit=100`);
+    check(traceRes, {
+        'trace query status 200': (r) => r.status === 200,
+        'trace query has data': (r) => JSON.parse(r.body).length > 0,
+    });
+    queryDuration.add(traceRes.timings.duration);
+    errorRate.add(traceRes.status !== 200);
+
+    // Query metrics
+    const metricRes = http.get(
+        `${BASE_URL}/api/v1/query?query=${encodeURIComponent('rate(http_requests_total[5m])')}`
+    );
+    check(metricRes, {
+        'metric query status 200': (r) => r.status === 200,
+    });
+    errorRate.add(metricRes.status !== 200);
+
+    // Query logs
+    const logRes = http.get(`${BASE_URL}/api/v1/logs?q=level:error&limit=100`);
+    check(logRes, {
+        'log query status 200': (r) => r.status === 200,
+    });
+    errorRate.add(logRes.status !== 200);
+
+    sleep(0.1);  // 100ms between iterations
+}
+```
+
+**Run:**
+```bash
+k6 run load/k6/api_queries.js
+
+# With environment variables
+DOGWATCH_URL=http://prod:9999 k6 run load/k6/api_queries.js
+
+# Output to JSON for analysis
+k6 run --out json=results.json load/k6/api_queries.js
+```
+
+#### ghz (gRPC/OTLP Load Testing)
+
+```bash
+# Install
+go install github.com/bojand/ghz/cmd/ghz@latest
+```
+
+```bash
+# Test OTLP trace ingestion
+ghz --insecure \
+    --proto opentelemetry/proto/collector/trace/v1/trace_service.proto \
+    --call opentelemetry.proto.collector.trace.v1.TraceService/Export \
+    --data-file load/otlp/trace_request.json \
+    --concurrency 50 \
+    --connections 10 \
+    --duration 5m \
+    --rate 1000 \
+    localhost:4317
+
+# Output
+# Summary:
+#   Count:        300000
+#   Total:        300.00 s
+#   Slowest:      125.23 ms
+#   Fastest:      0.45 ms
+#   Average:      2.34 ms
+#   Requests/sec: 1000.00
+#
+#   Latency distribution:
+#     50%:  1.89 ms
+#     90%:  4.12 ms
+#     95%:  6.78 ms
+#     99%:  15.23 ms
+```
+
+#### Custom Go Harness (Recommended for Sustained Testing)
+
+```go
+// load/harness/main.go
+package main
+
+import (
+    "context"
+    "flag"
+    "fmt"
+    "log"
+    "os"
+    "os/signal"
+    "sync"
+    "sync/atomic"
+    "time"
+
+    "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+    "go.opentelemetry.io/otel/sdk/trace"
+    sdktrace "go.opentelemetry.io/otel/sdk/trace"
+)
+
+var (
+    target       = flag.String("target", "localhost:4317", "OTLP endpoint")
+    rate         = flag.Int("rate", 1000, "Spans per second")
+    duration     = flag.Duration("duration", 5*time.Minute, "Test duration")
+    workers      = flag.Int("workers", 10, "Number of workers")
+    reportEvery  = flag.Duration("report", 10*time.Second, "Report interval")
+)
+
+type Stats struct {
+    sent      atomic.Int64
+    errors    atomic.Int64
+    latencyNs atomic.Int64
+    samples   atomic.Int64
+}
+
+func main() {
+    flag.Parse()
+
+    ctx, cancel := context.WithCancel(context.Background())
+    defer cancel()
+
+    // Handle Ctrl+C
+    sigCh := make(chan os.Signal, 1)
+    signal.Notify(sigCh, os.Interrupt)
+    go func() {
+        <-sigCh
+        cancel()
+    }()
+
+    // Create OTLP exporter
+    exporter, err := otlptracegrpc.New(ctx,
+        otlptracegrpc.WithEndpoint(*target),
+        otlptracegrpc.WithInsecure(),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Create tracer provider with batching
+    tp := sdktrace.NewTracerProvider(
+        sdktrace.WithBatcher(exporter,
+            sdktrace.WithMaxQueueSize(10000),
+            sdktrace.WithMaxExportBatchSize(512),
+            sdktrace.WithBatchTimeout(100*time.Millisecond),
+        ),
+    )
+    defer tp.Shutdown(context.Background())
+
+    tracer := tp.Tracer("load-test")
+
+    stats := &Stats{}
+    spansPerWorker := *rate / *workers
+
+    // Start workers
+    var wg sync.WaitGroup
+    for i := 0; i < *workers; i++ {
+        wg.Add(1)
+        go func(workerID int) {
+            defer wg.Done()
+            runWorker(ctx, tracer, workerID, spansPerWorker, stats)
+        }(i)
+    }
+
+    // Reporter
+    go func() {
+        ticker := time.NewTicker(*reportEvery)
+        defer ticker.Stop()
+
+        var lastSent int64
+        for {
+            select {
+            case <-ctx.Done():
+                return
+            case <-ticker.C:
+                sent := stats.sent.Load()
+                errors := stats.errors.Load()
+                samples := stats.samples.Load()
+
+                var avgLatency float64
+                if samples > 0 {
+                    avgLatency = float64(stats.latencyNs.Load()) / float64(samples) / 1e6
+                }
+
+                throughput := float64(sent-lastSent) / reportEvery.Seconds()
+                lastSent = sent
+
+                fmt.Printf("[%s] Sent: %d, Errors: %d, Throughput: %.0f spans/sec, Avg Latency: %.2fms\n",
+                    time.Now().Format("15:04:05"), sent, errors, throughput, avgLatency)
+            }
+        }
+    }()
+
+    // Wait for duration or interrupt
+    select {
+    case <-time.After(*duration):
+        cancel()
+    case <-ctx.Done():
+    }
+
+    wg.Wait()
+
+    // Final report
+    fmt.Println("\n=== Final Report ===")
+    fmt.Printf("Total Sent: %d\n", stats.sent.Load())
+    fmt.Printf("Total Errors: %d\n", stats.errors.Load())
+    fmt.Printf("Error Rate: %.2f%%\n", float64(stats.errors.Load())/float64(stats.sent.Load())*100)
+    fmt.Printf("Avg Throughput: %.0f spans/sec\n", float64(stats.sent.Load())/duration.Seconds())
+}
+
+func runWorker(ctx context.Context, tracer trace.Tracer, id int, targetRate int, stats *Stats) {
+    ticker := time.NewTicker(time.Second / time.Duration(targetRate))
+    defer ticker.Stop()
+
+    services := []string{"api", "web", "worker", "db-proxy", "cache"}
+    operations := []string{"GET /users", "POST /orders", "process_job", "query", "get_key"}
+
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case <-ticker.C:
+            start := time.Now()
+
+            _, span := tracer.Start(ctx, operations[stats.sent.Load()%int64(len(operations))])
+            span.SetAttributes(
+                attribute.String("service", services[id%len(services)]),
+                attribute.Int("worker_id", id),
+            )
+            span.End()
+
+            stats.sent.Add(1)
+            stats.latencyNs.Add(int64(time.Since(start)))
+            stats.samples.Add(1)
+        }
+    }
+}
+```
+
+**Run:**
+```bash
+go run load/harness/main.go \
+    -target localhost:4317 \
+    -rate 10000 \
+    -duration 10m \
+    -workers 20
+
+# Output:
+# [14:23:10] Sent: 100000, Errors: 0, Throughput: 10000 spans/sec, Avg Latency: 1.23ms
+# [14:23:20] Sent: 200000, Errors: 0, Throughput: 10000 spans/sec, Avg Latency: 1.19ms
+# ...
+```
+
+---
+
+### Load Test Scenarios
+
+#### Scenario 1: Sustained Ingestion
+
+**Purpose:** Find maximum sustainable throughput
+
+```yaml
+# load/scenarios/sustained_ingestion.yaml
+name: Sustained Ingestion
+description: Find max spans/sec dogwatch can handle for 10+ minutes
+
+phases:
+  - name: warmup
+    duration: 2m
+    rate: 1000  # spans/sec
+
+  - name: ramp
+    duration: 5m
+    rate_start: 1000
+    rate_end: 20000  # Ramp to 20K
+
+  - name: find_limit
+    duration: 10m
+    rate: auto  # Increase until errors appear
+
+  - name: sustain
+    duration: 30m
+    rate: max_stable  # Hold at max stable rate
+
+success_criteria:
+  error_rate: < 0.1%
+  p99_latency: < 100ms
+  memory_growth: < 10% over 30min  # No memory leak
+```
+
+```go
+// load/scenarios/sustained_ingestion_test.go
+func TestSustainedIngestion(t *testing.T) {
+    if testing.Short() {
+        t.Skip("Skipping load test in short mode")
+    }
+
+    dw := startDogwatch(t)
+    defer dw.Stop()
+
+    // Find max stable rate
+    rates := []int{1000, 5000, 10000, 15000, 20000, 25000, 30000}
+    var maxStableRate int
+
+    for _, rate := range rates {
+        t.Logf("Testing rate: %d spans/sec", rate)
+
+        stats := runIngestion(dw, rate, 2*time.Minute)
+
+        if stats.ErrorRate > 0.001 { // > 0.1% errors
+            t.Logf("Rate %d not stable: %.2f%% errors", rate, stats.ErrorRate*100)
+            break
+        }
+
+        if stats.P99Latency > 100*time.Millisecond {
+            t.Logf("Rate %d too slow: p99=%v", rate, stats.P99Latency)
+            break
+        }
+
+        maxStableRate = rate
+        t.Logf("Rate %d stable: errors=%.3f%%, p99=%v", rate, stats.ErrorRate*100, stats.P99Latency)
+    }
+
+    t.Logf("Max stable rate: %d spans/sec", maxStableRate)
+
+    // Sustain at max rate for 30 minutes
+    t.Log("Sustaining at max rate for 30 minutes...")
+    stats := runIngestion(dw, maxStableRate, 30*time.Minute)
+
+    // Check for memory leaks
+    if stats.MemoryGrowth > 0.10 { // > 10% growth
+        t.Errorf("Memory leak detected: %.1f%% growth", stats.MemoryGrowth*100)
+    }
+
+    // Final assertions
+    if maxStableRate < 10000 {
+        t.Errorf("Max stable rate %d below target 10000", maxStableRate)
+    }
+}
+```
+
+#### Scenario 2: Query Under Load
+
+**Purpose:** Ensure queries stay fast during heavy ingestion
+
+```javascript
+// load/k6/query_under_load.js
+import http from 'k6/http';
+import { check } from 'k6';
+
+export const options = {
+    scenarios: {
+        // Background ingestion load
+        ingestion: {
+            executor: 'constant-arrival-rate',
+            exec: 'ingestSpans',
+            rate: 5000,
+            timeUnit: '1s',
+            duration: '10m',
+            preAllocatedVUs: 20,
+        },
+        // Query load we're testing
+        queries: {
+            executor: 'constant-arrival-rate',
+            exec: 'queryTraces',
+            rate: 100,  // 100 queries/sec
+            timeUnit: '1s',
+            duration: '10m',
+            preAllocatedVUs: 50,
+            startTime: '1m',  // Start after ingestion warms up
+        },
+    },
+    thresholds: {
+        'http_req_duration{scenario:queries}': ['p(95)<500', 'p(99)<1000'],
+    },
+};
+
+export function ingestSpans() {
+    const span = {
+        traceId: `trace-${Date.now()}-${Math.random()}`,
+        spanId: `span-${Math.random()}`,
+        name: 'test-operation',
+        timestamp: Date.now() * 1000,
+        duration: Math.random() * 100000,
+    };
+
+    http.post('http://localhost:9999/api/v1/traces', JSON.stringify([span]), {
+        headers: { 'Content-Type': 'application/json' },
+    });
+}
+
+export function queryTraces() {
+    const queries = [
+        '/api/v1/traces?service=api&limit=100',
+        '/api/v1/traces?minDuration=100ms&limit=50',
+        '/api/v1/query?query=rate(http_requests_total[5m])',
+        '/api/v1/logs?level=error&limit=100',
+    ];
+
+    const query = queries[Math.floor(Math.random() * queries.length)];
+    const res = http.get(`http://localhost:9999${query}`);
+
+    check(res, {
+        'query succeeded': (r) => r.status === 200,
+        'query fast enough': (r) => r.timings.duration < 500,
+    });
+}
+```
+
+#### Scenario 3: Burst Traffic
+
+**Purpose:** Handle sudden traffic spikes without data loss
+
+```go
+// load/scenarios/burst_test.go
+func TestBurstTraffic(t *testing.T) {
+    dw := startDogwatch(t)
+    defer dw.Stop()
+
+    // Baseline: 1000 spans/sec
+    t.Log("Establishing baseline at 1000 spans/sec")
+    runIngestion(dw, 1000, 1*time.Minute)
+
+    // Burst: 10x spike for 30 seconds
+    t.Log("Sending 10x burst (10000 spans/sec) for 30 seconds")
+    burstStats := runIngestion(dw, 10000, 30*time.Second)
+
+    // Should handle burst with minimal errors
+    if burstStats.ErrorRate > 0.05 { // Allow up to 5% during burst
+        t.Errorf("Too many errors during burst: %.1f%%", burstStats.ErrorRate*100)
+    }
+
+    // Recovery: back to baseline
+    t.Log("Recovering to baseline")
+    time.Sleep(10 * time.Second)
+
+    recoveryStats := runIngestion(dw, 1000, 1*time.Minute)
+
+    // Should be back to normal
+    if recoveryStats.ErrorRate > 0.001 {
+        t.Errorf("Not recovered after burst: %.2f%% errors", recoveryStats.ErrorRate*100)
+    }
+    if recoveryStats.P99Latency > 50*time.Millisecond {
+        t.Errorf("Latency not recovered: p99=%v", recoveryStats.P99Latency)
+    }
+}
+```
+
+#### Scenario 4: Mixed Workload
+
+**Purpose:** Realistic production traffic pattern
+
+```go
+// load/scenarios/mixed_workload_test.go
+func TestMixedWorkload(t *testing.T) {
+    dw := startDogwatch(t)
+    defer dw.Stop()
+
+    ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+    defer cancel()
+
+    var wg sync.WaitGroup
+
+    // OTLP traces (5000/sec)
+    wg.Add(1)
+    go func() {
+        defer wg.Done()
+        runOTLPIngestion(ctx, dw, 5000)
+    }()
+
+    // Prometheus remote_write (10000 samples/sec)
+    wg.Add(1)
+    go func() {
+        defer wg.Done()
+        runPrometheusIngestion(ctx, dw, 10000)
+    }()
+
+    // Log ingestion (2000/sec)
+    wg.Add(1)
+    go func() {
+        defer wg.Done()
+        runLogIngestion(ctx, dw, 2000)
+    }()
+
+    // Concurrent queries (50/sec)
+    wg.Add(1)
+    go func() {
+        defer wg.Done()
+        runQueries(ctx, dw, 50)
+    }()
+
+    // Dashboard refreshes (10/sec)
+    wg.Add(1)
+    go func() {
+        defer wg.Done()
+        runDashboardRefresh(ctx, dw, 10)
+    }()
+
+    wg.Wait()
+
+    // Validate results
+    metrics := dw.GetInternalMetrics()
+
+    // All signals should be ingested
+    if metrics["traces_ingested"] == 0 {
+        t.Error("No traces ingested")
+    }
+    if metrics["metrics_ingested"] == 0 {
+        t.Error("No metrics ingested")
+    }
+    if metrics["logs_ingested"] == 0 {
+        t.Error("No logs ingested")
+    }
+
+    // Error rates should be low
+    if metrics["ingest_errors"] / metrics["ingest_total"] > 0.001 {
+        t.Error("Too many ingest errors")
+    }
+
+    // Query latency should be acceptable
+    if metrics["query_p99_ms"] > 500 {
+        t.Errorf("Query p99 too high: %vms", metrics["query_p99_ms"])
+    }
+}
+```
+
+#### Scenario 5: Soak Test
+
+**Purpose:** Find memory leaks and degradation over time
+
+```go
+// load/scenarios/soak_test.go
+func TestSoakTest(t *testing.T) {
+    if os.Getenv("SOAK_TEST") != "1" {
+        t.Skip("Set SOAK_TEST=1 to run (takes 4+ hours)")
+    }
+
+    dw := startDogwatch(t)
+    defer dw.Stop()
+
+    duration := 4 * time.Hour
+    sampleInterval := 5 * time.Minute
+
+    // Moderate load
+    ctx, cancel := context.WithTimeout(context.Background(), duration)
+    defer cancel()
+
+    go runIngestion(ctx, dw, 5000) // 5000 spans/sec
+
+    // Collect samples over time
+    var samples []SoakSample
+    ticker := time.NewTicker(sampleInterval)
+    defer ticker.Stop()
+
+    startMem := getMemoryUsage(dw)
+
+    for {
+        select {
+        case <-ctx.Done():
+            goto analyze
+        case <-ticker.C:
+            sample := SoakSample{
+                Time:         time.Now(),
+                Memory:       getMemoryUsage(dw),
+                QueryP99:     getQueryP99(dw),
+                IngestRate:   getIngestRate(dw),
+                ErrorRate:    getErrorRate(dw),
+                GoroutineCount: getGoroutineCount(dw),
+            }
+            samples = append(samples, sample)
+
+            t.Logf("[%s] Mem: %dMB, QueryP99: %v, Ingest: %.0f/s, Errors: %.3f%%",
+                sample.Time.Format("15:04"),
+                sample.Memory/1024/1024,
+                sample.QueryP99,
+                sample.IngestRate,
+                sample.ErrorRate*100)
+        }
+    }
+
+analyze:
+    // Analyze for regressions
+    endMem := samples[len(samples)-1].Memory
+
+    // Memory should not grow more than 50% over 4 hours
+    memGrowth := float64(endMem) / float64(startMem)
+    if memGrowth > 1.5 {
+        t.Errorf("Memory leak: grew from %dMB to %dMB (%.0f%%)",
+            startMem/1024/1024, endMem/1024/1024, (memGrowth-1)*100)
+    }
+
+    // Query latency should not degrade
+    firstHourP99 := averageP99(samples[:12])   // First hour
+    lastHourP99 := averageP99(samples[len(samples)-12:])  // Last hour
+
+    if lastHourP99 > firstHourP99*1.5 {
+        t.Errorf("Query latency degraded: %v → %v", firstHourP99, lastHourP99)
+    }
+
+    // Goroutine count should be stable
+    firstGoroutines := samples[0].GoroutineCount
+    lastGoroutines := samples[len(samples)-1].GoroutineCount
+
+    if lastGoroutines > firstGoroutines*2 {
+        t.Errorf("Goroutine leak: %d → %d", firstGoroutines, lastGoroutines)
+    }
+
+    // Generate report
+    generateSoakReport(samples, "soak_report.html")
+}
+```
+
+---
+
+### Metrics to Collect During Load Tests
+
+```go
+// load/metrics/collector.go
+
+type LoadTestMetrics struct {
+    // Throughput
+    SpansPerSecond    float64
+    MetricsPerSecond  float64
+    LogsPerSecond     float64
+    QueriesPerSecond  float64
+
+    // Latency
+    IngestP50  time.Duration
+    IngestP95  time.Duration
+    IngestP99  time.Duration
+    QueryP50   time.Duration
+    QueryP95   time.Duration
+    QueryP99   time.Duration
+
+    // Errors
+    IngestErrors int64
+    QueryErrors  int64
+    ErrorRate    float64
+
+    // Resources
+    MemoryUsed     int64
+    MemoryGrowth   float64
+    CPUPercent     float64
+    GoroutineCount int
+    OpenFiles      int
+
+    // Storage
+    DiskUsed       int64
+    WriteIOPS      float64
+    ReadIOPS       float64
+
+    // dogwatch internal
+    DroppedSpans   int64
+    QueueDepth     int64
+    CacheHitRate   float64
+}
+
+func CollectMetrics(dw *Dogwatch) *LoadTestMetrics {
+    m := &LoadTestMetrics{}
+
+    // From dogwatch /metrics endpoint
+    metrics := dw.GetMetrics()
+
+    m.SpansPerSecond = metrics["dogwatch_spans_ingested_total"].Rate()
+    m.IngestP99 = time.Duration(metrics["dogwatch_ingest_latency_seconds"].Quantile(0.99) * float64(time.Second))
+    m.QueryP99 = time.Duration(metrics["dogwatch_query_latency_seconds"].Quantile(0.99) * float64(time.Second))
+    m.DroppedSpans = int64(metrics["dogwatch_spans_dropped_total"].Value())
+    m.QueueDepth = int64(metrics["dogwatch_ingest_queue_size"].Value())
+
+    // From system
+    m.MemoryUsed = getProcessMemory()
+    m.CPUPercent = getProcessCPU()
+    m.GoroutineCount = runtime.NumGoroutine()
+    m.OpenFiles = countOpenFiles()
+
+    // From disk
+    m.DiskUsed = getDiskUsage(dw.DataDir())
+
+    return m
+}
+```
+
+---
+
+### CI Integration
+
+```yaml
+# .github/workflows/load-test.yml
+name: Load Tests
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Nightly at 2 AM
+  workflow_dispatch:      # Manual trigger
+  pull_request:
+    paths:
+      - 'internal/storage/**'
+      - 'internal/ingest/**'
+
+jobs:
+  quick-load-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: go build ./cmd/dogwatch
+
+      - name: Start dogwatch
+        run: |
+          ./dogwatch &
+          sleep 5
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Quick load test (5 min)
+        run: |
+          k6 run --duration 5m load/k6/api_queries.js
+
+      - name: Throughput test
+        run: |
+          go run load/harness/main.go -rate 10000 -duration 2m
+
+      - name: Check results
+        run: |
+          # Verify benchmarks met
+          go test ./load/... -run TestBenchmarksMet -v
+
+  nightly-load-test:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: go build ./cmd/dogwatch
+
+      - name: Sustained load test (1 hour)
+        run: |
+          ./dogwatch &
+          sleep 10
+          go test ./load/scenarios/... -run TestSustainedIngestion -timeout 2h -v
+
+      - name: Query under load test
+        run: |
+          k6 run --duration 30m load/k6/query_under_load.js
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results
+          path: |
+            *.json
+            *.html
+
+      - name: Post to dashboard
+        run: |
+          # Send results to monitoring (optional)
+          curl -X POST https://metrics.internal/load-test \
+            -d @results.json
+```
+
+---
+
+### Load Test Dashboard
+
+```go
+// load/dashboard/server.go
+// Run during load tests to visualize in real-time
+
+package main
+
+import (
+    "embed"
+    "html/template"
+    "net/http"
+    "sync"
+    "time"
+)
+
+//go:embed templates/*
+var templates embed.FS
+
+type Dashboard struct {
+    mu      sync.RWMutex
+    samples []Sample
+}
+
+type Sample struct {
+    Time          time.Time `json:"time"`
+    SpansPerSec   float64   `json:"spans_per_sec"`
+    QueryP99Ms    float64   `json:"query_p99_ms"`
+    MemoryMB      float64   `json:"memory_mb"`
+    CPUPercent    float64   `json:"cpu_percent"`
+    ErrorRate     float64   `json:"error_rate"`
+}
+
+func (d *Dashboard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+    switch r.URL.Path {
+    case "/":
+        d.serveIndex(w, r)
+    case "/api/samples":
+        d.serveSamples(w, r)
+    case "/api/sample":
+        d.addSample(w, r)
+    }
+}
+
+func main() {
+    d := &Dashboard{}
+
+    // Collect samples every second
+    go func() {
+        for {
+            sample := collectSample()
+            d.mu.Lock()
+            d.samples = append(d.samples, sample)
+            // Keep last hour
+            if len(d.samples) > 3600 {
+                d.samples = d.samples[1:]
+            }
+            d.mu.Unlock()
+            time.Sleep(time.Second)
+        }
+    }()
+
+    http.ListenAndServe(":8080", d)
+}
+```
+
+```html
+<!-- load/dashboard/templates/index.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>dogwatch Load Test Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <h1>Load Test Dashboard</h1>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+        <div>
+            <h3>Throughput (spans/sec)</h3>
+            <canvas id="throughputChart"></canvas>
+        </div>
+        <div>
+            <h3>Query Latency (p99 ms)</h3>
+            <canvas id="latencyChart"></canvas>
+        </div>
+        <div>
+            <h3>Memory Usage (MB)</h3>
+            <canvas id="memoryChart"></canvas>
+        </div>
+        <div>
+            <h3>Error Rate (%)</h3>
+            <canvas id="errorChart"></canvas>
+        </div>
+    </div>
+
+    <script>
+        // Real-time charts updating every second
+        async function updateCharts() {
+            const resp = await fetch('/api/samples');
+            const samples = await resp.json();
+
+            // Update each chart...
+        }
+
+        setInterval(updateCharts, 1000);
+    </script>
+</body>
+</html>
+```
+
+---
+
+### Load Test Targets Summary
+
+| Scenario | Duration | Key Metric | Target | Failure Threshold |
+|----------|----------|------------|--------|-------------------|
+| **Sustained ingestion** | 30 min | Throughput | 20K spans/sec | < 10K |
+| **Query under load** | 10 min | Query p99 | < 500ms | > 2s |
+| **Burst (10x)** | 30 sec | Error rate | < 5% | > 20% |
+| **Mixed workload** | 15 min | All signals | Functioning | Any signal failing |
+| **Soak test** | 4 hours | Memory growth | < 50% | > 100% |
+
+### When to Run
+
+| Test Type | Trigger | Duration |
+|-----------|---------|----------|
+| Quick load | Every PR touching ingest/storage | 5 min |
+| Standard | Nightly | 30 min |
+| Full suite | Weekly | 2 hours |
+| Soak test | Before release | 4+ hours |
+
+---
+
+## Capacity Planning
+
+How to size dogwatch for different workloads.
+
+### Sizing Calculator
+
+```
+Inputs:
+├── Hosts/containers monitored
+├── Requests per second (across all services)
+├── Average span count per request
+├── Metrics cardinality (unique series)
+├── Log lines per second
+└── Retention period
+
+Outputs:
+├── Recommended instance size
+├── Disk space required
+├── Expected memory usage
+└── Expected query latency
+```
+
+### Reference Architectures
+
+#### Small (Startup/Dev Team)
+```
+Workload:
+├── 10-50 hosts
+├── 1,000 requests/sec
+├── 5,000 spans/sec
+├── 10,000 metric series
+├── 1,000 logs/sec
+└── 7 days retention
+
+Sizing:
+├── Instance: t3.medium (2 vCPU, 4GB RAM)
+├── Disk: 100GB SSD
+├── Memory usage: ~500MB
+├── Disk usage: ~50GB after 7 days
+└── Query p99: <100ms
+```
+
+#### Medium (Growing Company)
+```
+Workload:
+├── 50-200 hosts
+├── 10,000 requests/sec
+├── 50,000 spans/sec
+├── 100,000 metric series
+├── 10,000 logs/sec
+└── 14 days retention
+
+Sizing:
+├── Instance: c5.xlarge (4 vCPU, 8GB RAM)
+├── Disk: 500GB SSD
+├── Memory usage: ~2GB
+├── Disk usage: ~300GB after 14 days
+└── Query p99: <200ms
+```
+
+#### Large (Scale-up)
+```
+Workload:
+├── 200-1000 hosts
+├── 50,000 requests/sec
+├── 200,000 spans/sec
+├── 500,000 metric series
+├── 50,000 logs/sec
+└── 30 days retention
+
+Sizing:
+├── Instance: c5.2xlarge (8 vCPU, 16GB RAM)
+├── Disk: 2TB SSD
+├── Memory usage: ~4GB
+├── Disk usage: ~1.5TB after 30 days
+└── Query p99: <500ms
+
+Note: Approaching single-node limits. Consider:
+├── Shorter retention with downsampling
+├── Sampling for traces
+└── Horizontal scaling (future)
+```
+
+### Formulas
+
+```go
+// Disk space estimation
+func EstimateDiskUsage(config SizingConfig) int64 {
+    var daily int64
+
+    // Traces: ~500 bytes/span average (compressed)
+    daily += config.SpansPerSec * 86400 * 500
+
+    // Metrics: ~16 bytes/point, 15-second scrape interval
+    pointsPerDay := config.MetricSeries * (86400 / 15)
+    daily += pointsPerDay * 16
+
+    // Logs: ~200 bytes/line average (compressed)
+    daily += config.LogsPerSec * 86400 * 200
+
+    // Index overhead: ~20%
+    daily = int64(float64(daily) * 1.2)
+
+    return daily * int64(config.RetentionDays)
+}
+
+// Memory estimation
+func EstimateMemoryUsage(config SizingConfig) int64 {
+    var memory int64
+
+    // Base overhead
+    memory += 100 * 1024 * 1024 // 100MB base
+
+    // Per-span buffer (last 5 minutes in memory)
+    memory += config.SpansPerSec * 300 * 1000 // 1KB per buffered span
+
+    // Metric series index
+    memory += config.MetricSeries * 500 // 500 bytes per series
+
+    // Query cache
+    memory += 100 * 1024 * 1024 // 100MB cache
+
+    // SQLite page cache
+    memory += 200 * 1024 * 1024 // 200MB
+
+    return memory
+}
+```
+
+### Scaling Limits
+
+| Resource | Soft Limit | Hard Limit | Mitigation |
+|----------|------------|------------|------------|
+| **Spans/sec** | 20K | 50K | Sampling |
+| **Metric series** | 500K | 1M | Cardinality limits |
+| **Logs/sec** | 50K | 100K | Sampling, filtering |
+| **Disk** | 1TB | 2TB | Retention, downsampling |
+| **Memory** | 4GB | 8GB | Reduce caches |
+| **Concurrent queries** | 50 | 100 | Query queuing |
+
+### When to Scale Horizontally
+
+```
+Consider horizontal scaling when:
+├── Single node can't handle throughput (>50K spans/sec)
+├── Disk exceeds 2TB
+├── Query latency consistently >1s
+├── Need HA/fault tolerance
+└── Multi-region deployment required
+
+Horizontal scaling architecture (future):
+┌─────────────────────────────────────────┐
+│              Load Balancer              │
+└────────────────┬────────────────────────┘
+                 │
+    ┌────────────┼────────────┐
+    │            │            │
+┌───▼───┐   ┌───▼───┐   ┌───▼───┐
+│ Node 1│   │ Node 2│   │ Node 3│
+│(shard)│   │(shard)│   │(shard)│
+└───────┘   └───────┘   └───────┘
+    │            │            │
+    └────────────┼────────────┘
+                 │
+         ┌──────▼──────┐
+         │   Shared    │
+         │   Storage   │
+         │   (S3/GCS)  │
+         └─────────────┘
+```
+
+---
+
+## Monitoring dogwatch (Meta-Monitoring)
+
+You can't fix what you can't see. dogwatch must expose metrics about itself.
+
+### Exposed Metrics
+
+```prometheus
+# Ingestion metrics
+dogwatch_spans_received_total{service="api"}           # Total spans received
+dogwatch_spans_ingested_total{service="api"}           # Successfully stored
+dogwatch_spans_dropped_total{reason="rate_limit"}      # Dropped spans
+dogwatch_ingest_latency_seconds{quantile="0.99"}       # Ingest latency
+dogwatch_ingest_queue_size                             # Current queue depth
+dogwatch_ingest_batch_size{signal="traces"}            # Batch sizes
+
+# Storage metrics
+dogwatch_storage_bytes{signal="traces"}                # Disk usage by signal
+dogwatch_storage_rows{table="spans"}                   # Row counts
+dogwatch_storage_compaction_duration_seconds           # Compaction time
+dogwatch_storage_write_latency_seconds{quantile="0.99"}
+dogwatch_storage_read_latency_seconds{quantile="0.99"}
+
+# Query metrics
+dogwatch_query_total{type="traces"}                    # Query count
+dogwatch_query_latency_seconds{type="traces",quantile="0.99"}
+dogwatch_query_errors_total{type="traces",error="timeout"}
+dogwatch_query_rows_scanned{type="traces"}             # Efficiency indicator
+
+# eBPF metrics
+dogwatch_ebpf_events_total{probe="http"}               # Events from kernel
+dogwatch_ebpf_events_dropped_total{probe="http"}       # Kernel buffer drops
+dogwatch_ebpf_probe_errors_total{probe="http"}         # Probe errors
+dogwatch_ebpf_map_size{map="connections"}              # BPF map utilization
+
+# Resource metrics
+dogwatch_memory_bytes{type="heap"}                     # Memory breakdown
+dogwatch_memory_bytes{type="stack"}
+dogwatch_memory_bytes{type="ebpf"}
+dogwatch_goroutines                                    # Goroutine count
+dogwatch_open_files                                    # File descriptors
+dogwatch_cpu_seconds_total                             # CPU usage
+
+# Cardinality metrics
+dogwatch_cardinality_series{metric="http_requests"}    # Per-metric cardinality
+dogwatch_cardinality_high_total                        # High-cardinality alerts
+dogwatch_cardinality_limit_reached_total               # Limit enforcement
+
+# Correlation metrics
+dogwatch_correlation_accuracy                          # Estimated accuracy
+dogwatch_correlation_orphan_spans                      # Unlinked spans
+dogwatch_correlation_latency_seconds
+
+# Health
+dogwatch_up                                            # 1 if healthy
+dogwatch_ready                                         # 1 if ready
+dogwatch_last_successful_write_timestamp               # Data freshness
+```
+
+### Health Endpoints
+
+```go
+// GET /healthz - Liveness probe
+// Returns 200 if process is alive
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+    w.WriteHeader(http.StatusOK)
+    w.Write([]byte("OK"))
+}
+
+// GET /readyz - Readiness probe
+// Returns 200 if ready to receive traffic
+func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
+    checks := []struct {
+        name  string
+        check func() error
+    }{
+        {"database", s.db.Ping},
+        {"ebpf_probes", s.probes.HealthCheck},
+        {"ingest_queue", s.ingest.HealthCheck},
+    }
+
+    var failed []string
+    for _, c := range checks {
+        if err := c.check(); err != nil {
+            failed = append(failed, fmt.Sprintf("%s: %v", c.name, err))
+        }
+    }
+
+    if len(failed) > 0 {
+        w.WriteHeader(http.StatusServiceUnavailable)
+        json.NewEncoder(w).Encode(map[string]interface{}{
+            "status": "not ready",
+            "failed": failed,
+        })
+        return
+    }
+
+    w.WriteHeader(http.StatusOK)
+    json.NewEncoder(w).Encode(map[string]interface{}{
+        "status": "ready",
+    })
+}
+
+// GET /status - Detailed status
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+    status := map[string]interface{}{
+        "version":     Version,
+        "uptime":      time.Since(s.startTime).String(),
+        "goroutines":  runtime.NumGoroutine(),
+        "memory_mb":   getMemoryMB(),
+
+        "ingestion": map[string]interface{}{
+            "spans_per_sec":   s.metrics.SpansPerSec(),
+            "metrics_per_sec": s.metrics.MetricsPerSec(),
+            "logs_per_sec":    s.metrics.LogsPerSec(),
+            "queue_depth":     s.ingest.QueueDepth(),
+            "error_rate":      s.metrics.IngestErrorRate(),
+        },
+
+        "storage": map[string]interface{}{
+            "disk_used_bytes": s.storage.DiskUsed(),
+            "spans_stored":    s.storage.SpanCount(),
+            "oldest_data":     s.storage.OldestTimestamp(),
+        },
+
+        "ebpf": map[string]interface{}{
+            "probes_loaded":  s.probes.LoadedCount(),
+            "events_per_sec": s.probes.EventsPerSec(),
+            "kernel_version": s.probes.KernelVersion(),
+        },
+
+        "queries": map[string]interface{}{
+            "queries_per_sec": s.metrics.QueriesPerSec(),
+            "p99_latency_ms":  s.metrics.QueryP99Ms(),
+            "cache_hit_rate":  s.metrics.CacheHitRate(),
+        },
+    }
+
+    json.NewEncoder(w).Encode(status)
+}
+```
+
+### Alerting on dogwatch
+
+```yaml
+# alerts/dogwatch_meta.yaml
+groups:
+  - name: dogwatch-meta
+    rules:
+      # Availability
+      - alert: DogwatchDown
+        expr: up{job="dogwatch"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "dogwatch is down"
+
+      # Ingestion issues
+      - alert: DogwatchIngestionStopped
+        expr: rate(dogwatch_spans_ingested_total[5m]) == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No spans being ingested"
+
+      - alert: DogwatchHighDropRate
+        expr: >
+          rate(dogwatch_spans_dropped_total[5m]) /
+          rate(dogwatch_spans_received_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Dropping >1% of spans"
+
+      - alert: DogwatchIngestQueueBacklog
+        expr: dogwatch_ingest_queue_size > 10000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Ingest queue backing up"
+
+      # Resource issues
+      - alert: DogwatchHighMemory
+        expr: dogwatch_memory_bytes{type="heap"} > 4e9  # 4GB
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Memory usage >4GB"
+
+      - alert: DogwatchDiskFilling
+        expr: dogwatch_storage_bytes / node_filesystem_size_bytes > 0.8
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk >80% full"
+
+      # Query issues
+      - alert: DogwatchSlowQueries
+        expr: dogwatch_query_latency_seconds{quantile="0.99"} > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Query p99 >2s"
+
+      # eBPF issues
+      - alert: DogwatchProbeErrors
+        expr: rate(dogwatch_ebpf_probe_errors_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "eBPF probe errors"
+
+      - alert: DogwatchKernelDrops
+        expr: rate(dogwatch_ebpf_events_dropped_total[5m]) > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kernel dropping eBPF events"
+
+      # Cardinality
+      - alert: DogwatchCardinalityExplosion
+        expr: dogwatch_cardinality_series > 500000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Metric cardinality >500K series"
+```
+
+### Grafana Dashboard for dogwatch
+
+```json
+{
+  "title": "dogwatch Health",
+  "panels": [
+    {
+      "title": "Ingestion Rate",
+      "type": "timeseries",
+      "targets": [
+        {"expr": "rate(dogwatch_spans_ingested_total[1m])", "legendFormat": "spans/sec"},
+        {"expr": "rate(dogwatch_metrics_ingested_total[1m])", "legendFormat": "metrics/sec"},
+        {"expr": "rate(dogwatch_logs_ingested_total[1m])", "legendFormat": "logs/sec"}
+      ]
+    },
+    {
+      "title": "Drop Rate",
+      "type": "timeseries",
+      "targets": [
+        {"expr": "rate(dogwatch_spans_dropped_total[1m])", "legendFormat": "dropped/sec"}
+      ]
+    },
+    {
+      "title": "Query Latency",
+      "type": "timeseries",
+      "targets": [
+        {"expr": "dogwatch_query_latency_seconds{quantile='0.5'}", "legendFormat": "p50"},
+        {"expr": "dogwatch_query_latency_seconds{quantile='0.99'}", "legendFormat": "p99"}
+      ]
+    },
+    {
+      "title": "Memory Usage",
+      "type": "timeseries",
+      "targets": [
+        {"expr": "dogwatch_memory_bytes{type='heap'} / 1e6", "legendFormat": "heap MB"}
+      ]
+    },
+    {
+      "title": "Disk Usage",
+      "type": "gauge",
+      "targets": [
+        {"expr": "dogwatch_storage_bytes / 1e9", "legendFormat": "GB used"}
+      ]
+    },
+    {
+      "title": "eBPF Events",
+      "type": "timeseries",
+      "targets": [
+        {"expr": "rate(dogwatch_ebpf_events_total[1m])", "legendFormat": "{{probe}}"}
+      ]
+    }
+  ]
+}
+```
+
+---
+
+## Operational Runbooks
+
+Step-by-step procedures for common operational tasks.
+
+### Runbook: dogwatch Won't Start
+
+```markdown
+## Symptoms
+- `./dogwatch` exits immediately
+- Error in logs about eBPF or permissions
+
+## Diagnostic Steps
+
+1. Check kernel version
+   ```bash
+   uname -r
+   # Minimum: 4.14, Recommended: 5.8+
+   ```
+
+2. Check permissions
+   ```bash
+   # Must run as root OR have CAP_BPF + CAP_PERFMON
+   sudo setcap cap_bpf,cap_perfmon=eip ./dogwatch
+   ```
+
+3. Check if BPF is enabled
+   ```bash
+   cat /proc/config.gz | gunzip | grep CONFIG_BPF
+   # Should show CONFIG_BPF=y, CONFIG_BPF_SYSCALL=y
+   ```
+
+4. Check BTF availability
+   ```bash
+   ls /sys/kernel/btf/vmlinux
+   # If missing, BTF is not available (older kernel)
+   ```
+
+5. Check for conflicting eBPF programs
+   ```bash
+   sudo bpftool prog list
+   # Look for programs that might conflict
+   ```
+
+## Resolution
+
+| Issue | Fix |
+|-------|-----|
+| Permission denied | Run with sudo or set capabilities |
+| Kernel too old | Upgrade kernel to 5.4+ |
+| BTF not available | Use non-CO-RE build or upgrade kernel |
+| BPF disabled | Enable in kernel config (requires recompile) |
+| Port in use | Change port with `--listen :9998` |
+```
+
+### Runbook: High Memory Usage
+
+```markdown
+## Symptoms
+- Memory usage >4GB
+- OOM kills
+- Slow queries
+
+## Diagnostic Steps
+
+1. Check memory breakdown
+   ```bash
+   curl -s localhost:9999/status | jq '.memory'
+   ```
+
+2. Check for memory leaks (growing over time)
+   ```bash
+   watch -n 10 'curl -s localhost:9999/metrics | grep dogwatch_memory'
+   ```
+
+3. Check cardinality
+   ```bash
+   curl -s localhost:9999/api/v1/cardinality | jq '.top_metrics[:10]'
+   ```
+
+4. Check ingest queue
+   ```bash
+   curl -s localhost:9999/metrics | grep ingest_queue
+   ```
+
+## Resolution
+
+| Cause | Fix |
+|-------|-----|
+| High cardinality metrics | Add cardinality limits, drop high-cardinality labels |
+| Large ingest backlog | Increase sampling, add more resources |
+| Query cache too large | Reduce `--cache-size` |
+| Memory leak | Restart, report bug with heap profile |
+| Too much data in memory | Reduce retention, enable more aggressive compaction |
+
+## Emergency: OOM Imminent
+
+```bash
+# 1. Enable sampling to reduce ingest
+curl -X POST localhost:9999/api/v1/config -d '{"sampling_rate": 0.1}'
+
+# 2. Force garbage collection
+curl -X POST localhost:9999/debug/gc
+
+# 3. Clear query cache
+curl -X POST localhost:9999/debug/clear-cache
+
+# 4. If still critical, restart
+sudo systemctl restart dogwatch
+```
+```
+
+### Runbook: Disk Full
+
+```markdown
+## Symptoms
+- Ingest failing
+- Alerts about disk space
+- Errors in logs: "no space left on device"
+
+## Diagnostic Steps
+
+1. Check disk usage
+   ```bash
+   df -h /var/lib/dogwatch
+   ```
+
+2. Check what's using space
+   ```bash
+   du -sh /var/lib/dogwatch/*
+   ```
+
+3. Check retention settings
+   ```bash
+   curl -s localhost:9999/status | jq '.retention'
+   ```
+
+## Resolution
+
+1. **Immediate: Free space**
+   ```bash
+   # Delete old data (if retention is longer than needed)
+   curl -X POST localhost:9999/api/v1/admin/compact \
+     -d '{"delete_before": "2024-01-01T00:00:00Z"}'
+
+   # Or manually (emergency only)
+   sudo rm -rf /var/lib/dogwatch/traces_202312*  # Old partitions
+   ```
+
+2. **Short-term: Reduce retention**
+   ```yaml
+   # config.yaml
+   retention:
+     traces: 3d   # Reduce from 7d
+     metrics: 7d  # Reduce from 30d
+     logs: 3d     # Reduce from 14d
+   ```
+
+3. **Long-term: Add disk or enable sampling**
+   ```yaml
+   # config.yaml
+   sampling:
+     traces: 0.5  # Keep 50%
+
+   # Or add disk
+   storage:
+     path: /mnt/larger-disk/dogwatch
+   ```
+
+## Prevention
+
+- Set up disk space alerts at 70%, 80%, 90%
+- Enable automatic compaction
+- Monitor `dogwatch_storage_bytes` metric
+```
+
+### Runbook: Slow Queries
+
+```markdown
+## Symptoms
+- Dashboard takes >5s to load
+- Query timeouts
+- High query latency in metrics
+
+## Diagnostic Steps
+
+1. Check query latency metrics
+   ```bash
+   curl -s localhost:9999/metrics | grep query_latency
+   ```
+
+2. Identify slow queries
+   ```bash
+   curl -s localhost:9999/api/v1/admin/slow-queries | jq '.[:5]'
+   ```
+
+3. Check if it's a specific query type
+   ```bash
+   curl -s localhost:9999/metrics | grep 'query_latency.*type='
+   ```
+
+4. Check concurrent query load
+   ```bash
+   curl -s localhost:9999/status | jq '.queries.concurrent'
+   ```
+
+## Resolution
+
+| Cause | Fix |
+|-------|-----|
+| Large time range | Add time range limits to UI |
+| Missing index | Check query explain, add index |
+| Too much data | Add sampling, reduce retention |
+| High concurrency | Add query queuing/limits |
+| Inefficient query | Optimize query, use pre-aggregations |
+
+## Common Slow Query Patterns
+
+```sql
+-- Slow: Full scan on large table
+SELECT * FROM spans WHERE tags->>'user_id' = '123'
+-- Fix: Add index on frequently queried tags
+
+-- Slow: Large time range aggregation
+SELECT count(*) FROM spans WHERE timestamp > now() - interval '30 days'
+-- Fix: Use pre-computed rollups
+
+-- Slow: High cardinality GROUP BY
+SELECT endpoint, count(*) FROM spans GROUP BY endpoint
+-- Fix: Limit results, use TopK
+```
+```
+
+### Runbook: eBPF Probe Failures
+
+```markdown
+## Symptoms
+- Missing data for some protocols
+- Errors in logs: "failed to attach probe"
+- `dogwatch_ebpf_probe_errors_total` increasing
+
+## Diagnostic Steps
+
+1. Check probe status
+   ```bash
+   curl -s localhost:9999/status | jq '.ebpf'
+   ```
+
+2. Check kernel logs
+   ```bash
+   dmesg | tail -50 | grep -i bpf
+   ```
+
+3. Check loaded probes
+   ```bash
+   sudo bpftool prog list | grep dogwatch
+   ```
+
+4. Check for verifier errors
+   ```bash
+   journalctl -u dogwatch | grep -i verifier
+   ```
+
+## Resolution
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| "permission denied" | Missing capabilities | Run as root or add CAP_BPF |
+| "invalid func" | Kernel too old | Upgrade kernel or use fallback probe |
+| "verifier: back-edge" | Loop in BPF program | Update dogwatch (bug fix) |
+| "map full" | BPF map exhausted | Increase map size in config |
+| "attachment failed" | Symbol not found | Different kernel config, report bug |
+
+## Verify Specific Probes
+
+```bash
+# HTTP probe
+curl -s localhost:9999/debug/probe/http
+
+# MySQL probe
+curl -s localhost:9999/debug/probe/mysql
+
+# TLS probe (most problematic)
+curl -s localhost:9999/debug/probe/tls
+```
+```
+
+### Runbook: Data Gap / Missing Data
+
+```markdown
+## Symptoms
+- Gap in graphs
+- "No data" for time range that should have data
+- Traces missing spans
+
+## Diagnostic Steps
+
+1. Check if dogwatch was running
+   ```bash
+   journalctl -u dogwatch --since "1 hour ago" | grep -E "(start|stop|crash)"
+   ```
+
+2. Check for ingest errors during the gap
+   ```bash
+   curl -s "localhost:9999/api/v1/query?query=rate(dogwatch_ingest_errors_total[1h])"
+   ```
+
+3. Check if data was dropped (rate limiting/sampling)
+   ```bash
+   curl -s "localhost:9999/api/v1/query?query=dogwatch_spans_dropped_total"
+   ```
+
+4. Check storage for the time range
+   ```bash
+   curl -s "localhost:9999/api/v1/admin/partitions" | jq '.[] | select(.time_range | contains("2024-01-15"))'
+   ```
+
+## Resolution
+
+| Cause | Evidence | Fix |
+|-------|----------|-----|
+| dogwatch restart | Gap matches restart time | Reduce restart frequency |
+| Network partition | Ingest errors spike | Fix network |
+| Sampling kicked in | Dropped spans > 0 | Increase capacity or reduce traffic |
+| Retention deleted | Old partitions missing | Increase retention |
+| Clock skew | Data exists but at wrong time | Fix NTP |
+
+## Data Recovery (if possible)
+
+```bash
+# If data is in WAL but not flushed
+curl -X POST localhost:9999/api/v1/admin/recover-wal
+
+# If backup exists
+dogwatch restore --backup /path/to/backup --time-range "2024-01-15T00:00:00Z,2024-01-15T06:00:00Z"
+```
+```
+
+### Runbook: Upgrade dogwatch
+
+```markdown
+## Pre-Upgrade Checklist
+
+- [ ] Read release notes for breaking changes
+- [ ] Backup data: `dogwatch backup -o /backup/pre-upgrade`
+- [ ] Note current version: `dogwatch version`
+- [ ] Check disk space for new binary
+- [ ] Schedule maintenance window (if needed)
+
+## Upgrade Procedure (Zero Downtime)
+
+### For systemd deployments
+
+```bash
+# 1. Download new version
+curl -L https://github.com/dogwatch/dogwatch/releases/download/v1.2.0/dogwatch-linux-amd64 -o /tmp/dogwatch-new
+
+# 2. Verify checksum
+sha256sum /tmp/dogwatch-new
+
+# 3. Make executable
+chmod +x /tmp/dogwatch-new
+
+# 4. Test new version starts
+/tmp/dogwatch-new --version
+/tmp/dogwatch-new config validate
+
+# 5. Replace binary (dogwatch handles graceful handoff)
+sudo mv /tmp/dogwatch-new /usr/local/bin/dogwatch
+
+# 6. Reload (sends SIGHUP for graceful reload, not restart)
+sudo systemctl reload dogwatch
+
+# 7. Verify
+curl -s localhost:9999/status | jq '.version'
+```
+
+### For Kubernetes deployments
+
+```bash
+# 1. Update image in deployment
+kubectl set image deployment/dogwatch dogwatch=dogwatch/dogwatch:v1.2.0
+
+# 2. Watch rollout
+kubectl rollout status deployment/dogwatch
+
+# 3. Rollback if issues
+kubectl rollout undo deployment/dogwatch
+```
+
+## Post-Upgrade Verification
+
+```bash
+# Check version
+curl -s localhost:9999/status | jq '.version'
+
+# Check health
+curl -s localhost:9999/healthz
+
+# Check metrics flowing
+curl -s localhost:9999/metrics | grep dogwatch_spans_ingested_total
+
+# Check for errors
+journalctl -u dogwatch --since "5 minutes ago" | grep -i error
+```
+
+## Rollback Procedure
+
+```bash
+# Restore old binary
+sudo mv /usr/local/bin/dogwatch.bak /usr/local/bin/dogwatch
+sudo systemctl restart dogwatch
+
+# Restore data if needed
+dogwatch restore --backup /backup/pre-upgrade
+```
+```
+
+---
+
+## Troubleshooting Guide
+
+Quick reference for common issues.
+
+### Symptoms → Causes → Fixes
+
+| Symptom | Likely Cause | Quick Fix |
+|---------|--------------|-----------|
+| Won't start | Permission denied | `sudo setcap cap_bpf,cap_perfmon=eip ./dogwatch` |
+| Won't start | Port in use | `--listen :9998` or kill other process |
+| Won't start | Kernel too old | Upgrade to 5.4+ |
+| High memory | Cardinality explosion | Add cardinality limits |
+| High memory | Memory leak | Restart, report bug |
+| High CPU | Too many queries | Add query rate limiting |
+| High CPU | eBPF overhead | Check probe config |
+| Disk filling | Retention too long | Reduce retention period |
+| Disk filling | No compaction | Enable auto-compaction |
+| Slow queries | No indexes | Check query explain |
+| Slow queries | Too much data | Add time range limits |
+| Missing data | Sampling | Check sampling config |
+| Missing data | Crashes | Check logs for panics |
+| Missing traces | Correlation failed | Check correlation accuracy metric |
+| Missing TLS data | Library not supported | Check TLS probe status |
+| Wrong service names | K8s metadata missing | Check K8s RBAC |
+
+### Debug Commands
+
+```bash
+# Overall status
+curl -s localhost:9999/status | jq .
+
+# Detailed metrics
+curl -s localhost:9999/metrics
+
+# Slow queries
+curl -s localhost:9999/api/v1/admin/slow-queries
+
+# Cardinality report
+curl -s localhost:9999/api/v1/cardinality
+
+# eBPF probe status
+curl -s localhost:9999/debug/ebpf
+
+# Query explain
+curl -s "localhost:9999/api/v1/query/explain?query=..."
+
+# Force garbage collection
+curl -X POST localhost:9999/debug/gc
+
+# Heap profile (for debugging memory)
+curl -s localhost:9999/debug/pprof/heap > heap.prof
+go tool pprof heap.prof
+
+# CPU profile (for debugging CPU)
+curl -s "localhost:9999/debug/pprof/profile?seconds=30" > cpu.prof
+go tool pprof cpu.prof
+
+# Trace specific request
+curl -s "localhost:9999/api/v1/traces/abc123?debug=true"
+```
+
+### Log Levels
+
+```bash
+# Increase log verbosity temporarily
+curl -X POST localhost:9999/api/v1/admin/log-level -d '{"level": "debug"}'
+
+# Watch logs
+journalctl -u dogwatch -f
+
+# Filter for errors
+journalctl -u dogwatch | grep -E "(ERROR|FATAL|panic)"
+```
+
+### Common Error Messages
+
+| Error | Meaning | Fix |
+|-------|---------|-----|
+| `failed to load BTF` | BTF not available | Upgrade kernel or use non-CO-RE build |
+| `map create: permission denied` | Missing CAP_BPF | Run as root or add capability |
+| `attach kprobe: no such file` | Symbol doesn't exist | Kernel mismatch, update probes |
+| `database is locked` | SQLite contention | Reduce concurrent writes |
+| `no space left on device` | Disk full | Free space or add disk |
+| `connection refused` | Service not running | Start dogwatch |
+| `context deadline exceeded` | Query timeout | Optimize query or increase timeout |
+| `too many open files` | FD limit | Increase ulimit |
+
+---
+
+## API Reference
+
+### Ingest APIs
+
+```
+POST /api/v1/traces
+POST /v1/traces (OTLP HTTP)
+gRPC :4317 (OTLP gRPC)
+POST /api/v1/write (Prometheus remote_write)
+POST /api/v1/logs
+```
+
+### Query APIs
+
+```
+GET  /api/v1/traces
+GET  /api/v1/traces/:traceId
+GET  /api/v1/query              # PromQL instant query
+GET  /api/v1/query_range        # PromQL range query
+GET  /api/v1/logs
+GET  /api/v1/services
+GET  /api/v1/service-map
+```
+
+### Management APIs
+
+```
+GET  /healthz                   # Liveness
+GET  /readyz                    # Readiness
+GET  /status                    # Detailed status
+GET  /metrics                   # Prometheus metrics
+POST /api/v1/admin/compact      # Trigger compaction
+POST /api/v1/admin/backup       # Create backup
+POST /api/v1/admin/restore      # Restore from backup
+GET  /api/v1/cardinality        # Cardinality report
+```
+
+### Example Requests
+
+```bash
+# Query traces for a service
+curl "localhost:9999/api/v1/traces?service=api&limit=100"
+
+# Get specific trace
+curl "localhost:9999/api/v1/traces/abc123def456"
+
+# PromQL query
+curl "localhost:9999/api/v1/query?query=rate(http_requests_total[5m])"
+
+# Range query
+curl "localhost:9999/api/v1/query_range?query=rate(http_requests_total[5m])&start=2024-01-01T00:00:00Z&end=2024-01-02T00:00:00Z&step=60"
+
+# Search logs
+curl "localhost:9999/api/v1/logs?q=level:error&service=api&limit=100"
+
+# Get service map
+curl "localhost:9999/api/v1/service-map"
+
+# Create backup
+curl -X POST "localhost:9999/api/v1/admin/backup" -d '{"path": "/backup/2024-01-15"}'
+```
+
+### Response Formats
+
+```json
+// Trace response
+{
+  "trace_id": "abc123",
+  "spans": [
+    {
+      "span_id": "def456",
+      "parent_span_id": "",
+      "operation": "GET /api/users",
+      "service": "api",
+      "start_time": "2024-01-15T10:00:00Z",
+      "duration_ms": 45,
+      "status": "OK",
+      "tags": {"http.method": "GET", "http.status": 200}
+    }
+  ],
+  "service_count": 3,
+  "span_count": 12,
+  "duration_ms": 145
+}
+
+// PromQL response (same as Prometheus)
+{
+  "status": "success",
+  "data": {
+    "resultType": "vector",
+    "result": [
+      {
+        "metric": {"__name__": "http_requests_total", "service": "api"},
+        "value": [1705312800, "1234"]
+      }
+    ]
+  }
+}
+
+// Error response
+{
+  "error": "query timeout",
+  "message": "Query exceeded 30s timeout",
+  "code": "TIMEOUT"
+}
+```
+
+---
+
+## Data Model & Schema Design
+
+### Core Philosophy
+
+```
+Every decision optimizes for:
+1. Query speed (fast dashboards, fast alerts)
+2. Storage efficiency (small footprint)
+3. Simplicity (single SQLite file, no external DB)
+4. Durability (survive crashes, corrupted writes)
+```
+
+### SQLite Schema Overview
+
+```sql
+-- dogwatch uses SQLite with time-series optimizations
+-- All timestamps are Unix nanoseconds (int64)
+-- All IDs are ULIDs (sortable, unique, time-ordered)
+
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+PRAGMA cache_size = -64000;  -- 64MB cache
+PRAGMA mmap_size = 268435456;  -- 256MB mmap
+PRAGMA temp_store = MEMORY;
+```
+
+### Metrics Schema
+
+```sql
+-- Metric definitions (metadata)
+CREATE TABLE metric_defs (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL CHECK (type IN ('counter', 'gauge', 'histogram', 'summary')),
+    unit TEXT,
+    description TEXT,
+    created_at INTEGER NOT NULL,
+    UNIQUE(name)
+);
+CREATE INDEX idx_metric_defs_name ON metric_defs(name);
+
+-- Label definitions (dimension keys)
+CREATE TABLE label_defs (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE
+);
+
+-- Label values (interned strings)
+CREATE TABLE label_values (
+    id INTEGER PRIMARY KEY,
+    label_def_id INTEGER NOT NULL REFERENCES label_defs(id),
+    value TEXT NOT NULL,
+    UNIQUE(label_def_id, value)
+);
+CREATE INDEX idx_label_values_lookup ON label_values(label_def_id, value);
+
+-- Time series (unique combinations of metric + labels)
+CREATE TABLE series (
+    id INTEGER PRIMARY KEY,
+    metric_def_id INTEGER NOT NULL REFERENCES metric_defs(id),
+    label_hash BLOB NOT NULL,  -- xxhash of sorted label pairs
+    labels_json TEXT NOT NULL,  -- {"service":"api","method":"GET"}
+    first_seen INTEGER NOT NULL,
+    last_seen INTEGER NOT NULL,
+    UNIQUE(metric_def_id, label_hash)
+);
+CREATE INDEX idx_series_metric ON series(metric_def_id);
+CREATE INDEX idx_series_last_seen ON series(last_seen);
+
+-- Metric samples (the actual data points)
+-- Partitioned by day for efficient retention/deletion
+CREATE TABLE samples_YYYYMMDD (
+    series_id INTEGER NOT NULL,
+    timestamp INTEGER NOT NULL,
+    value REAL NOT NULL,
+    PRIMARY KEY (series_id, timestamp)
+) WITHOUT ROWID;
+
+-- Histogram buckets (for histogram metrics)
+CREATE TABLE histogram_buckets_YYYYMMDD (
+    series_id INTEGER NOT NULL,
+    timestamp INTEGER NOT NULL,
+    le REAL NOT NULL,  -- bucket upper bound
+    count INTEGER NOT NULL,
+    PRIMARY KEY (series_id, timestamp, le)
+) WITHOUT ROWID;
+```
+
+### Traces Schema
+
+```sql
+-- Traces (top-level, one per distributed operation)
+CREATE TABLE traces (
+    trace_id BLOB PRIMARY KEY,  -- 16 bytes
+    root_service TEXT,
+    root_operation TEXT,
+    start_time INTEGER NOT NULL,
+    duration_ns INTEGER NOT NULL,
+    span_count INTEGER NOT NULL,
+    error BOOLEAN NOT NULL DEFAULT FALSE,
+    status_code INTEGER,
+    UNIQUE(trace_id)
+) WITHOUT ROWID;
+CREATE INDEX idx_traces_time ON traces(start_time);
+CREATE INDEX idx_traces_service ON traces(root_service, start_time);
+CREATE INDEX idx_traces_error ON traces(error, start_time) WHERE error = TRUE;
+CREATE INDEX idx_traces_duration ON traces(duration_ns DESC, start_time);
+
+-- Spans (individual operations within a trace)
+CREATE TABLE spans (
+    span_id BLOB NOT NULL,  -- 8 bytes
+    trace_id BLOB NOT NULL,
+    parent_span_id BLOB,  -- NULL for root span
+    service TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    kind TEXT CHECK (kind IN ('client', 'server', 'producer', 'consumer', 'internal')),
+    start_time INTEGER NOT NULL,
+    duration_ns INTEGER NOT NULL,
+    status_code INTEGER,
+    status_message TEXT,
+    attributes_json TEXT,  -- {"http.method":"GET","http.url":"/api"}
+    events_json TEXT,  -- [{timestamp, name, attributes}, ...]
+    PRIMARY KEY (trace_id, span_id)
+) WITHOUT ROWID;
+CREATE INDEX idx_spans_service_time ON spans(service, start_time);
+CREATE INDEX idx_spans_operation ON spans(service, operation, start_time);
+
+-- Span links (for cross-trace references)
+CREATE TABLE span_links (
+    from_trace_id BLOB NOT NULL,
+    from_span_id BLOB NOT NULL,
+    to_trace_id BLOB NOT NULL,
+    to_span_id BLOB NOT NULL,
+    attributes_json TEXT,
+    PRIMARY KEY (from_trace_id, from_span_id, to_trace_id, to_span_id)
+) WITHOUT ROWID;
+```
+
+### Logs Schema
+
+```sql
+-- Log entries
+CREATE TABLE logs (
+    id INTEGER PRIMARY KEY,  -- ULID as integer
+    timestamp INTEGER NOT NULL,
+    observed_timestamp INTEGER NOT NULL,
+    trace_id BLOB,  -- optional correlation
+    span_id BLOB,
+    severity TEXT CHECK (severity IN ('TRACE','DEBUG','INFO','WARN','ERROR','FATAL')),
+    severity_number INTEGER,
+    body TEXT NOT NULL,
+    service TEXT,
+    resource_json TEXT,  -- {"host":"web-1","container":"abc123"}
+    attributes_json TEXT,  -- {"user_id":"123","request_id":"xyz"}
+
+    -- Full-text search
+    body_fts TEXT  -- normalized for FTS
+);
+CREATE INDEX idx_logs_time ON logs(timestamp);
+CREATE INDEX idx_logs_service_time ON logs(service, timestamp);
+CREATE INDEX idx_logs_severity ON logs(severity, timestamp);
+CREATE INDEX idx_logs_trace ON logs(trace_id) WHERE trace_id IS NOT NULL;
+
+-- FTS5 virtual table for full-text search
+CREATE VIRTUAL TABLE logs_fts USING fts5(
+    body_fts,
+    content='logs',
+    content_rowid='id',
+    tokenize='porter unicode61'
+);
+
+-- Triggers to keep FTS in sync
+CREATE TRIGGER logs_ai AFTER INSERT ON logs BEGIN
+    INSERT INTO logs_fts(rowid, body_fts) VALUES (new.id, new.body_fts);
+END;
+```
+
+### Entities Schema (Service Catalog)
+
+```sql
+-- Discovered entities (services, databases, queues, etc.)
+CREATE TABLE entities (
+    id TEXT PRIMARY KEY,  -- "service:api-gateway" or "database:postgres-main"
+    type TEXT NOT NULL CHECK (type IN ('service','database','cache','queue','external')),
+    name TEXT NOT NULL,
+    discovered_at INTEGER NOT NULL,
+    last_seen INTEGER NOT NULL,
+    metadata_json TEXT,  -- {"language":"go","version":"1.21"}
+    golden_signals_json TEXT  -- {"latency_p99":45.2,"error_rate":0.01}
+);
+CREATE INDEX idx_entities_type ON entities(type);
+CREATE INDEX idx_entities_last_seen ON entities(last_seen);
+
+-- Entity relationships
+CREATE TABLE entity_relationships (
+    from_entity_id TEXT NOT NULL REFERENCES entities(id),
+    to_entity_id TEXT NOT NULL REFERENCES entities(id),
+    relationship TEXT NOT NULL CHECK (relationship IN ('calls','runs_on','depends_on','stores_in')),
+    first_seen INTEGER NOT NULL,
+    last_seen INTEGER NOT NULL,
+    request_count INTEGER DEFAULT 0,
+    error_count INTEGER DEFAULT 0,
+    avg_latency_ns INTEGER,
+    PRIMARY KEY (from_entity_id, to_entity_id, relationship)
+);
+CREATE INDEX idx_relationships_to ON entity_relationships(to_entity_id);
+```
+
+### Alerts & Incidents Schema
+
+```sql
+-- Alert rules
+CREATE TABLE alert_rules (
+    id TEXT PRIMARY KEY,  -- ULID
+    name TEXT NOT NULL,
+    description TEXT,
+    query TEXT NOT NULL,  -- PromQL or DQL
+    condition TEXT NOT NULL,  -- "> 0.01" or "absent"
+    for_duration INTEGER,  -- how long condition must be true (ns)
+    severity TEXT CHECK (severity IN ('critical','warning','info')),
+    labels_json TEXT,
+    annotations_json TEXT,
+    enabled BOOLEAN DEFAULT TRUE,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    created_by TEXT
+);
+
+-- Alert instances (firing alerts)
+CREATE TABLE alerts (
+    id TEXT PRIMARY KEY,
+    rule_id TEXT NOT NULL REFERENCES alert_rules(id),
+    state TEXT CHECK (state IN ('pending','firing','resolved')),
+    labels_json TEXT NOT NULL,  -- includes rule labels + dynamic labels
+    annotations_json TEXT,
+    started_at INTEGER NOT NULL,
+    resolved_at INTEGER,
+    value REAL,  -- the value that triggered the alert
+    fingerprint TEXT NOT NULL  -- hash for deduplication
+);
+CREATE INDEX idx_alerts_rule ON alerts(rule_id);
+CREATE INDEX idx_alerts_state ON alerts(state, started_at);
+CREATE INDEX idx_alerts_fingerprint ON alerts(fingerprint);
+
+-- Incidents (grouped alerts)
+CREATE TABLE incidents (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT,
+    severity TEXT CHECK (severity IN ('critical','high','medium','low')),
+    status TEXT CHECK (status IN ('triggered','acknowledged','resolved')),
+    created_at INTEGER NOT NULL,
+    acknowledged_at INTEGER,
+    resolved_at INTEGER,
+    acknowledged_by TEXT,
+    resolved_by TEXT,
+    timeline_json TEXT,  -- [{timestamp, event, user}, ...]
+    related_alerts_json TEXT,
+    root_cause TEXT
+);
+CREATE INDEX idx_incidents_status ON incidents(status, created_at);
+```
+
+### Data Retention
+
+```sql
+-- Retention is managed by dropping old partition tables
+-- Each signal type has configurable retention
+
+-- Example: 7-day metrics retention
+-- Every day at midnight:
+DROP TABLE IF EXISTS samples_20240101;  -- drop 8 days ago
+CREATE TABLE samples_20240108 (...);     -- create for tomorrow
+
+-- Retention settings stored in config
+CREATE TABLE retention_config (
+    signal TEXT PRIMARY KEY,  -- 'metrics', 'traces', 'logs'
+    duration_seconds INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+-- Default retention periods:
+-- metrics: 15 days (1,296,000 seconds)
+-- traces: 7 days (604,800 seconds)
+-- logs: 7 days (604,800 seconds)
+-- alerts: 90 days (7,776,000 seconds)
+```
+
+### Query Patterns
+
+```sql
+-- Fast queries use these patterns:
+
+-- 1. Recent metrics for a service (dashboard load)
+SELECT s.labels_json, d.timestamp, d.value
+FROM samples_20240107 d
+JOIN series s ON d.series_id = s.id
+JOIN metric_defs m ON s.metric_def_id = m.id
+WHERE m.name = 'http_request_duration_seconds'
+  AND s.labels_json LIKE '%"service":"api"%'
+  AND d.timestamp > ?
+ORDER BY d.timestamp;
+
+-- 2. Error traces in last hour
+SELECT trace_id, root_service, root_operation, duration_ns
+FROM traces
+WHERE error = TRUE
+  AND start_time > ?
+ORDER BY start_time DESC
+LIMIT 100;
+
+-- 3. Logs with full-text search
+SELECT l.*
+FROM logs l
+JOIN logs_fts fts ON l.id = fts.rowid
+WHERE logs_fts MATCH 'payment AND (failed OR timeout)'
+  AND l.timestamp > ?
+ORDER BY l.timestamp DESC
+LIMIT 100;
+
+-- 4. Service golden signals (entity overview)
+SELECT
+    e.name,
+    e.golden_signals_json,
+    (SELECT COUNT(*) FROM alerts a
+     WHERE a.labels_json LIKE '%"service":"' || e.name || '"%'
+       AND a.state = 'firing') as active_alerts
+FROM entities e
+WHERE e.type = 'service'
+ORDER BY e.name;
+```
+
+### Write Path Optimization
+
+```go
+// Batch writes for efficiency
+type WriteBuffer struct {
+    samples    []Sample
+    spans      []Span
+    logs       []Log
+    flushSize  int  // 1000 items
+    flushTime  time.Duration  // 100ms
+}
+
+// Metrics are written in batches
+func (b *WriteBuffer) Flush() error {
+    tx, _ := db.Begin()
+    defer tx.Rollback()
+
+    stmt, _ := tx.Prepare(`
+        INSERT INTO samples_? (series_id, timestamp, value)
+        VALUES (?, ?, ?)
+    `)
+
+    for _, s := range b.samples {
+        stmt.Exec(s.Partition, s.SeriesID, s.Timestamp, s.Value)
+    }
+
+    return tx.Commit()
+}
+
+// String interning reduces memory and storage
+type StringInterner struct {
+    labelDefs   map[string]int64
+    labelValues map[labelValueKey]int64
+    mu          sync.RWMutex
+}
+
+func (i *StringInterner) Intern(label, value string) (defID, valID int64) {
+    // Check cache first (read lock)
+    // Insert if missing (write lock)
+    // Returns IDs for storage
+}
+```
+
+### Storage Size Estimates
+
+```
+Per-signal storage costs:
+
+METRICS:
+- 8 bytes timestamp + 8 bytes value = 16 bytes/sample
+- With series_id: 24 bytes/sample
+- 1M samples/minute = 1.44 GB/day raw
+- With compression: ~500 MB/day
+
+TRACES:
+- Average span: 200 bytes (IDs + timing + small attributes)
+- Average trace: 10 spans = 2 KB
+- 10K traces/minute = 28.8 GB/day raw
+- With compression: ~10 GB/day
+
+LOGS:
+- Average log: 500 bytes (timestamp + body + attributes)
+- 100K logs/minute = 72 GB/day raw
+- With compression + FTS: ~30 GB/day
+
+TOTAL for medium deployment:
+- Raw: ~100 GB/day
+- Compressed: ~40 GB/day
+- 7-day retention: ~280 GB
+```
+
+---
+
+## Deployment Guides
+
+### Single Binary Install
+
+```bash
+# Download and install
+curl -sSL https://get.dogwatch.dev | sh
+
+# Or with version
+curl -sSL https://get.dogwatch.dev | VERSION=1.2.3 sh
+
+# Verify installation
+dogwatch version
+
+# Start with defaults
+./dogwatch
+
+# Start with config file
+./dogwatch --config /etc/dogwatch/config.yaml
+
+# Start with env vars
+DOGWATCH_DATA_DIR=/var/lib/dogwatch \
+DOGWATCH_LISTEN_ADDR=0.0.0.0:9999 \
+./dogwatch
+```
+
+### Systemd Service
+
+```bash
+# /etc/systemd/system/dogwatch.service
+[Unit]
+Description=dogwatch observability platform
+Documentation=https://dogwatch.dev/docs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dogwatch
+Group=dogwatch
+ExecStart=/usr/local/bin/dogwatch --config /etc/dogwatch/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/dogwatch /var/log/dogwatch
+PrivateTmp=true
+PrivateDevices=true
+
+# eBPF requires these capabilities
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_BPF CAP_PERFMON CAP_NET_ADMIN
+AmbientCapabilities=CAP_SYS_ADMIN CAP_BPF CAP_PERFMON CAP_NET_ADMIN
+
+# Resource limits
+LimitNOFILE=65535
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+# Setup commands
+sudo useradd -r -s /bin/false dogwatch
+sudo mkdir -p /var/lib/dogwatch /var/log/dogwatch /etc/dogwatch
+sudo chown dogwatch:dogwatch /var/lib/dogwatch /var/log/dogwatch
+sudo cp dogwatch /usr/local/bin/
+sudo cp config.yaml /etc/dogwatch/
+sudo systemctl daemon-reload
+sudo systemctl enable dogwatch
+sudo systemctl start dogwatch
+sudo systemctl status dogwatch
+```
+
+### Docker
+
+```dockerfile
+# Dockerfile
+FROM ubuntu:22.04
+
+# Install dependencies for eBPF
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libbpf1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY dogwatch /usr/local/bin/dogwatch
+COPY config.yaml /etc/dogwatch/config.yaml
+
+# Data directory
+VOLUME /data
+
+# Ports: Web UI, OTLP gRPC, OTLP HTTP, Prometheus remote_write
+EXPOSE 9999 4317 4318 9090
+
+# eBPF requires privileged mode
+# See docker-compose.yml for proper configuration
+
+ENTRYPOINT ["/usr/local/bin/dogwatch"]
+CMD ["--config", "/etc/dogwatch/config.yaml"]
+```
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  dogwatch:
+    image: dogwatch/dogwatch:latest
+    container_name: dogwatch
+    privileged: true  # Required for eBPF
+    pid: host  # Required to see all processes
+    network_mode: host  # Required to see all network traffic
+
+    volumes:
+      - dogwatch-data:/data
+      - /sys/kernel/debug:/sys/kernel/debug:ro
+      - /sys/fs/bpf:/sys/fs/bpf:rw
+      - /proc:/host/proc:ro
+
+    environment:
+      - DOGWATCH_DATA_DIR=/data
+      - DOGWATCH_LOG_LEVEL=info
+
+    cap_add:
+      - SYS_ADMIN
+      - BPF
+      - PERFMON
+      - NET_ADMIN
+
+    security_opt:
+      - apparmor:unconfined
+
+    restart: unless-stopped
+
+volumes:
+  dogwatch-data:
+```
+
+### Kubernetes
+
+```yaml
+# kubernetes/namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dogwatch
+  labels:
+    app.kubernetes.io/name: dogwatch
+---
+# kubernetes/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dogwatch-config
+  namespace: dogwatch
+data:
+  config.yaml: |
+    data_dir: /data
+    listen_addr: 0.0.0.0:9999
+    log_level: info
+
+    retention:
+      metrics: 15d
+      traces: 7d
+      logs: 7d
+
+    otlp:
+      grpc_addr: 0.0.0.0:4317
+      http_addr: 0.0.0.0:4318
+
+    prometheus:
+      remote_write_addr: 0.0.0.0:9090
+---
+# kubernetes/daemonset.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: dogwatch
+  namespace: dogwatch
+  labels:
+    app.kubernetes.io/name: dogwatch
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dogwatch
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dogwatch
+    spec:
+      serviceAccountName: dogwatch
+      hostPID: true
+      hostNetwork: true
+
+      containers:
+      - name: dogwatch
+        image: dogwatch/dogwatch:latest
+
+        ports:
+        - name: http
+          containerPort: 9999
+          hostPort: 9999
+        - name: otlp-grpc
+          containerPort: 4317
+          hostPort: 4317
+        - name: otlp-http
+          containerPort: 4318
+          hostPort: 4318
+
+        securityContext:
+          privileged: true
+          capabilities:
+            add:
+            - SYS_ADMIN
+            - BPF
+            - PERFMON
+            - NET_ADMIN
+
+        volumeMounts:
+        - name: config
+          mountPath: /etc/dogwatch
+        - name: data
+          mountPath: /data
+        - name: sys-kernel-debug
+          mountPath: /sys/kernel/debug
+          readOnly: true
+        - name: sys-fs-bpf
+          mountPath: /sys/fs/bpf
+        - name: proc
+          mountPath: /host/proc
+          readOnly: true
+
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2"
+
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 9999
+          initialDelaySeconds: 30
+          periodSeconds: 10
+
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 9999
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+      volumes:
+      - name: config
+        configMap:
+          name: dogwatch-config
+      - name: data
+        hostPath:
+          path: /var/lib/dogwatch
+          type: DirectoryOrCreate
+      - name: sys-kernel-debug
+        hostPath:
+          path: /sys/kernel/debug
+      - name: sys-fs-bpf
+        hostPath:
+          path: /sys/fs/bpf
+      - name: proc
+        hostPath:
+          path: /proc
+
+      tolerations:
+      - operator: Exists
+        effect: NoSchedule
+---
+# kubernetes/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: dogwatch
+  namespace: dogwatch
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: dogwatch
+  ports:
+  - name: http
+    port: 9999
+    targetPort: 9999
+  - name: otlp-grpc
+    port: 4317
+    targetPort: 4317
+  - name: otlp-http
+    port: 4318
+    targetPort: 4318
+---
+# kubernetes/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dogwatch
+  namespace: dogwatch
+---
+# kubernetes/clusterrole.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: dogwatch
+rules:
+- apiGroups: [""]
+  resources: ["pods", "nodes", "services", "endpoints", "namespaces"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
+  verbs: ["get", "list", "watch"]
+---
+# kubernetes/clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: dogwatch
+subjects:
+- kind: ServiceAccount
+  name: dogwatch
+  namespace: dogwatch
+roleRef:
+  kind: ClusterRole
+  name: dogwatch
+  apiGroup: rbac.authorization.k8s.io
+```
+
+```bash
+# Deploy to Kubernetes
+kubectl apply -f kubernetes/
+
+# Verify deployment
+kubectl -n dogwatch get pods
+kubectl -n dogwatch logs -l app.kubernetes.io/name=dogwatch
+
+# Access UI (port forward)
+kubectl -n dogwatch port-forward svc/dogwatch 9999:9999
+
+# Access UI (ingress)
+# Configure your ingress controller to route to dogwatch service
+```
+
+### Helm Chart
+
+```yaml
+# Chart.yaml
+apiVersion: v2
+name: dogwatch
+description: eBPF-powered observability platform
+version: 0.1.0
+appVersion: "1.0.0"
+---
+# values.yaml
+replicaCount: 1
+
+image:
+  repository: dogwatch/dogwatch
+  tag: latest
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "500m"
+  limits:
+    memory: "2Gi"
+    cpu: "2"
+
+config:
+  dataDir: /data
+  logLevel: info
+  retention:
+    metrics: 15d
+    traces: 7d
+    logs: 7d
+
+persistence:
+  enabled: true
+  storageClass: ""
+  size: 100Gi
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: dogwatch.local
+      paths:
+        - path: /
+          pathType: Prefix
+```
+
+### Configuration Reference
+
+```yaml
+# config.yaml - Full reference
+# All settings can be overridden with DOGWATCH_ env vars
+# e.g., DOGWATCH_DATA_DIR=/data
+
+# Core settings
+data_dir: /var/lib/dogwatch  # Where SQLite files live
+listen_addr: 0.0.0.0:9999    # Web UI and API
+log_level: info              # trace, debug, info, warn, error
+log_format: json             # json or text
+
+# Data retention
+retention:
+  metrics: 15d    # 15 days
+  traces: 7d      # 7 days
+  logs: 7d        # 7 days
+  alerts: 90d     # 90 days
+
+# Ingest endpoints
+otlp:
+  enabled: true
+  grpc_addr: 0.0.0.0:4317
+  http_addr: 0.0.0.0:4318
+  max_recv_msg_size: 16777216  # 16MB
+
+prometheus:
+  remote_write_enabled: true
+  remote_write_addr: 0.0.0.0:9090
+  scrape_enabled: false
+  scrape_configs: []
+
+# eBPF configuration
+ebpf:
+  enabled: true
+  protocols:
+    http: true
+    mysql: true
+    postgres: true
+    redis: true
+    grpc: false  # experimental
+  tls_interception: true
+  kernel_min_version: "4.14"
+
+# Storage tuning
+storage:
+  wal_mode: true
+  sync_mode: normal  # off, normal, full
+  cache_size_mb: 64
+  mmap_size_mb: 256
+  max_series: 1000000
+  max_cardinality_per_metric: 100000
+
+# Query settings
+query:
+  timeout: 30s
+  max_samples: 50000000
+  max_series: 10000
+
+# Alerting
+alerting:
+  evaluation_interval: 15s
+  notification_timeout: 30s
+
+# Authentication
+auth:
+  enabled: true
+  session_duration: 24h
+  jwt_secret: ""  # auto-generated if empty
+
+# TLS
+tls:
+  enabled: false
+  cert_file: ""
+  key_file: ""
+
+# Rate limiting
+rate_limit:
+  enabled: true
+  requests_per_second: 100
+  burst: 1000
+```
+
+---
+
+## Security Hardening
+
+### Authentication & Authorization
+
+```yaml
+# Secure authentication configuration
+
+auth:
+  enabled: true
+
+  # Password policy
+  password:
+    min_length: 12
+    require_uppercase: true
+    require_lowercase: true
+    require_number: true
+    require_special: true
+    bcrypt_cost: 12
+
+  # Session management
+  session:
+    duration: 8h  # shorter for security
+    refresh_enabled: true
+    max_concurrent: 5  # per user
+    idle_timeout: 30m
+
+  # API keys
+  api_keys:
+    prefix: "dw_"
+    hash_algorithm: sha256
+    max_per_user: 10
+
+  # MFA (future)
+  mfa:
+    enabled: false
+    methods: ["totp"]
+```
+
+### RBAC Configuration
+
+```yaml
+# Role-Based Access Control
+
+rbac:
+  enabled: true
+
+  roles:
+    viewer:
+      - dashboard:read
+      - metrics:read
+      - traces:read
+      - logs:read
+
+    editor:
+      - dashboard:*
+      - alert_rules:*
+      - metrics:read
+      - traces:read
+      - logs:read
+      - synthetics:*
+
+    admin:
+      - "*"
+      - "!settings:security"  # except security settings
+
+    owner:
+      - "*"  # everything
+
+  # Default role for new users
+  default_role: viewer
+
+  # Require owner approval for admin
+  require_approval_for_admin: true
+```
+
+### Network Security
+
+```yaml
+# TLS configuration
+tls:
+  enabled: true
+  cert_file: /etc/dogwatch/tls/cert.pem
+  key_file: /etc/dogwatch/tls/key.pem
+  min_version: "1.2"
+  cipher_suites:
+    - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+    - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+  client_auth: none  # none, request, require
+
+# HTTP security headers
+security_headers:
+  enabled: true
+  strict_transport_security: "max-age=31536000; includeSubDomains"
+  content_security_policy: "default-src 'self'; script-src 'self' 'unsafe-inline'"
+  x_frame_options: "DENY"
+  x_content_type_options: "nosniff"
+  x_xss_protection: "1; mode=block"
+  referrer_policy: "strict-origin-when-cross-origin"
+
+# CORS
+cors:
+  enabled: false
+  allowed_origins: []
+  allowed_methods: ["GET", "POST", "PUT", "DELETE"]
+  allowed_headers: ["Authorization", "Content-Type"]
+  max_age: 86400
+```
+
+### Rate Limiting & DoS Protection
+
+```yaml
+# Rate limiting
+rate_limit:
+  enabled: true
+
+  # Global limits
+  global:
+    requests_per_second: 1000
+    burst: 5000
+
+  # Per-IP limits
+  per_ip:
+    requests_per_second: 100
+    burst: 500
+
+  # Per-user limits (authenticated)
+  per_user:
+    requests_per_second: 200
+    burst: 1000
+
+  # Per-endpoint limits
+  endpoints:
+    "/api/v1/query":
+      requests_per_second: 20
+      burst: 50
+    "/api/v1/write":
+      requests_per_second: 1000
+      burst: 5000
+
+# Request size limits
+limits:
+  max_request_body: 16777216  # 16MB
+  max_query_length: 65536     # 64KB
+  max_label_name_length: 128
+  max_label_value_length: 2048
+  max_labels_per_series: 100
+```
+
+### Audit Logging
+
+```yaml
+# Audit logging for compliance
+audit:
+  enabled: true
+  log_file: /var/log/dogwatch/audit.log
+
+  # What to log
+  events:
+    - authentication  # login, logout, failed attempts
+    - authorization   # permission denied
+    - data_access     # queries, exports
+    - configuration   # settings changes
+    - user_management # user CRUD
+
+  # Retention
+  retention: 365d
+
+  # Format
+  format: json
+
+  # Example audit log entry:
+  # {
+  #   "timestamp": "2024-01-07T10:30:00Z",
+  #   "event_type": "authentication",
+  #   "action": "login_success",
+  #   "user": "admin@example.com",
+  #   "ip": "192.168.1.100",
+  #   "user_agent": "Mozilla/5.0...",
+  #   "details": {"mfa_used": false}
+  # }
+```
+
+### Data Protection
+
+```yaml
+# Data protection settings
+data_protection:
+  # Encryption at rest (future)
+  encryption_at_rest:
+    enabled: false
+    algorithm: "AES-256-GCM"
+    key_source: "file"  # file, vault, kms
+    key_file: "/etc/dogwatch/encryption.key"
+
+  # PII handling
+  pii:
+    # Automatic redaction patterns
+    redact_patterns:
+      - name: "credit_card"
+        pattern: '\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b'
+        replacement: "[REDACTED_CC]"
+      - name: "ssn"
+        pattern: '\b\d{3}-\d{2}-\d{4}\b'
+        replacement: "[REDACTED_SSN]"
+      - name: "email"
+        pattern: '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+        replacement: "[REDACTED_EMAIL]"
+
+    # Fields to always hash
+    hash_fields:
+      - "user_id"
+      - "customer_id"
+      - "session_id"
+
+  # Data retention enforcement
+  retention:
+    enforce: true
+    delete_method: "secure"  # simple, secure (overwrite)
+```
+
+### Network Segmentation
+
+```
+Recommended network architecture:
+
+┌─────────────────────────────────────────────────────────────┐
+│                        Internet                              │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+                    ┌─────┴─────┐
+                    │  WAF/CDN  │
+                    └─────┬─────┘
+                          │
+              ┌───────────┴───────────┐
+              │    Load Balancer      │
+              │   (TLS termination)   │
+              └───────────┬───────────┘
+                          │
+    ┌─────────────────────┼─────────────────────┐
+    │                DMZ  │                     │
+    │         ┌───────────┴───────────┐         │
+    │         │   dogwatch Web UI     │         │
+    │         │   (port 9999)         │         │
+    │         └───────────┬───────────┘         │
+    └─────────────────────┼─────────────────────┘
+                          │
+    ┌─────────────────────┼─────────────────────┐
+    │          Internal   │                     │
+    │    ┌────────────────┼────────────────┐    │
+    │    │                │                │    │
+    │    ▼                ▼                ▼    │
+    │ ┌─────┐         ┌─────┐         ┌─────┐  │
+    │ │App 1│         │App 2│         │App 3│  │
+    │ └──┬──┘         └──┬──┘         └──┬──┘  │
+    │    │               │               │      │
+    │    └───────────────┼───────────────┘      │
+    │                    │                      │
+    │         ┌──────────┴──────────┐           │
+    │         │   OTLP Endpoints    │           │
+    │         │   (4317, 4318)      │           │
+    │         └─────────────────────┘           │
+    └───────────────────────────────────────────┘
+
+Firewall rules:
+- Internet → WAF: 443 only
+- WAF → dogwatch: 9999 only
+- Apps → dogwatch: 4317, 4318 only
+- dogwatch → Internet: deny (air-gapped data)
+```
+
+### Security Checklist
+
+```markdown
+## Pre-Production Security Checklist
+
+### Authentication
+- [ ] Default admin password changed
+- [ ] Password policy enforced
+- [ ] Session timeout configured
+- [ ] API key rotation policy defined
+
+### Network
+- [ ] TLS enabled with valid certificate
+- [ ] Security headers configured
+- [ ] Rate limiting enabled
+- [ ] Unnecessary ports closed
+
+### Access Control
+- [ ] RBAC enabled
+- [ ] Least privilege applied
+- [ ] Admin accounts audited
+- [ ] Service accounts documented
+
+### Data Protection
+- [ ] PII redaction configured
+- [ ] Retention policies set
+- [ ] Backup encryption enabled
+- [ ] Audit logging enabled
+
+### Infrastructure
+- [ ] Running as non-root user (except eBPF caps)
+- [ ] Filesystem permissions restricted
+- [ ] Container security context set
+- [ ] Network segmentation applied
+
+### Monitoring
+- [ ] Failed login alerts configured
+- [ ] Rate limit alerts configured
+- [ ] Error rate alerts configured
+- [ ] Audit log monitoring enabled
+
+### Compliance
+- [ ] Data residency requirements met
+- [ ] Retention meets compliance needs
+- [ ] Audit trail sufficient
+- [ ] Incident response plan documented
+```
+
+---
+
+## Migration Guides
+
+### From Datadog
+
+```bash
+# Step 1: Export Datadog configuration
+
+# Install dd-export tool
+go install github.com/dogwatch/dd-export@latest
+
+# Export dashboards
+dd-export dashboards \
+  --api-key $DD_API_KEY \
+  --app-key $DD_APP_KEY \
+  --output dashboards.json
+
+# Export monitors (alerts)
+dd-export monitors \
+  --api-key $DD_API_KEY \
+  --app-key $DD_APP_KEY \
+  --output monitors.json
+
+# Export SLOs
+dd-export slos \
+  --api-key $DD_API_KEY \
+  --app-key $DD_APP_KEY \
+  --output slos.json
+```
+
+```bash
+# Step 2: Convert to dogwatch format
+
+dogwatch import datadog \
+  --dashboards dashboards.json \
+  --monitors monitors.json \
+  --slos slos.json \
+  --output dogwatch-config/
+
+# Review generated configuration
+ls dogwatch-config/
+# dashboards/
+# alert_rules/
+# slos/
+```
+
+```yaml
+# Step 3: Query translation reference
+
+# Datadog → dogwatch (PromQL-compatible)
+
+# Metrics
+avg:system.cpu.user{host:web-*}
+→ avg(system_cpu_user{host=~"web-.*"})
+
+sum:http.requests{service:api}.as_rate()
+→ sum(rate(http_requests_total{service="api"}[5m]))
+
+p99:trace.http.request.duration{service:api}
+→ histogram_quantile(0.99, sum(rate(http_request_duration_bucket{service="api"}[5m])) by (le))
+
+# Anomaly detection
+anomalies(avg:system.cpu.user{*}, 'basic', 2)
+→ # Built-in anomaly detection (no query syntax needed)
+
+# Forecasting
+forecast(avg:system.disk.used{*}, 'linear', 1w)
+→ # Built-in forecasting (no query syntax needed)
+```
+
+```yaml
+# Step 4: Agent migration
+
+# Datadog agent → dogwatch agent
+# (or just use eBPF with no agent)
+
+# Option A: Replace agent entirely
+# dogwatch uses eBPF - no agent needed for most cases
+# Just deploy dogwatch and it auto-discovers everything
+
+# Option B: Use OTLP bridge (keep existing instrumentation)
+# Configure Datadog agent to also send to OTLP
+# DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_GRPC_ENDPOINT=localhost:4317
+
+# Option C: Gradual migration
+# 1. Deploy dogwatch alongside Datadog
+# 2. Compare data for 2 weeks
+# 3. Migrate dashboards/alerts one by one
+# 4. Remove Datadog agent
+```
+
+### From Prometheus + Grafana
+
+```yaml
+# Step 1: Configure Prometheus remote_write
+
+# prometheus.yml
+remote_write:
+  - url: http://dogwatch:9090/api/v1/write
+    remote_timeout: 30s
+    queue_config:
+      capacity: 10000
+      max_shards: 50
+      max_samples_per_send: 5000
+
+# This sends all Prometheus metrics to dogwatch
+# You can run both in parallel during migration
+```
+
+```bash
+# Step 2: Import Grafana dashboards
+
+# Export from Grafana
+curl -H "Authorization: Bearer $GRAFANA_TOKEN" \
+  "$GRAFANA_URL/api/dashboards/uid/$DASHBOARD_UID" \
+  > dashboard.json
+
+# Import to dogwatch
+dogwatch import grafana \
+  --dashboard dashboard.json \
+  --output dogwatch-dashboards/
+
+# Bulk export all dashboards
+dogwatch import grafana \
+  --grafana-url $GRAFANA_URL \
+  --grafana-token $GRAFANA_TOKEN \
+  --all \
+  --output dogwatch-dashboards/
+```
+
+```yaml
+# Step 3: Alert rule migration
+
+# Prometheus alerting rule:
+groups:
+  - name: example
+    rules:
+      - alert: HighErrorRate
+        expr: rate(http_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate detected"
+
+# dogwatch equivalent (same PromQL):
+alert_rules:
+  - name: HighErrorRate
+    query: rate(http_errors_total[5m])
+    condition: "> 0.1"
+    for: 5m
+    severity: critical
+    annotations:
+      summary: "High error rate detected"
+
+# Import Prometheus rules directly
+dogwatch import prometheus-rules \
+  --rules /etc/prometheus/rules/*.yml \
+  --output dogwatch-alerts/
+```
+
+### From New Relic
+
+```bash
+# Step 1: Export New Relic configuration
+
+# Use NR GraphQL API to export
+dogwatch import newrelic \
+  --api-key $NR_API_KEY \
+  --account-id $NR_ACCOUNT_ID \
+  --export dashboards,alerts,synthetics \
+  --output newrelic-export/
+```
+
+```yaml
+# Step 2: NRQL → PromQL translation
+
+# New Relic NRQL:
+SELECT average(duration) FROM Transaction
+WHERE appName = 'api'
+FACET request.uri
+SINCE 1 hour ago
+
+# dogwatch equivalent:
+avg(http_request_duration_seconds{service="api"}) by (path)
+# Time range specified in query UI, not query
+
+# Common translations:
+# SELECT count(*) → count()
+# SELECT average() → avg()
+# SELECT percentile(x, 99) → histogram_quantile(0.99, ...)
+# FACET x → by (x)
+# WHERE x = 'y' → {x="y"}
+# SINCE 1 hour ago → [1h] or time picker
+```
+
+```yaml
+# Step 3: New Relic One Entity → dogwatch Service Catalog
+
+# New Relic auto-instruments with APM agents
+# dogwatch auto-discovers with eBPF
+
+# Entity mapping:
+# NR APM Application → dogwatch Service entity
+# NR Infrastructure Host → dogwatch Host entity
+# NR Browser Application → (not supported, use Sentry)
+
+# Service naming:
+# NR uses agent config: NEW_RELIC_APP_NAME
+# dogwatch infers from:
+#   1. K8s labels (app.kubernetes.io/name)
+#   2. Container name
+#   3. Process name
+#   4. OTEL service.name attribute
+
+# Force service name:
+# Set OTEL_SERVICE_NAME=my-service in your app
+```
+
+### From Splunk
+
+```bash
+# Step 1: Export Splunk saved searches and dashboards
+
+# Use Splunk REST API
+dogwatch import splunk \
+  --splunk-url $SPLUNK_URL \
+  --splunk-token $SPLUNK_TOKEN \
+  --export searches,dashboards,alerts \
+  --output splunk-export/
+```
+
+```yaml
+# Step 2: SPL → DQL translation
+
+# Splunk SPL:
+index=main sourcetype=access_combined
+| stats count by status
+| where count > 100
+
+# dogwatch DQL (future):
+logs
+| where source == "access_combined"
+| stats count() by status
+| where count > 100
+
+# For now, use UI filters or PromQL for metrics:
+count(http_requests_total) by (status)
+```
+
+```yaml
+# Step 3: Log forwarding
+
+# Option A: Universal Forwarder → dogwatch
+# Configure outputs.conf to send to dogwatch syslog endpoint
+
+# Option B: Replace with FluentBit/Vector
+# FluentBit config:
+[INPUT]
+    Name              tail
+    Path              /var/log/*.log
+
+[OUTPUT]
+    Name              opentelemetry
+    Match             *
+    Host              dogwatch
+    Port              4318
+    Logs_uri          /v1/logs
+
+# Option C: Use OTLP directly from apps
+# Most logging libraries support OTLP export
+```
+
+### From Elastic/ELK
+
+```bash
+# Step 1: Export Kibana dashboards
+
+dogwatch import elastic \
+  --kibana-url $KIBANA_URL \
+  --kibana-user $KIBANA_USER \
+  --kibana-password $KIBANA_PASSWORD \
+  --export dashboards,alerts,index-patterns \
+  --output elastic-export/
+```
+
+```yaml
+# Step 2: Logstash → dogwatch
+
+# Replace Logstash output with OTLP
+
+# Before (Logstash):
+output {
+  elasticsearch {
+    hosts => ["elasticsearch:9200"]
+  }
+}
+
+# After (Logstash → dogwatch):
+output {
+  http {
+    url => "http://dogwatch:4318/v1/logs"
+    http_method => "post"
+    format => "json"
+  }
+}
+
+# Or replace Logstash entirely with Vector:
+[sources.logs]
+type = "file"
+include = ["/var/log/*.log"]
+
+[sinks.dogwatch]
+type = "http"
+inputs = ["logs"]
+uri = "http://dogwatch:4318/v1/logs"
+encoding.codec = "json"
+```
+
+```yaml
+# Step 3: Elasticsearch query → dogwatch
+
+# Elasticsearch query:
+{
+  "query": {
+    "bool": {
+      "must": [
+        {"match": {"message": "error"}},
+        {"range": {"@timestamp": {"gte": "now-1h"}}}
+      ],
+      "filter": [
+        {"term": {"service": "api"}}
+      ]
+    }
+  }
+}
+
+# dogwatch full-text search:
+# In UI: service:api error (last 1 hour)
+# API: GET /api/v1/logs?q=error&service=api&since=1h
+```
+
+### Migration Checklist
+
+```markdown
+## Migration Checklist
+
+### Pre-Migration
+- [ ] Inventory current monitoring setup
+- [ ] Document all dashboards and their owners
+- [ ] Document all alerts and escalation paths
+- [ ] Identify critical vs nice-to-have monitoring
+- [ ] Set migration timeline (recommend 4-6 weeks)
+
+### Week 1: Parallel Deployment
+- [ ] Deploy dogwatch alongside existing solution
+- [ ] Configure data forwarding (remote_write, OTLP)
+- [ ] Verify data is flowing to both systems
+- [ ] Compare key metrics between systems
+
+### Week 2: Dashboard Migration
+- [ ] Export dashboards from old system
+- [ ] Import/recreate in dogwatch
+- [ ] Validate data matches
+- [ ] Get stakeholder sign-off on critical dashboards
+
+### Week 3: Alert Migration
+- [ ] Export alert rules from old system
+- [ ] Import/recreate in dogwatch
+- [ ] Run alerts in parallel (notify to separate channel)
+- [ ] Compare alert firing between systems
+
+### Week 4: Cutover Preparation
+- [ ] Document rollback procedure
+- [ ] Train team on dogwatch UI
+- [ ] Update runbooks with new query syntax
+- [ ] Schedule cutover window
+
+### Week 5: Cutover
+- [ ] Redirect primary alerting to dogwatch
+- [ ] Update on-call tools to use dogwatch
+- [ ] Keep old system running (read-only)
+- [ ] Monitor for gaps
+
+### Week 6: Cleanup
+- [ ] Decommission old system (after 1 week stable)
+- [ ] Remove old agents/forwarders
+- [ ] Update documentation
+- [ ] Celebrate cost savings!
+
+### Post-Migration
+- [ ] Gather team feedback
+- [ ] Document lessons learned
+- [ ] Create internal dogwatch training
+- [ ] Set up dogwatch update process
+```
+
+---
+
+## Roadmap
 
 ### Phase 1: Foundation (Now)
 
@@ -15517,4 +21378,1023 @@ Invest in:
 3. Error messages with solutions
 4. Status page
 5. Community forums where users help each other
+```
+
+---
+
+## Plugin & Extension Architecture
+
+### Design Philosophy
+
+```
+Extensibility without complexity.
+
+Principles:
+1. Core features built-in (no plugins required for 80% of use cases)
+2. Plugins for edge cases and custom needs
+3. Simple plugin API (not a framework)
+4. Sandboxed execution (can't crash dogwatch)
+5. No plugin marketplace (yet) - bring your own
+```
+
+### Plugin Types
+
+```yaml
+# 1. Protocol Parsers
+# Add support for custom/proprietary protocols
+
+protocol_parsers:
+  - name: custom-rpc
+    type: wasm
+    path: /etc/dogwatch/plugins/custom-rpc.wasm
+    config:
+      port: 8080
+      pattern: "CRPC"
+
+# 2. Data Processors
+# Transform, filter, or enrich data in flight
+
+processors:
+  - name: pii-redactor
+    type: wasm
+    path: /etc/dogwatch/plugins/pii-redactor.wasm
+    config:
+      patterns:
+        - ssn
+        - credit_card
+        - email
+
+# 3. Alert Notifiers
+# Send alerts to custom destinations
+
+notifiers:
+  - name: custom-pagerduty
+    type: webhook
+    url: https://internal.example.com/alerts
+    headers:
+      Authorization: "Bearer ${ALERT_TOKEN}"
+
+# 4. Data Exporters
+# Export data to external systems
+
+exporters:
+  - name: s3-archive
+    type: wasm
+    path: /etc/dogwatch/plugins/s3-export.wasm
+    config:
+      bucket: my-archive
+      prefix: dogwatch/
+      format: parquet
+```
+
+### WASM Plugin Interface
+
+```go
+// Plugin SDK (Go)
+// Compile with: GOOS=wasip1 GOARCH=wasm go build -o plugin.wasm
+
+package main
+
+import (
+    "github.com/dogwatch/plugin-sdk/protocol"
+)
+
+// Protocol parser plugin
+func ParsePacket(data []byte) (*protocol.ParsedData, error) {
+    // Parse your custom protocol
+    if !isMyProtocol(data) {
+        return nil, protocol.ErrNotMyProtocol
+    }
+
+    return &protocol.ParsedData{
+        Operation:  extractOperation(data),
+        Latency:    extractLatency(data),
+        Attributes: extractAttributes(data),
+    }, nil
+}
+
+// Data processor plugin
+func ProcessSpan(span *protocol.Span) (*protocol.Span, error) {
+    // Modify span (e.g., redact PII)
+    for key, value := range span.Attributes {
+        if containsPII(value) {
+            span.Attributes[key] = "[REDACTED]"
+        }
+    }
+    return span, nil
+}
+
+// Exporter plugin
+func Export(batch *protocol.Batch) error {
+    // Send to external system
+    return uploadToS3(batch)
+}
+```
+
+```rust
+// Plugin SDK (Rust) - for performance-critical plugins
+// Compile with: cargo build --target wasm32-wasip1 --release
+
+use dogwatch_plugin_sdk::*;
+
+#[no_mangle]
+pub extern "C" fn parse_packet(data: *const u8, len: usize) -> *mut ParsedData {
+    let bytes = unsafe { std::slice::from_raw_parts(data, len) };
+
+    // Parse custom protocol
+    if !is_my_protocol(bytes) {
+        return std::ptr::null_mut();
+    }
+
+    Box::into_raw(Box::new(ParsedData {
+        operation: extract_operation(bytes),
+        latency_ns: extract_latency(bytes),
+        // ...
+    }))
+}
+```
+
+### Plugin Lifecycle
+
+```
+Plugin loading:
+1. dogwatch starts
+2. Reads plugin config from config.yaml
+3. Validates WASM modules (size limits, required exports)
+4. Loads plugins into sandboxed WASM runtime
+5. Calls plugin init() function
+6. Registers plugin with appropriate subsystem
+
+Plugin execution:
+- Protocol parsers: Called for each packet on configured ports
+- Processors: Called for each span/log/metric before storage
+- Exporters: Called on batch flush (configurable interval)
+
+Plugin resource limits:
+- Memory: 64MB per plugin
+- CPU: 100ms timeout per call
+- I/O: Restricted to configured endpoints only
+```
+
+### Built-in Extension Points (No WASM needed)
+
+```yaml
+# Simple extensions without WASM
+
+# 1. Custom metrics from logs
+log_metrics:
+  - name: payment_amount
+    pattern: 'payment_processed amount=(\d+\.?\d*)'
+    type: histogram
+    buckets: [10, 50, 100, 500, 1000, 5000]
+
+# 2. Custom span attributes from headers
+span_enrichment:
+  - header: X-Request-ID
+    attribute: request.id
+  - header: X-Customer-Tier
+    attribute: customer.tier
+
+# 3. Custom alert conditions (JavaScript expressions)
+alert_conditions:
+  - name: business_hours_only
+    expression: |
+      const hour = new Date().getUTCHours();
+      return hour >= 9 && hour <= 17;
+
+# 4. Custom dashboards (JSON)
+dashboards:
+  - path: /etc/dogwatch/dashboards/*.json
+```
+
+---
+
+## Developer Experience
+
+### Local Development Setup
+
+```bash
+# Clone the repo
+git clone https://github.com/dogwatch/dogwatch
+cd dogwatch
+
+# Install dependencies
+# Go 1.21+
+go version
+
+# clang/llvm for eBPF compilation
+sudo apt-get install clang llvm libbpf-dev
+
+# Generate eBPF code
+go generate ./internal/probe/...
+
+# Build
+go build -o dogwatch ./cmd/dogwatch
+
+# Run locally
+./dogwatch --config dev-config.yaml
+
+# Run with hot reload (development)
+go install github.com/cosmtrek/air@latest
+air
+```
+
+### Development Config
+
+```yaml
+# dev-config.yaml
+data_dir: ./data
+listen_addr: localhost:9999
+log_level: debug
+log_format: text  # easier to read in terminal
+
+# Disable eBPF for local dev (unless testing eBPF)
+ebpf:
+  enabled: false
+
+# Use demo data generator
+demo:
+  enabled: true
+  services: ["api", "web", "db", "cache"]
+  traces_per_second: 10
+  logs_per_second: 100
+  error_rate: 0.05
+
+# Shorter retention for dev
+retention:
+  metrics: 1d
+  traces: 1d
+  logs: 1d
+
+# Disable auth for local dev
+auth:
+  enabled: false
+```
+
+### Testing eBPF Locally
+
+```bash
+# eBPF requires root/CAP_BPF
+# Option 1: Run as root (not recommended)
+sudo ./dogwatch
+
+# Option 2: Add capabilities (recommended)
+sudo setcap cap_sys_admin,cap_bpf,cap_perfmon+ep ./dogwatch
+./dogwatch
+
+# Option 3: Use Lima/Colima VM (macOS)
+limactl start dogwatch-dev
+limactl shell dogwatch-dev
+./dogwatch
+
+# Option 4: Use Vagrant
+vagrant up
+vagrant ssh
+cd /vagrant && ./dogwatch
+```
+
+### VS Code Setup
+
+```json
+// .vscode/settings.json
+{
+    "go.lintTool": "golangci-lint",
+    "go.lintFlags": ["--fast"],
+    "go.testFlags": ["-v", "-race"],
+    "go.coverOnSave": true,
+    "go.coverageDecorator": {
+        "type": "gutter"
+    },
+    "editor.formatOnSave": true,
+    "[go]": {
+        "editor.defaultFormatter": "golang.go"
+    }
+}
+
+// .vscode/launch.json
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug dogwatch",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/cmd/dogwatch",
+            "args": ["--config", "dev-config.yaml"],
+            "env": {
+                "DOGWATCH_LOG_LEVEL": "debug"
+            }
+        },
+        {
+            "name": "Debug Current Test",
+            "type": "go",
+            "request": "launch",
+            "mode": "test",
+            "program": "${fileDirname}",
+            "args": ["-test.v", "-test.run", "${selectedText}"]
+        }
+    ]
+}
+```
+
+### Debugging Tips
+
+```bash
+# 1. Enable verbose logging
+DOGWATCH_LOG_LEVEL=trace ./dogwatch
+
+# 2. Profile CPU usage
+go tool pprof http://localhost:9999/debug/pprof/profile?seconds=30
+
+# 3. Profile memory
+go tool pprof http://localhost:9999/debug/pprof/heap
+
+# 4. View goroutines
+curl http://localhost:9999/debug/pprof/goroutine?debug=1
+
+# 5. Trace requests
+curl http://localhost:9999/debug/pprof/trace?seconds=5 > trace.out
+go tool trace trace.out
+
+# 6. Check eBPF programs
+sudo bpftool prog list
+sudo bpftool map list
+
+# 7. Debug eBPF output
+sudo cat /sys/kernel/debug/tracing/trace_pipe
+
+# 8. SQLite debugging
+sqlite3 ./data/dogwatch.db
+.schema
+.tables
+EXPLAIN QUERY PLAN SELECT ...;
+```
+
+### Common Development Tasks
+
+```bash
+# Add a new API endpoint
+# 1. Add handler in internal/web/handlers.go
+# 2. Add route in cmd/dogwatch/main.go
+# 3. Add tests in internal/web/handlers_test.go
+
+# Add a new metric type
+# 1. Define in internal/metrics/types.go
+# 2. Add storage in internal/storage/metrics.go
+# 3. Add query support in internal/query/metrics.go
+
+# Add a new eBPF probe
+# 1. Write BPF C code in internal/probe/bpf/
+# 2. Generate Go bindings: go generate ./internal/probe/...
+# 3. Add loader in internal/probe/loader.go
+# 4. Add tests (requires root/capabilities)
+
+# Run specific tests
+go test ./internal/storage/... -v
+go test ./internal/web/... -run TestAPIEndpoint
+
+# Run tests with race detector
+go test -race ./...
+
+# Run benchmarks
+go test -bench=. -benchmem ./internal/storage/...
+
+# Update dependencies
+go get -u ./...
+go mod tidy
+
+# Generate mocks
+go generate ./...
+```
+
+---
+
+## Backup & Restore Deep Dive
+
+### Backup Architecture
+
+```
+dogwatch backup creates a consistent snapshot:
+
+┌─────────────────────────────────────────────────────────────┐
+│                     dogwatch process                         │
+├─────────────────────────────────────────────────────────────┤
+│ 1. Pause writes (queue incoming data)                       │
+│ 2. Checkpoint WAL (flush to main DB)                        │
+│ 3. Copy SQLite file (consistent snapshot)                   │
+│ 4. Export config (yaml)                                     │
+│ 5. Resume writes (drain queue)                              │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                     Backup archive                           │
+├─────────────────────────────────────────────────────────────┤
+│ backup-2024-01-07T10-30-00Z.tar.zst                         │
+│ ├── dogwatch.db        (SQLite database)                    │
+│ ├── config.yaml        (configuration)                      │
+│ ├── manifest.json      (metadata)                           │
+│ └── checksums.sha256   (integrity verification)             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Backup Commands
+
+```bash
+# Full backup (recommended)
+dogwatch backup create \
+  --output /backups/dogwatch-$(date +%Y%m%d).tar.zst \
+  --compress zstd
+
+# Incremental backup (WAL files only)
+dogwatch backup create \
+  --incremental \
+  --base /backups/dogwatch-20240101.tar.zst \
+  --output /backups/dogwatch-20240107-incr.tar.zst
+
+# Backup to S3
+dogwatch backup create \
+  --output s3://my-bucket/backups/dogwatch-$(date +%Y%m%d).tar.zst \
+  --s3-region us-east-1
+
+# Backup with encryption
+dogwatch backup create \
+  --output /backups/dogwatch.tar.zst.enc \
+  --encrypt \
+  --encryption-key-file /etc/dogwatch/backup.key
+
+# List backups
+dogwatch backup list --path /backups/
+dogwatch backup list --path s3://my-bucket/backups/
+
+# Verify backup integrity
+dogwatch backup verify /backups/dogwatch-20240107.tar.zst
+```
+
+### Restore Commands
+
+```bash
+# Restore from backup
+dogwatch restore \
+  --backup /backups/dogwatch-20240107.tar.zst \
+  --data-dir /var/lib/dogwatch
+
+# Restore with data filtering (restore only last 7 days)
+dogwatch restore \
+  --backup /backups/dogwatch-20240107.tar.zst \
+  --data-dir /var/lib/dogwatch \
+  --since 7d
+
+# Restore specific signals only
+dogwatch restore \
+  --backup /backups/dogwatch-20240107.tar.zst \
+  --data-dir /var/lib/dogwatch \
+  --signals metrics,traces  # skip logs
+
+# Restore config only (no data)
+dogwatch restore \
+  --backup /backups/dogwatch-20240107.tar.zst \
+  --config-only \
+  --output /etc/dogwatch/config.yaml
+
+# Dry run (show what would be restored)
+dogwatch restore \
+  --backup /backups/dogwatch-20240107.tar.zst \
+  --dry-run
+
+# Restore from encrypted backup
+dogwatch restore \
+  --backup /backups/dogwatch.tar.zst.enc \
+  --decrypt \
+  --encryption-key-file /etc/dogwatch/backup.key
+```
+
+### Automated Backup Schedule
+
+```yaml
+# Backup configuration in config.yaml
+backup:
+  enabled: true
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  retention: 30d         # Keep 30 days of backups
+
+  destination:
+    type: s3  # local, s3, gcs, azure
+    bucket: dogwatch-backups
+    prefix: production/
+    region: us-east-1
+
+  encryption:
+    enabled: true
+    key_source: aws-kms  # file, aws-kms, gcp-kms, vault
+    key_id: alias/dogwatch-backup
+
+  notifications:
+    on_success: false
+    on_failure: true
+    webhook: https://slack.com/webhook/xxx
+```
+
+```bash
+# Cron-based backup (alternative to built-in scheduler)
+# /etc/cron.d/dogwatch-backup
+0 2 * * * root /usr/local/bin/dogwatch backup create \
+  --output /backups/dogwatch-$(date +\%Y\%m\%d).tar.zst \
+  >> /var/log/dogwatch-backup.log 2>&1
+
+# Cleanup old backups
+0 3 * * * root find /backups -name "dogwatch-*.tar.zst" -mtime +30 -delete
+```
+
+### Point-in-Time Recovery
+
+```bash
+# dogwatch supports point-in-time recovery using WAL
+
+# Enable continuous WAL archiving
+# config.yaml
+backup:
+  wal_archiving:
+    enabled: true
+    destination: s3://my-bucket/wal/
+    interval: 1m  # Archive WAL every minute
+
+# Restore to specific point in time
+dogwatch restore \
+  --backup /backups/dogwatch-20240101.tar.zst \
+  --wal-archive s3://my-bucket/wal/ \
+  --target-time "2024-01-07T10:30:00Z"
+
+# This restores the base backup, then replays WAL
+# to reach the exact specified time
+```
+
+### Backup Verification
+
+```bash
+# Automated backup verification
+dogwatch backup verify /backups/dogwatch-20240107.tar.zst
+
+# Output:
+# ✓ Archive integrity: OK (checksum match)
+# ✓ Database integrity: OK (PRAGMA integrity_check passed)
+# ✓ Schema version: 15 (compatible with dogwatch 1.2.3)
+# ✓ Data counts:
+#   - Metrics: 1,234,567 samples
+#   - Traces: 89,012 traces
+#   - Logs: 456,789 entries
+#   - Alerts: 123 rules, 45 active alerts
+# ✓ Config: Valid YAML, 23 settings
+
+# Test restore (to temporary location)
+dogwatch backup verify /backups/dogwatch-20240107.tar.zst \
+  --test-restore \
+  --temp-dir /tmp/dogwatch-verify
+
+# This actually restores and starts dogwatch briefly
+# to verify everything works
+```
+
+### Disaster Recovery Runbook
+
+```markdown
+## Disaster Recovery Procedure
+
+### Scenario: Complete Data Loss
+
+**RTO (Recovery Time Objective): 30 minutes**
+**RPO (Recovery Point Objective): 1 hour** (with WAL archiving)
+
+#### Step 1: Assess Damage (5 min)
+```bash
+# Check if dogwatch is running
+systemctl status dogwatch
+
+# Check data directory
+ls -la /var/lib/dogwatch/
+
+# Check if backups are accessible
+dogwatch backup list --path s3://my-bucket/backups/
+```
+
+#### Step 2: Provision New Instance (10 min)
+```bash
+# If hardware failure, provision new server
+# Install dogwatch
+curl -sSL https://get.dogwatch.dev | sh
+```
+
+#### Step 3: Restore from Backup (10 min)
+```bash
+# Find latest backup
+LATEST=$(dogwatch backup list --path s3://my-bucket/backups/ --latest)
+
+# Restore
+dogwatch restore \
+  --backup $LATEST \
+  --data-dir /var/lib/dogwatch
+
+# If using WAL archiving, restore to latest point
+dogwatch restore \
+  --backup $LATEST \
+  --wal-archive s3://my-bucket/wal/ \
+  --target-time latest
+```
+
+#### Step 4: Verify and Start (5 min)
+```bash
+# Verify data
+dogwatch verify --data-dir /var/lib/dogwatch
+
+# Start service
+systemctl start dogwatch
+
+# Verify health
+curl http://localhost:9999/healthz
+
+# Check recent data
+curl http://localhost:9999/api/v1/status
+```
+
+#### Step 5: Post-Recovery (ongoing)
+- [ ] Verify alerting is working (trigger test alert)
+- [ ] Check dashboards load correctly
+- [ ] Verify data ingestion is flowing
+- [ ] Update DNS/load balancer if IP changed
+- [ ] Document incident and update runbook
+```
+
+---
+
+## Integration Patterns
+
+### Sending Data to dogwatch
+
+```yaml
+# Pattern 1: Direct OTLP from applications
+# Best for: New applications, greenfield
+
+# Application sends directly to dogwatch
+OTEL_EXPORTER_OTLP_ENDPOINT=http://dogwatch:4317
+OTEL_SERVICE_NAME=my-service
+
+# Pros: Simple, direct
+# Cons: Apps need dogwatch endpoint configured
+```
+
+```yaml
+# Pattern 2: OpenTelemetry Collector as proxy
+# Best for: Large deployments, multi-cluster
+
+# otel-collector-config.yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 1000
+
+exporters:
+  otlp:
+    endpoint: dogwatch:4317
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp]
+
+# Pros: Central control, buffering, multi-destination
+# Cons: Extra component to manage
+```
+
+```yaml
+# Pattern 3: Sidecar collector (Kubernetes)
+# Best for: Per-pod collection, Kubernetes-native
+
+# Each pod has otel-collector sidecar
+# Collector aggregates and sends to dogwatch
+
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: app
+    env:
+    - name: OTEL_EXPORTER_OTLP_ENDPOINT
+      value: "http://localhost:4317"
+  - name: otel-collector
+    image: otel/opentelemetry-collector
+    # Config sends to dogwatch
+
+# Pros: Isolated, per-pod buffering
+# Cons: More resource usage, per-pod
+```
+
+### Receiving Data from Other Systems
+
+```yaml
+# Prometheus remote_write (metrics)
+# Existing Prometheus → dogwatch
+
+# prometheus.yml
+remote_write:
+  - url: http://dogwatch:9090/api/v1/write
+```
+
+```yaml
+# FluentBit (logs)
+# Existing log pipeline → dogwatch
+
+# fluent-bit.conf
+[OUTPUT]
+    Name              opentelemetry
+    Match             *
+    Host              dogwatch
+    Port              4318
+    Logs_uri          /v1/logs
+    Tls               Off
+```
+
+```yaml
+# Vector (logs + metrics)
+# Modern log/metric pipeline → dogwatch
+
+# vector.toml
+[sinks.dogwatch_logs]
+type = "http"
+inputs = ["logs"]
+uri = "http://dogwatch:4318/v1/logs"
+encoding.codec = "json"
+
+[sinks.dogwatch_metrics]
+type = "prometheus_remote_write"
+inputs = ["metrics"]
+endpoint = "http://dogwatch:9090/api/v1/write"
+```
+
+```yaml
+# Telegraf (metrics)
+# InfluxDB-style collection → dogwatch
+
+# telegraf.conf
+[[outputs.opentelemetry]]
+  service_address = "dogwatch:4317"
+```
+
+### Forwarding Data from dogwatch
+
+```yaml
+# Forward to long-term storage
+# dogwatch → S3/GCS for archival
+
+exporters:
+  - name: s3-archive
+    type: s3
+    bucket: observability-archive
+    prefix: dogwatch/
+    format: parquet
+    partition_by: [date, signal]
+    batch_size: 10000
+    flush_interval: 5m
+
+  - name: bigquery
+    type: bigquery
+    project: my-project
+    dataset: observability
+    credentials_file: /etc/dogwatch/gcp-creds.json
+```
+
+```yaml
+# Forward to analytics
+# dogwatch → ClickHouse for heavy queries
+
+exporters:
+  - name: clickhouse
+    type: clickhouse
+    endpoint: clickhouse:9000
+    database: observability
+    batch_size: 10000
+    signals: [traces, logs]  # metrics stay in dogwatch
+```
+
+```yaml
+# Forward to SIEM
+# dogwatch → Splunk/Elastic for security
+
+exporters:
+  - name: splunk
+    type: splunk_hec
+    endpoint: https://splunk:8088
+    token: ${SPLUNK_HEC_TOKEN}
+    index: security
+    filters:
+      - severity: [ERROR, FATAL]
+      - attributes.security: true
+```
+
+### Multi-Cluster Architecture
+
+```
+Cluster 1 (us-east-1)          Cluster 2 (eu-west-1)
+┌─────────────────────┐        ┌─────────────────────┐
+│ dogwatch (local)    │        │ dogwatch (local)    │
+│ - eBPF collection   │        │ - eBPF collection   │
+│ - Local storage     │        │ - Local storage     │
+│ - Local UI          │        │ - Local UI          │
+└──────────┬──────────┘        └──────────┬──────────┘
+           │                              │
+           │    OTLP (sampled/aggregated) │
+           └──────────────┬───────────────┘
+                          │
+                          ▼
+              ┌───────────────────────┐
+              │ dogwatch (central)    │
+              │ - Aggregated view     │
+              │ - Cross-cluster       │
+              │ - Long retention      │
+              └───────────────────────┘
+
+Configuration:
+
+# Cluster 1 config.yaml
+federation:
+  enabled: true
+  mode: edge  # edge cluster sends to central
+  central_endpoint: https://dogwatch-central.example.com:4317
+  forward:
+    sample_rate: 0.1  # Send 10% of traces
+    always_forward:
+      - errors: true
+      - slow_threshold: 1s
+    metrics: aggregate  # Send pre-aggregated metrics
+
+# Central config.yaml
+federation:
+  enabled: true
+  mode: central  # receives from edge clusters
+  cluster_labels:
+    - cluster
+    - region
+```
+
+### Hybrid Cloud Pattern
+
+```
+On-Premise (sensitive data)        Cloud (scalable)
+┌─────────────────────────┐       ┌─────────────────────────┐
+│ dogwatch               │        │ dogwatch                │
+│ - Full data retention  │        │ - Full data retention   │
+│ - PII/regulated data   │───────▶│ - Aggregated only       │
+│ - Local dashboards     │ (meta) │ - Cross-env correlation │
+└─────────────────────────┘       └─────────────────────────┘
+
+# On-prem sends metadata only:
+federation:
+  mode: hybrid
+  cloud_endpoint: https://dogwatch.cloud.example.com
+  forward:
+    # Never send actual data, only metadata
+    traces: metadata_only  # service, operation, latency (no attributes)
+    logs: counts_only      # log counts by level/service
+    metrics: aggregate     # pre-aggregated, no raw series
+```
+
+---
+
+## CLI Reference
+
+### Core Commands
+
+```bash
+# Start dogwatch
+dogwatch [--config /path/to/config.yaml]
+dogwatch serve [flags]
+
+# Version and info
+dogwatch version
+dogwatch version --verbose  # includes build info, Go version
+
+# Configuration
+dogwatch config validate [--config config.yaml]
+dogwatch config generate > config.yaml  # Generate default config
+dogwatch config show  # Show effective configuration
+
+# Health checks
+dogwatch health  # Quick health check
+dogwatch status  # Detailed status
+```
+
+### Data Management
+
+```bash
+# Backup and restore
+dogwatch backup create [--output path] [flags]
+dogwatch backup list [--path dir]
+dogwatch backup verify <backup-file>
+dogwatch restore [--backup path] [flags]
+
+# Data maintenance
+dogwatch compact  # Compact SQLite database
+dogwatch vacuum   # Full vacuum (requires 2x disk space temporarily)
+dogwatch prune [--before 30d]  # Delete old data
+
+# Export data
+dogwatch export traces [--since 1h] [--format json|parquet]
+dogwatch export metrics [--query 'http_requests_total'] [--format json|csv]
+dogwatch export logs [--service api] [--format json|ndjson]
+
+# Import data (for migration)
+dogwatch import datadog [flags]
+dogwatch import prometheus-rules [flags]
+dogwatch import grafana [flags]
+```
+
+### Querying
+
+```bash
+# Query metrics (PromQL)
+dogwatch query 'rate(http_requests_total[5m])'
+dogwatch query 'sum by (service) (rate(http_errors_total[5m]))'
+
+# Query logs
+dogwatch logs [--service api] [--since 1h] [--level error]
+dogwatch logs --query 'payment failed'
+
+# Query traces
+dogwatch traces [--service api] [--since 1h] [--min-duration 1s]
+dogwatch trace <trace-id>  # Show specific trace
+```
+
+### User Management
+
+```bash
+# User operations
+dogwatch user create --email admin@example.com --role admin
+dogwatch user list
+dogwatch user delete <user-id>
+dogwatch user reset-password <user-id>
+
+# API keys
+dogwatch apikey create --name "CI/CD" --role editor
+dogwatch apikey list
+dogwatch apikey revoke <key-id>
+```
+
+### Debug and Troubleshooting
+
+```bash
+# eBPF debugging
+dogwatch debug ebpf status  # Show loaded probes
+dogwatch debug ebpf reload  # Reload eBPF programs
+dogwatch debug ebpf trace   # Show eBPF debug output
+
+# Database debugging
+dogwatch debug db stats     # Show SQLite statistics
+dogwatch debug db analyze   # Analyze query performance
+dogwatch debug db integrity # Check database integrity
+
+# Network debugging
+dogwatch debug net listen   # Show what ports we're listening on
+dogwatch debug net conns    # Show active connections
+
+# General debugging
+dogwatch debug goroutines   # Show goroutine count
+dogwatch debug memory       # Show memory stats
+dogwatch debug pprof cpu    # Capture CPU profile
+```
+
+### Flags Reference
+
+```bash
+# Global flags (apply to all commands)
+--config string      Config file path (default: /etc/dogwatch/config.yaml)
+--data-dir string    Data directory (default: /var/lib/dogwatch)
+--log-level string   Log level: trace, debug, info, warn, error
+--log-format string  Log format: json, text
+
+# Server flags
+--listen string      Listen address (default: 0.0.0.0:9999)
+--tls-cert string    TLS certificate file
+--tls-key string     TLS key file
+
+# Backup flags
+--output string      Output path (file or s3://...)
+--compress string    Compression: none, gzip, zstd (default: zstd)
+--encrypt            Encrypt backup
+--encryption-key-file string  Encryption key file
+
+# Query flags
+--format string      Output format: table, json, csv
+--since duration     Time range start (e.g., 1h, 7d)
+--until duration     Time range end
+--limit int          Max results (default: 100)
 ```

@@ -1,284 +1,246 @@
 # TODO - Prioritized Roadmap
 
-Based on [VISION.md](VISION.md) analysis. Items ordered by priority within each phase.
+Brief checklist with links to [VISION.md](VISION.md) for full context.
 
 ---
 
-## Phase 1: Make It Work (Weeks 1-4)
+## Current State
 
-### P0 - Core Functionality
-
-- [ ] **MySQL eBPF Protocol Parsing**
-  - Zero-config tracing for MySQL queries
-  - [VISION.md: Zero-Config Distributed Tracing](VISION.md#1-zero-config-distributed-tracing)
-
-- [ ] **PostgreSQL eBPF Protocol Parsing**
-  - Zero-config tracing for PostgreSQL queries
-  - [VISION.md: Zero-Config Distributed Tracing](VISION.md#1-zero-config-distributed-tracing)
-
-- [ ] **Redis eBPF Protocol Parsing**
-  - Zero-config tracing for Redis commands
-  - [VISION.md: Zero-Config Distributed Tracing](VISION.md#1-zero-config-distributed-tracing)
-
-- [ ] **OTLP Receiver (gRPC + HTTP)**
-  - Accept OpenTelemetry data on ports 4317/4318
-  - Table stakes - industry standard
-  - [VISION.md: Ingest Protocol Support](VISION.md#ingest-protocol-support)
-
-- [ ] **Backup & Restore**
-  - `dogwatch backup` / `dogwatch restore` commands
-  - Required for production use
-  - [VISION.md: Backup & Disaster Recovery](VISION.md#2-backup--disaster-recovery)
-
-- [ ] **Basic Sampling**
-  - Head sampling with priority rules (keep errors, slow requests)
-  - [VISION.md: Sampling & Data Reduction](VISION.md#3-sampling--data-reduction)
+| Category | Status |
+|----------|--------|
+| **Codebase** | ~45,500 lines Go, 29 packages |
+| **eBPF Probes** | TCP ✅, HTTP/1.1 ✅, CPU profiling ✅, SSL ❌ (broken) |
+| **Storage** | SQLite for all stores (metrics, traces, logs, alerts, etc.) |
+| **Auth** | RBAC ✅, API keys ✅, OAuth2 ✅, SAML ✅ |
+| **Alerting** | Rules ✅, evaluation ✅, routing ✅, 7 notification channels ✅ |
+| **Features** | Dashboards ✅, SLOs ✅, Synthetics ✅, Incidents ✅, On-call ✅, Catalog ✅, Anomaly ✅, K8s ✅, Federation ✅ |
+| **NOT Built** | All 7 killer features, DB protocol parsing, Cost Intelligence, BubbleUp, backup/restore |
 
 ---
 
-## Phase 2: Make People Pay (Weeks 5-8)
+## Phase 1: Core Differentiators (Weeks 1-6)
 
-### P0 - Differentiation
+### P0 - Zero-Config Database Tracing
 
-- [ ] **Cost Intelligence Dashboard**
-  - Show "this would cost $X on Datadog/New Relic/Splunk"
-  - Real-time cost tracking and projections
-  - Our #2 killer feature - no competitor does this
-  - [VISION.md: Cost Intelligence](VISION.md#2-cost-intelligence)
+| Task | Complexity | VISION.md Reference |
+|------|------------|---------------------|
+| MySQL eBPF protocol parsing | 2-3 weeks | [Zero-Config Tracing](VISION.md#1-zero-config-distributed-tracing), [MySQL Wire Format](VISION.md#mysql-protocol-parsing) |
+| PostgreSQL eBPF protocol parsing | 2-3 weeks | [Zero-Config Tracing](VISION.md#1-zero-config-distributed-tracing), [PostgreSQL Wire Format](VISION.md#postgresql-protocol-parsing) |
+| Redis eBPF protocol parsing | 1-2 weeks | [Zero-Config Tracing](VISION.md#1-zero-config-distributed-tracing), [Redis Wire Format](VISION.md#redis-protocol-parsing) |
+| Fix SSL/HTTPS probe | 1-2 weeks | [TLS Interception](VISION.md#2-tls-interception) |
 
-- [ ] **LogCompare**
-  - Compare logs between two time periods
-  - "What changed between working and broken?"
-  - Stolen from Sumo Logic
-  - [VISION.md: LogCompare](VISION.md#1-logcompare--steal-this)
+### P0 - Production Essentials
 
-- [ ] **Pattern Detection (LogReduce)**
-  - Auto-cluster 1M logs into 5 patterns
-  - Surface NEW and INCREASING patterns
-  - Stolen from Splunk
-  - [VISION.md: LogReduce / Pattern Detection](VISION.md#3-logreduce--pattern-detection--steal-this)
-
-### P1 - Pain Points
-
-- [ ] **Alert Grouping & Context**
-  - 50 alerts → 1 grouped alert with context
-  - Include related alerts, recent deploys, suggested cause
-  - [VISION.md: Alert Fatigue](VISION.md#pain-point-1-alert-fatigue--critical)
-
-- [ ] **Incident Auto-Enrichment**
-  - Auto-include related traces, logs, deploys, similar incidents
-  - Build timeline automatically
-  - [VISION.md: Slow Incident Response](VISION.md#pain-point-5-slow-incident-response--high)
+| Task | Complexity | VISION.md Reference |
+|------|------------|---------------------|
+| OTLP receiver (gRPC + HTTP) | 1 week | [Ingest Protocol Support](VISION.md#ingest-protocol-support) |
+| Backup & restore CLI | 1 week | [Backup & Disaster Recovery](VISION.md#2-backup--disaster-recovery) |
+| Health check endpoints (`/healthz`, `/readyz`) | 2 days | [Production Essentials](VISION.md#production-essentials) |
+| Prometheus remote write receiver | 3 days | [Prometheus Compatibility](VISION.md#prometheus-compatibility) |
 
 ---
 
-## Phase 3: Make People Stay (Weeks 9-12)
+## Phase 2: Make People Pay (Weeks 7-12)
 
-### P0 - User Experience
+### P0 - Cost Intelligence
 
-- [ ] **Lookout Homepage**
-  - Open dogwatch → see what's abnormal immediately
-  - No query required, prioritized by impact
-  - Stolen from New Relic
-  - [VISION.md: Lookout (Automatic Anomaly Overview)](VISION.md#2-lookout-automatic-anomaly-overview--steal-this)
+| Task | Complexity | VISION.md Reference |
+|------|------------|---------------------|
+| Datadog cost calculator | 1 week | [Cost Intelligence](VISION.md#2-cost-intelligence) |
+| New Relic cost calculator | 3 days | [Cost Intelligence](VISION.md#2-cost-intelligence) |
+| Cost trending dashboard | 1 week | [Cost Intelligence](VISION.md#2-cost-intelligence) |
+| Cost recommendations engine | 1 week | [Cost Intelligence](VISION.md#2-cost-intelligence) |
 
-- [ ] **Entity Synthesis**
-  - Auto-discover services, databases, queues, external APIs
-  - Show relationships (calls, runs-on, depends-on)
-  - Golden signals per entity
-  - Stolen from New Relic
-  - [VISION.md: Entity Synthesis](VISION.md#1-entity-synthesis--steal-this)
+### P0 - Control Plane
 
-- [ ] **Query Builder UX**
-  - Visual query construction with dropdowns
-  - Field autocomplete from actual values
-  - Shows generated DQL as you build
-  - Stolen from Honeycomb
-  - [VISION.md: Query Builder UX](VISION.md#2-query-builder-ux--steal-this)
+| Task | Complexity | VISION.md Reference |
+|------|------------|---------------------|
+| Usage analytics (what's queried vs wasted) | 2 weeks | [Control Plane](VISION.md#3-control-plane) |
+| Cardinality explorer | 1 week | [Control Plane](VISION.md#3-control-plane), [Pain Point: Cardinality](VISION.md#pain-point-3-cardinality-explosions--high) |
+| Data shaping rules (drop/aggregate at ingest) | 2 weeks | [Control Plane](VISION.md#3-control-plane) |
+| Team quotas & chargeback | 1 week | [Control Plane](VISION.md#3-control-plane) |
 
-### P1 - Developer Experience
+### P1 - Log Analysis
 
-- [ ] **"My Services" View**
-  - Developer-centric: show services I own
-  - My recent changes + their impact
-  - [VISION.md: Developer Experience Gap](VISION.md#pain-point-6-developer-experience-gap--medium)
-
-- [ ] **Dependency Tracking**
-  - Show service dependencies from traces
-  - Root cause through dependency graph
-  - Alert on unexpected new dependencies
-  - [VISION.md: Microservices Dependency Hell](VISION.md#pain-point-13-microservices-dependency-hell--high)
+| Task | Complexity | VISION.md Reference |
+|------|------------|---------------------|
+| LogCompare (time period comparison) | 2 weeks | [LogCompare](VISION.md#1-logcompare--steal-this) |
+| Pattern detection / LogReduce | 3 weeks | [LogReduce](VISION.md#3-logreduce--pattern-detection--steal-this) |
 
 ---
 
-## Phase 4: Production Ready (Weeks 13-16)
+## Phase 3: Root Cause & Correlation (Weeks 13-18)
 
-### P1 - Enterprise Requirements
+### P0 - Automatic Root Cause
 
-- [ ] **DQL Query Language**
-  - Pipe-based query language like Splunk SPL
-  - `logs | where service == "api" | stats count() by endpoint`
-  - Cross-signal joins (logs + traces + metrics)
-  - [VISION.md: SPL (Search Processing Language)](VISION.md#1-spl-search-processing-language--steal-this)
+| Task | Complexity | VISION.md Reference |
+|------|------------|---------------------|
+| BubbleUp (statistical anomaly explanation) | 3 weeks | [BubbleUp](VISION.md#4-bubbleup-automatic-root-cause-analysis) |
+| Change correlation engine | 2 weeks | [Change Correlation](VISION.md#5-change-correlation) |
+| Alert auto-enrichment (deploys, related alerts) | 1 week | [Pain Point: Slow Incident Response](VISION.md#pain-point-5-slow-incident-response--high) |
 
-- [ ] **Full-Text Search**
-  - BM25 relevance ranking
-  - Natural language queries
-  - "payment timeout" → ranked results
-  - Stolen from Elasticsearch
-  - [VISION.md: Full-Text Search with Relevance](VISION.md#1-full-text-search-with-relevance--steal-this)
+### P1 - Dependencies
 
-- [ ] **Cardinality Management**
-  - Analysis dashboard showing top cardinality contributors
-  - Alerts on cardinality spikes
-  - Controls to drop/limit high-cardinality labels
-  - [VISION.md: Cardinality Explosions](VISION.md#pain-point-3-cardinality-explosions--high)
-
-- [ ] **Kubernetes-Native Views**
-  - Cluster overview, namespace view, pod detail
-  - Events, logs, traces per pod
-  - OOMKilled, CrashLoopBackOff detection
-  - [VISION.md: Kubernetes Complexity](VISION.md#pain-point-4-kubernetes-complexity--high)
-
-- [ ] **Audit Logging**
-  - Who logged in, what queries ran, what changed
-  - Required for SOC2/HIPAA
-  - [VISION.md: Compliance & Audit Gaps](VISION.md#pain-point-10-compliance--audit-gaps--high)
+| Task | Complexity | VISION.md Reference |
+|------|------------|---------------------|
+| Dependency graph from traces | 2 weeks | [Pain Point: Microservices Dependencies](VISION.md#pain-point-13-microservices-dependency-hell--high) |
+| Dependency-aware alerting | 1 week | [Pain Point: Microservices Dependencies](VISION.md#pain-point-13-microservices-dependency-hell--high) |
+| Blast radius estimation | 1 week | [Pain Point: Microservices Dependencies](VISION.md#pain-point-13-microservices-dependency-hell--high) |
 
 ---
 
-## Phase 5: Scale & Polish (Weeks 17+)
+## Phase 4: User Experience (Weeks 19-24)
 
-### P1 - Advanced Features
+### P0 - Homepage & Navigation
 
-- [ ] **Histograms (First-Class)**
-  - Store full distributions, query any percentile
-  - Accurate p99.9+ without pre-defined buckets
-  - Stolen from Wavefront
-  - [VISION.md: Histograms as First-Class Citizens](VISION.md#1-histograms-as-first-class-citizens--steal-this)
+| Task | Complexity | VISION.md Reference |
+|------|------------|---------------------|
+| Lookout homepage (anomalies at a glance) | 2 weeks | [Lookout](VISION.md#2-lookout-automatic-anomaly-overview--steal-this) |
+| Entity synthesis (auto-discover services) | 3 weeks | [Entity Synthesis](VISION.md#1-entity-synthesis--steal-this) |
+| Entity relationship mapping | 2 weeks | [Entity Synthesis](VISION.md#1-entity-synthesis--steal-this) |
 
-- [ ] **Delta Counters**
-  - Correct counting for serverless/ephemeral compute
-  - Works with Lambda, K8s pods that come and go
-  - Stolen from Wavefront
-  - [VISION.md: Delta Counters](VISION.md#2-delta-counters--steal-this)
+### P1 - Query & Developer Experience
 
-- [ ] **Data Pipeline Routing**
-  - Route different data to different destinations
-  - Sample, redact, enrich in transit
-  - Stolen from Cribl
-  - [VISION.md: Data Routing & Transformation](VISION.md#1-data-routing--transformation--steal-this)
+| Task | Complexity | VISION.md Reference |
+|------|------------|---------------------|
+| Visual query builder | 3 weeks | [Query Builder UX](VISION.md#2-query-builder-ux--steal-this) |
+| "My Services" developer view | 1 week | [Pain Point: Developer Experience](VISION.md#pain-point-6-developer-experience-gap--medium) |
+| "My On-Call" view | 3 days | [Pain Point: On-Call Burnout](VISION.md#pain-point-7-on-call-burnout--medium) |
 
-- [ ] **Business Context**
-  - Revenue impact per incident
-  - Affected customer count and tiers
-  - SLA breach status
-  - [VISION.md: Lack of Business Context](VISION.md#pain-point-14-lack-of-business-context--high)
+---
 
-- [ ] **Multi-Cloud Visibility**
-  - Unified view across AWS/GCP/Azure/on-prem
-  - Cross-cloud tracing
-  - [VISION.md: Multi-Cloud / Hybrid Visibility](VISION.md#pain-point-11-multi-cloud--hybrid-visibility--high)
+## Phase 5: Query & Analysis (Weeks 25-30)
 
-### P2 - Nice to Have
+### P1 - Query Language
 
-- [ ] **Knowledge Objects**
-  - Saved searches that power dashboards + alerts + reports
-  - Change once, update everywhere
-  - Stolen from Splunk
-  - [VISION.md: Knowledge Objects](VISION.md#2-knowledge-objects--steal-this)
+| Task | Complexity | VISION.md Reference |
+|------|------------|---------------------|
+| DQL pipe-based query language | 4 weeks | [SPL / Query Language](VISION.md#1-spl-search-processing-language--steal-this) |
+| Cross-signal joins (logs + traces) | 2 weeks | [SPL / Query Language](VISION.md#1-spl-search-processing-language--steal-this) |
+| Full-text search with BM25 ranking | 2 weeks | [Full-Text Search](VISION.md#1-full-text-search-with-relevance--steal-this) |
 
-- [ ] **Derived Metrics**
-  - Define metrics as computations of other metrics
-  - `error_rate = errors / requests`
-  - Stolen from Wavefront
-  - [VISION.md: Derived Metrics](VISION.md#3-derived-metrics--steal-this)
+### P2 - Advanced Queries
 
-- [ ] **SOAR Playbooks**
-  - Automated incident response
-  - Gather context → check correlation → auto-remediate
-  - [VISION.md: SOAR](VISION.md#4-soar-security-orchestration-automation-response--partial-steal)
+| Task | Complexity | VISION.md Reference |
+|------|------------|---------------------|
+| Recording rules (pre-computed aggregations) | 1 week | [Chronosphere Features](VISION.md#6-recording-rules-at-scale) |
+| Knowledge objects (reusable query components) | 2 weeks | [Knowledge Objects](VISION.md#2-knowledge-objects--steal-this) |
 
-- [ ] **IDE Integration (VS Code)**
-  - Show errors/latency inline in code
-  - Jump to traces from function
-  - [VISION.md: IDE Integration](VISION.md#7-ide-integration)
+---
 
-- [ ] **Terraform Provider**
-  - Manage dashboards, alerts, SLOs as code
-  - [VISION.md: Observability as Code / Terraform Integration](VISION.md#trend-8-observability-as-code--terraform-integration--partial)
+## Phase 6: Security & Compliance (Weeks 31-36)
 
-- [ ] **Wasm Plugin System**
-  - Custom protocol parsers
-  - PII redaction rules
-  - Custom sampling logic
-  - [VISION.md: WebAssembly for Extensibility](VISION.md#trend-7-webassembly-for-extensibility--opportunity)
+### P1 - Security
+
+| Task | Complexity | VISION.md Reference |
+|------|------------|---------------------|
+| Threat detection rules (shell-in-container, cryptominers) | 2 weeks | [Security Observability](VISION.md#6-security-observability) |
+| Security dashboard | 1 week | [Security Observability](VISION.md#6-security-observability) |
+| SIEM export (CEF/LEEF) | 1 week | [Security Observability](VISION.md#6-security-observability) |
+
+### P1 - Compliance
+
+| Task | Complexity | VISION.md Reference |
+|------|------------|---------------------|
+| PII detection & redaction | 2 weeks | [Pain Point: Compliance](VISION.md#pain-point-10-compliance--audit-gaps--high) |
+| Enhanced audit logging (query audit) | 1 week | [Pain Point: Compliance](VISION.md#pain-point-10-compliance--audit-gaps--high) |
+| Compliance reports (SOC2 evidence) | 2 weeks | [Pain Point: Compliance](VISION.md#pain-point-10-compliance--audit-gaps--high) |
+
+---
+
+## Phase 7: Enterprise Scale (Weeks 37+)
+
+### P2 - Data Architecture
+
+| Task | Complexity | VISION.md Reference |
+|------|------------|---------------------|
+| Write-ahead log (WAL) | 2 weeks | [Architectural Gaps](VISION.md#1-write-ahead-log-wal) |
+| Hot/warm/cold storage tiering | 3 weeks | [Architectural Gaps](VISION.md#2-hotwarmcold-tiering) |
+| Pluggable storage backends | 4 weeks | [Pluggable Storage](VISION.md#pluggable-storage-architecture) |
+
+### P2 - Sampling
+
+| Task | Complexity | VISION.md Reference |
+|------|------------|---------------------|
+| Head sampling with priority rules | 1 week | [Sampling & Data Reduction](VISION.md#3-sampling--data-reduction) |
+| Tail sampling (keep traces with errors) | 2 weeks | [Sampling & Data Reduction](VISION.md#3-sampling--data-reduction) |
+| Adaptive sampling | 2 weeks | [Sampling & Data Reduction](VISION.md#3-sampling--data-reduction) |
+
+### P2 - Migration
+
+| Task | Complexity | VISION.md Reference |
+|------|------------|---------------------|
+| Datadog dashboard import | 2 weeks | [Migration Assistant](VISION.md#7-migration-assistant) |
+| Grafana dashboard import | 1 week | [Migration Assistant](VISION.md#7-migration-assistant) |
+| Alert rule import | 1 week | [Migration Assistant](VISION.md#7-migration-assistant) |
 
 ### P3 - Future
 
-- [ ] **LLM Integration**
-  - Natural language queries
-  - "Why is checkout slow?" → AI analysis
-  - Use Claude/GPT APIs, not custom ML
-  - [VISION.md: AI/ML-Powered Features](VISION.md#1-aiml-powered-features-critical-gap)
-
-- [ ] **Canvas Dashboards**
-  - Pixel-perfect NOC/exec displays
-  - TV mode with rotation
-  - Stolen from Elastic
-  - [VISION.md: Canvas (Presentation Dashboards)](VISION.md#2-canvas-presentation-dashboards--steal-this)
-
-- [ ] **High Availability**
-  - Active-passive with shared storage
-  - Later: active-active cluster
-  - [VISION.md: High Availability](VISION.md#1-high-availability)
+| Task | VISION.md Reference |
+|------|---------------------|
+| Histograms (first-class, accurate p99.9+) | [Histograms](VISION.md#1-histograms-as-first-class-citizens--steal-this) |
+| Delta counters (serverless/ephemeral) | [Delta Counters](VISION.md#2-delta-counters--steal-this) |
+| Data pipeline routing | [Cribl Features](VISION.md#1-data-routing--transformation--steal-this) |
+| Derived metrics | [Derived Metrics](VISION.md#3-derived-metrics--steal-this) |
+| Canvas dashboards (NOC displays) | [Canvas](VISION.md#2-canvas-presentation-dashboards--steal-this) |
+| SOAR playbooks | [SOAR](VISION.md#4-soar-security-orchestration-automation-response--partial-steal) |
+| LLM integration (natural language queries) | [AI/ML Features](VISION.md#1-aiml-powered-features-critical-gap) |
+| IDE integration (VS Code) | [IDE Integration](VISION.md#7-ide-integration) |
+| Terraform provider | [Observability as Code](VISION.md#trend-8-observability-as-code--terraform-integration--partial) |
+| Wasm plugin system | [WebAssembly](VISION.md#trend-7-webassembly-for-extensibility--opportunity) |
+| Business context (revenue impact) | [Pain Point: Business Context](VISION.md#pain-point-14-lack-of-business-context--high) |
+| Multi-cloud visibility | [Pain Point: Multi-Cloud](VISION.md#pain-point-11-multi-cloud--hybrid-visibility--high) |
 
 ---
 
-## Completed
+## Completed ✅
 
-### Service Map
-- [x] Zoom transitions performance
-- [x] Layout spacing
-- [x] Pan interaction
-
-### Widgets
-- [x] CPU history graph
-- [x] Memory history graph
-
-### Demo Data
-- [x] Service map nodes and connections
-- [x] Traces with multiple spans
-- [x] Logs with various levels
-- [x] Incidents and alerts
-- [x] Deployments
-- [x] SLOs with error budgets
-- [x] Synthetics checks
-- [x] Flame graph samples
-- [x] Anomaly detections
-- [x] On-call schedules
+| Category | Items |
+|----------|-------|
+| **eBPF** | TCP connections, HTTP/1.1 parsing, CPU profiling/flamegraphs |
+| **Storage** | All SQLite stores (metrics, traces, logs, dashboards, alerts, SLOs, synthetics, incidents, on-call, RBAC, audit, SSO, deploys, notify, catalog) |
+| **Alerting** | Rules, evaluation, routing, inhibition |
+| **Notifications** | Slack, PagerDuty, OpsGenie, Discord, MS Teams, Email, Webhook |
+| **Auth** | RBAC (Owner/Admin/Editor/Viewer), API keys, JWT sessions, OAuth2, SAML SSO |
+| **Features** | Dashboards, SLOs, Synthetics, Incidents, On-call, Service catalog, Anomaly detection (IForest), Deploy tracking |
+| **Infrastructure** | Federation (gossip), K8s collector, Container monitoring, Rate limiting, Pagination |
+| **APM SDK** | HTTP middleware, SQL/Redis/gRPC instrumentation |
+| **UI** | Web server, Service map, History graphs, Demo data |
 
 ---
 
-## Not Building (Explicitly Skipped)
+## Not Building ❌
 
-| Item | Reason | Alternative |
-|------|--------|-------------|
-| RUM / Browser SDK | Different product | Integrate with Sentry/LogRocket |
-| Mobile SDK | Different domain | Accept OTLP from mobile |
-| Full SIEM | Too broad | Focus on detection rules |
-| Custom ML Models | Expensive, unreliable | Use LLM APIs |
-| 600+ Integrations | Years of work | Focus on auto-discovery |
-| Session Replay | Different product | Integrate with LogRocket |
+| Item | Reason | VISION.md Reference |
+|------|--------|---------------------|
+| RUM / Browser SDK | Different product | [Explicitly Skipped](VISION.md#explicitly-skipped) |
+| Mobile SDK | Different domain | [Explicitly Skipped](VISION.md#explicitly-skipped) |
+| Full SIEM | Too broad | [Explicitly Skipped](VISION.md#explicitly-skipped) |
+| Custom ML models | Use LLM APIs instead | [Explicitly Skipped](VISION.md#explicitly-skipped) |
+| 600+ integrations | Focus on auto-discovery | [Explicitly Skipped](VISION.md#explicitly-skipped) |
+| Session replay | Different product | [Explicitly Skipped](VISION.md#explicitly-skipped) |
+| HA clustering | Premature | [Do NOT Build Yet](VISION.md#do-not-build-yet) |
 
 ---
 
 ## Quick Reference
 
-**What to build first:** MySQL parsing → PostgreSQL → Redis → OTLP → Backup
+| Question | Answer |
+|----------|--------|
+| **Build first** | MySQL/PG/Redis parsing → OTLP → Backup |
+| **Makes people pay** | Cost Intelligence, Control Plane, LogCompare |
+| **Makes people stay** | BubbleUp, Lookout, Entity synthesis |
+| **The moat** | Zero-config eBPF + cost transparency |
+| **What's broken** | SSL/HTTPS probe (uprobes don't fire) |
+| **Full context** | [VISION.md](VISION.md) (22,400 lines) |
 
-**What makes people pay:** Cost Intelligence, LogCompare, Pattern Detection
+---
 
-**What makes people stay:** Lookout, Entity view, Query Builder
+## Priority Legend
 
-**Full details:** [VISION.md](VISION.md) (10,779 lines)
+| Priority | Meaning |
+|----------|---------|
+| **P0** | Must have - blocks adoption or differentiation |
+| **P1** | Should have - significant value |
+| **P2** | Nice to have - do after P0/P1 |
+| **P3** | Future - revisit later |
