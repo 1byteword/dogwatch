@@ -28,6 +28,7 @@ import (
 	"dogwatch/internal/logs"
 	"dogwatch/internal/notify"
 	"dogwatch/internal/oncall"
+	"dogwatch/internal/otlp"
 	"dogwatch/internal/probe"
 	"dogwatch/internal/rbac"
 	"dogwatch/internal/slo"
@@ -54,6 +55,11 @@ func main() {
 	clusterSeeds := flag.String("cluster-seeds", "", "Comma-separated list of seed node addresses (host:port)")
 	clusterAdvertise := flag.String("cluster-advertise", "", "Address to advertise to other nodes")
 	clusterKey := flag.String("cluster-key", "", "Encryption key for gossip (16/24/32 bytes for AES)")
+
+	// OTLP flags
+	otlpEnabled := flag.Bool("otlp", true, "Enable OTLP receivers")
+	otlpGRPCPort := flag.Int("otlp-grpc-port", 4317, "OTLP gRPC port")
+	otlpHTTPPort := flag.Int("otlp-http-port", 4318, "OTLP HTTP port")
 
 	flag.Parse()
 
@@ -172,6 +178,22 @@ func main() {
 	} else {
 		defer customMetricsStore.Close()
 		fmt.Printf("Custom metrics storage: %s\n", customMetricsDbPath)
+	}
+
+	// Start OTLP receivers
+	var otlpServer *otlp.Server
+	if *otlpEnabled && (traceStore != nil || customMetricsStore != nil || logStore != nil) {
+		otlpConfig := otlp.Config{
+			GRPCPort: *otlpGRPCPort,
+			HTTPPort: *otlpHTTPPort,
+		}
+		otlpServer = otlp.NewServer(otlpConfig, traceStore, customMetricsStore, logStore)
+		if err := otlpServer.Start(); err != nil {
+			log.Printf("Warning: Could not start OTLP server: %v", err)
+			otlpServer = nil
+		} else {
+			defer otlpServer.Stop()
+		}
 	}
 
 	// Start StatsD receiver
@@ -625,6 +647,7 @@ func main() {
 	// SSL probe is disabled for MVP - see comments above
 	_ = sslProbe         // silence unused variable warning
 	_ = statsdReceiver   // StatsD receiver runs in background
+	_ = otlpServer       // OTLP server runs in background
 
 	// Ticker for stats display
 	statsTicker := time.NewTicker(time.Duration(*interval) * time.Second)
