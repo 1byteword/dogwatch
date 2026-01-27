@@ -145,8 +145,7 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	mux.HandleFunc("/api/logs/ingest", s.handleLogIngest)
 	mux.HandleFunc("/api/logs/services", s.handleLogServices)
 	mux.HandleFunc("/api/logs/stats", s.handleLogStats)
-	mux.HandleFunc("/api/logs/patterns", s.handleLogPatterns)
-	mux.HandleFunc("/api/logs/patterns/", s.handleLogPattern)
+	// Note: /api/logs/patterns routes registered via RegisterLogReduceRoutes()
 
 	// Custom metrics endpoints
 	mux.HandleFunc("/v1/metrics", s.handleOTLPMetrics)

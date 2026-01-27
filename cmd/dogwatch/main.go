@@ -96,12 +96,17 @@ func main() {
 		defer httpProbe.Close()
 	}
 
-	// SSL probe (HTTPS) - DISABLED FOR MVP
-	// The SSL uprobes attach successfully but never fire. See internal/probe/ssl.go
-	// and bpf/ssl.c for detailed debugging notes. bpftrace CAN trace the same
-	// functions, so this appears to be a cilium/ebpf uprobe compatibility issue.
-	var sslProbe *probe.SSLProbe = nil
-	fmt.Println("HTTPS/SSL probe: disabled for MVP (uprobe compatibility issue)")
+	// SSL probe (HTTPS) - Using tracefs-based attachment (V2)
+	fmt.Println("Starting HTTPS/SSL probe (V2 - tracefs based)...")
+	sslProbeV2, err := probe.NewSSLProbeV2()
+	if err != nil {
+		log.Printf("Warning: SSL probe V2 failed to start: %v", err)
+		sslProbeV2 = nil
+	} else {
+		defer sslProbeV2.Close()
+		fmt.Printf("  HTTPS/SSL probe V2 running (library: %s)\n", sslProbeV2.SSLLibPath())
+	}
+	var sslProbe *probe.SSLProbe = nil // Keep old probe nil for now
 
 	// Start CPU profiler for flame graph
 	fmt.Println("Starting CPU profiler...")
@@ -818,6 +823,15 @@ func main() {
 		}()
 	}
 
+	// Start reading SSL events (V2 - tracefs based)
+	if sslProbeV2 != nil {
+		go func() {
+			if err := sslProbeV2.Run(); err != nil {
+				log.Printf("SSL probe V2 error: %v", err)
+			}
+		}()
+	}
+
 	// Start reading database protocol events
 	if dbProbe != nil {
 		go func() {
@@ -901,7 +915,7 @@ func main() {
 			}
 			handleHTTPEvent(event, agg, *verbose, "HTTP")
 
-		case event, ok := <-getSSLEvents(sslProbe):
+		case event, ok := <-getSSLEventsV2(sslProbeV2):
 			if !ok {
 				continue
 			}
@@ -948,6 +962,13 @@ func getHTTPEvents(p *probe.HTTPProbe) <-chan probe.HTTPEvent {
 }
 
 func getSSLEvents(p *probe.SSLProbe) <-chan probe.HTTPEvent {
+	if p == nil {
+		return nil
+	}
+	return p.Events()
+}
+
+func getSSLEventsV2(p *probe.SSLProbeV2) <-chan probe.HTTPEvent {
 	if p == nil {
 		return nil
 	}

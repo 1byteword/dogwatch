@@ -4,44 +4,24 @@
  * SSL/HTTPS Interception Probe
  * ============================
  *
- * STATUS: NOT WORKING - Kept for future reference
+ * STATUS: WORKING - using tracefs-based uprobe attachment (SSLProbeV2)
  *
- * WHAT THIS ATTEMPTS:
- * This BPF program attempts to intercept plaintext HTTPS traffic by attaching
- * uprobes to OpenSSL's SSL_read/SSL_write functions. These functions handle
- * data AFTER decryption (SSL_read) and BEFORE encryption (SSL_write), giving
- * us access to plaintext HTTP data within HTTPS connections.
+ * This BPF program intercepts plaintext HTTPS traffic by attaching uprobes to
+ * OpenSSL's SSL_read/SSL_write functions. These functions handle data AFTER
+ * decryption (SSL_read) and BEFORE encryption (SSL_write), giving us access
+ * to plaintext HTTP data within HTTPS connections.
  *
- * WHAT WE TRIED:
- * 1. Attached uprobes to SSL_write and SSL_read in libssl.so.3
- * 2. Added SSL_write_ex and SSL_read_ex for OpenSSL 3.x compatibility
- * 3. Used entry/return probe pairs for SSL_read to capture the buffer after data is written
- * 4. Fixed library path detection (symlinks have different inodes - /lib vs /usr/lib)
+ * IMPLEMENTATION:
+ * - Uses tracefs-based uprobe registration (/sys/kernel/debug/tracing/uprobe_events)
+ * - Attaches BPF programs via perf_event_open with PERF_TYPE_TRACEPOINT
+ * - Attaches to all CPUs for system-wide tracing
+ * - Supports both SSL_write/SSL_read and SSL_write_ex/SSL_read_ex (OpenSSL 3.x)
  *
- * WHAT HAPPENS:
- * - The uprobes attach successfully (no errors from cilium/ebpf)
- * - Symbol resolution works (verified with test program - offsets are correct)
- * - But the probes NEVER fire when curl or other programs use SSL
+ * NOTE: The cilium/ebpf link-based uprobe attachment does NOT work for this use case.
+ * The tracefs + perf_event_open approach (SSLProbeV2 in ssl_v2.go) is required.
  *
- * WHAT WE VERIFIED:
- * - bpftrace CAN successfully trace these same functions:
- *   bpftrace -e 'uprobe:/lib/x86_64-linux-gnu/libssl.so.3:SSL_write { printf("write\n"); }'
- * - This proves the functions ARE being called and CAN be traced
- * - The issue is specific to how cilium/ebpf attaches uprobes
- *
- * POSSIBLE CAUSES:
- * 1. cilium/ebpf uprobe attachment may have compatibility issues with this kernel/library combo
- * 2. The library may be loaded at a different address than expected
- * 3. PIE/ASLR handling differences between bpftrace and cilium/ebpf
- * 4. Potential need for explicit PID targeting or different attachment method
- *
- * FUTURE FIXES TO TRY:
- * 1. Use perf_event-based uprobe attachment instead of link-based
- * 2. Try targeting specific PIDs instead of system-wide
- * 3. Use bpftrace/bcc for SSL interception and pipe events to dogwatch
- * 4. Investigate cilium/ebpf uprobe implementation for the specific kernel version
- *
- * For MVP, we're skipping HTTPS and only supporting plain HTTP traffic.
+ * HTTP/1.1 traffic is captured with method/path/status extraction.
+ * HTTP/2 traffic appears as binary frames (not human-readable HTTP text).
  */
 
 #include "vmlinux.h"
@@ -153,14 +133,10 @@ int uprobe_ssl_write(struct pt_regs *ctx) {
 
     if (num <= 0 || num > 65535) return 0;
 
-    // Always emit for debugging - check if uprobe fires
     if (is_http_request(buf)) {
         emit_ssl_event(buf, num, EVENT_TYPE_REQUEST);
     } else if (is_http_response(buf)) {
         emit_ssl_event(buf, num, EVENT_TYPE_RESPONSE);
-    } else {
-        // Debug: emit anyway to see if we're being called
-        emit_ssl_event(buf, num > 64 ? 64 : num, EVENT_TYPE_REQUEST);
     }
 
     return 0;

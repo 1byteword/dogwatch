@@ -159,8 +159,15 @@ func NewSSLProbe() (*SSLProbe, error) {
 		return nil, fmt.Errorf("opening %s: %w", sslPath, err)
 	}
 
-	// Attach uprobe to SSL_write
-	upWrite, err := ex.Uprobe("SSL_write", objs.UprobeSslWrite, nil)
+	// Try using TraceFSUprobe for attachment - this method works with bpftrace
+	// and avoids the BPF link attachment issues on some kernel/library combinations
+	fmt.Printf("  Using library: %s\n", sslPath)
+
+	// Attach uprobe to SSL_write using explicit options
+	upWrite, err := ex.Uprobe("SSL_write", objs.UprobeSslWrite, &link.UprobeOptions{
+		// PID 0 means all processes
+		PID: 0,
+	})
 	if err != nil {
 		fmt.Printf("  Warning: SSL_write uprobe failed: %v\n", err)
 	} else {
@@ -169,7 +176,9 @@ func NewSSLProbe() (*SSLProbe, error) {
 	}
 
 	// Attach uprobe to SSL_write_ex (OpenSSL 3.x)
-	upWriteEx, err := ex.Uprobe("SSL_write_ex", objs.UprobeSslWriteEx, nil)
+	upWriteEx, err := ex.Uprobe("SSL_write_ex", objs.UprobeSslWriteEx, &link.UprobeOptions{
+		PID: 0,
+	})
 	if err != nil {
 		fmt.Printf("  Warning: SSL_write_ex uprobe failed: %v\n", err)
 	} else {
@@ -178,7 +187,9 @@ func NewSSLProbe() (*SSLProbe, error) {
 	}
 
 	// Attach uprobe to SSL_read (entry)
-	upReadEntry, err := ex.Uprobe("SSL_read", objs.UprobeSslReadEntry, nil)
+	upReadEntry, err := ex.Uprobe("SSL_read", objs.UprobeSslReadEntry, &link.UprobeOptions{
+		PID: 0,
+	})
 	if err != nil {
 		fmt.Printf("  Warning: SSL_read entry uprobe failed: %v\n", err)
 	} else {
@@ -187,7 +198,9 @@ func NewSSLProbe() (*SSLProbe, error) {
 	}
 
 	// Attach uretprobe to SSL_read (return)
-	upReadRet, err := ex.Uretprobe("SSL_read", objs.UretprobeSslRead, nil)
+	upReadRet, err := ex.Uretprobe("SSL_read", objs.UretprobeSslRead, &link.UprobeOptions{
+		PID: 0,
+	})
 	if err != nil {
 		fmt.Printf("  Warning: SSL_read return uretprobe failed: %v\n", err)
 	} else {
@@ -196,7 +209,9 @@ func NewSSLProbe() (*SSLProbe, error) {
 	}
 
 	// Attach uprobe to SSL_read_ex (entry) - OpenSSL 3.x
-	upReadExEntry, err := ex.Uprobe("SSL_read_ex", objs.UprobeSslReadExEntry, nil)
+	upReadExEntry, err := ex.Uprobe("SSL_read_ex", objs.UprobeSslReadExEntry, &link.UprobeOptions{
+		PID: 0,
+	})
 	if err != nil {
 		fmt.Printf("  Warning: SSL_read_ex entry uprobe failed: %v\n", err)
 	} else {
@@ -205,7 +220,9 @@ func NewSSLProbe() (*SSLProbe, error) {
 	}
 
 	// Attach uretprobe to SSL_read_ex (return) - OpenSSL 3.x
-	upReadExRet, err := ex.Uretprobe("SSL_read_ex", objs.UretprobeSslReadEx, nil)
+	upReadExRet, err := ex.Uretprobe("SSL_read_ex", objs.UretprobeSslReadEx, &link.UprobeOptions{
+		PID: 0,
+	})
 	if err != nil {
 		fmt.Printf("  Warning: SSL_read_ex return uretprobe failed: %v\n", err)
 	} else {
