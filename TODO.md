@@ -9,7 +9,7 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 | Category | Status |
 |----------|--------|
 | **Codebase** | ~45,500 lines Go, 29 packages |
-| **eBPF Probes** | TCP ✅, HTTP/1.1 ✅, CPU profiling ✅, SSL ❌ (broken) |
+| **eBPF Probes** | TCP ✅, HTTP/1.1 ✅, CPU profiling ✅, SSL ✅ |
 | **Storage** | SQLite for all stores (metrics, traces, logs, alerts, etc.) |
 | **Auth** | RBAC ✅, API keys ✅, OAuth2 ✅, SAML ✅ |
 | **Alerting** | Rules ✅, evaluation ✅, routing ✅, 7 notification channels ✅ |
@@ -27,7 +27,7 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 | MySQL eBPF protocol parsing | 2-3 weeks | [Zero-Config Tracing](VISION.md#1-zero-config-distributed-tracing), [MySQL Wire Format](VISION.md#mysql-protocol-parsing) |
 | PostgreSQL eBPF protocol parsing | 2-3 weeks | [Zero-Config Tracing](VISION.md#1-zero-config-distributed-tracing), [PostgreSQL Wire Format](VISION.md#postgresql-protocol-parsing) |
 | Redis eBPF protocol parsing | 1-2 weeks | [Zero-Config Tracing](VISION.md#1-zero-config-distributed-tracing), [Redis Wire Format](VISION.md#redis-protocol-parsing) |
-| Fix SSL/HTTPS probe | 1-2 weeks | [TLS Interception](VISION.md#2-tls-interception) |
+| ~~Fix SSL/HTTPS probe~~ | ✅ Done | [TLS Interception](VISION.md#2-tls-interception) |
 
 ### P0 - Production Essentials
 
@@ -197,7 +197,7 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 
 | Category | Items |
 |----------|-------|
-| **eBPF** | TCP connections, HTTP/1.1 parsing, CPU profiling/flamegraphs |
+| **eBPF** | TCP connections, HTTP/1.1 parsing, CPU profiling/flamegraphs, SSL/HTTPS (tracefs uprobes) |
 | **Storage** | All SQLite stores (metrics, traces, logs, dashboards, alerts, SLOs, synthetics, incidents, on-call, RBAC, audit, SSO, deploys, notify, catalog) |
 | **Alerting** | Rules, evaluation, routing, inhibition |
 | **Notifications** | Slack, PagerDuty, OpsGenie, Discord, MS Teams, Email, Webhook |
@@ -231,7 +231,7 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 | **Makes people pay** | Cost Intelligence, Control Plane, LogCompare |
 | **Makes people stay** | BubbleUp, Lookout, Entity synthesis |
 | **The moat** | Zero-config eBPF + cost transparency |
-| **What's broken** | SSL/HTTPS probe (uprobes don't fire) |
+| **What's broken** | Nothing critical currently |
 | **Full context** | [VISION.md](VISION.md) (22,400 lines) |
 
 ---
