@@ -32,6 +32,10 @@ var DatabaseFiles = []string{
 	"audit.db",
 	"sso.db",
 	"alerting.db",
+	"costintel.db",
+	"shaping.db",
+	"quotas.db",
+	"logreduce.db",
 }
 
 // Metadata contains backup metadata
@@ -437,4 +441,197 @@ func FormatSize(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// Verify checks backup integrity without extracting
+func Verify(backupPath string) (*VerifyResult, error) {
+	file, err := os.Open(backupPath)
+	if err != nil {
+		return nil, fmt.Errorf("open backup file: %w", err)
+	}
+	defer file.Close()
+
+	var tr *tar.Reader
+	if strings.HasSuffix(backupPath, ".gz") || strings.HasSuffix(backupPath, ".tgz") {
+		gr, err := gzip.NewReader(file)
+		if err != nil {
+			return nil, fmt.Errorf("invalid gzip: %w", err)
+		}
+		defer gr.Close()
+		tr = tar.NewReader(gr)
+	} else {
+		tr = tar.NewReader(file)
+	}
+
+	result := &VerifyResult{
+		Path:   backupPath,
+		Valid:  true,
+		Errors: []string{},
+	}
+
+	// Read and validate metadata
+	header, err := tr.Next()
+	if err != nil {
+		result.Valid = false
+		result.Errors = append(result.Errors, fmt.Sprintf("read header: %v", err))
+		return result, nil
+	}
+	if header.Name != "metadata.json" {
+		result.Valid = false
+		result.Errors = append(result.Errors, fmt.Sprintf("expected metadata.json, got %s", header.Name))
+		return result, nil
+	}
+
+	metadataJSON := make([]byte, header.Size)
+	if _, err := io.ReadFull(tr, metadataJSON); err != nil {
+		result.Valid = false
+		result.Errors = append(result.Errors, fmt.Sprintf("read metadata: %v", err))
+		return result, nil
+	}
+
+	var metadata Metadata
+	if err := json.Unmarshal(metadataJSON, &metadata); err != nil {
+		result.Valid = false
+		result.Errors = append(result.Errors, fmt.Sprintf("parse metadata: %v", err))
+		return result, nil
+	}
+
+	result.Metadata = &metadata
+
+	// Verify all files can be read
+	expectedFiles := make(map[string]int64)
+	for _, f := range metadata.Files {
+		expectedFiles[f.Name] = f.Size
+	}
+
+	foundFiles := make(map[string]int64)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			result.Valid = false
+			result.Errors = append(result.Errors, fmt.Sprintf("read entry: %v", err))
+			continue
+		}
+
+		// Skip metadata
+		if header.Name == "metadata.json" {
+			continue
+		}
+
+		// Verify we can read the entire file
+		n, err := io.Copy(io.Discard, tr)
+		if err != nil {
+			result.Valid = false
+			result.Errors = append(result.Errors, fmt.Sprintf("read %s: %v", header.Name, err))
+			continue
+		}
+
+		foundFiles[header.Name] = n
+		result.FileCount++
+		result.TotalSize += n
+	}
+
+	// Check for missing files
+	for name := range expectedFiles {
+		if _, found := foundFiles[name]; !found {
+			result.Valid = false
+			result.Errors = append(result.Errors, fmt.Sprintf("missing file: %s", name))
+		}
+	}
+
+	return result, nil
+}
+
+// VerifyResult contains backup verification results
+type VerifyResult struct {
+	Path      string    `json:"path"`
+	Valid     bool      `json:"valid"`
+	FileCount int       `json:"file_count"`
+	TotalSize int64     `json:"total_size"`
+	Metadata  *Metadata `json:"metadata,omitempty"`
+	Errors    []string  `json:"errors,omitempty"`
+}
+
+// RetentionPolicy defines backup retention rules
+type RetentionPolicy struct {
+	MaxBackups int           // Maximum number of backups to keep (0 = unlimited)
+	MaxAge     time.Duration // Maximum age of backups (0 = unlimited)
+	MinBackups int           // Always keep at least this many (default 1)
+}
+
+// DefaultRetentionPolicy returns sensible defaults
+func DefaultRetentionPolicy() RetentionPolicy {
+	return RetentionPolicy{
+		MaxBackups: 10,
+		MaxAge:     30 * 24 * time.Hour, // 30 days
+		MinBackups: 1,
+	}
+}
+
+// ApplyRetention deletes old backups according to policy
+func ApplyRetention(dir string, policy RetentionPolicy) (*RetentionResult, error) {
+	backups, err := ListBackups(dir)
+	if err != nil {
+		return nil, fmt.Errorf("list backups: %w", err)
+	}
+
+	if policy.MinBackups < 1 {
+		policy.MinBackups = 1
+	}
+
+	result := &RetentionResult{
+		TotalBefore: len(backups),
+	}
+
+	// Determine which backups to delete
+	var toDelete []BackupInfo
+	cutoff := time.Now().Add(-policy.MaxAge)
+
+	for i, b := range backups {
+		// Always keep minimum number of backups
+		if len(backups)-len(toDelete) <= policy.MinBackups {
+			break
+		}
+
+		shouldDelete := false
+
+		// Check max backups
+		if policy.MaxBackups > 0 && i >= policy.MaxBackups {
+			shouldDelete = true
+		}
+
+		// Check max age
+		if policy.MaxAge > 0 && b.ModTime.Before(cutoff) {
+			shouldDelete = true
+		}
+
+		if shouldDelete {
+			toDelete = append(toDelete, b)
+		}
+	}
+
+	// Delete selected backups
+	for _, b := range toDelete {
+		if err := os.Remove(b.Path); err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("delete %s: %v", b.Path, err))
+		} else {
+			result.Deleted = append(result.Deleted, b.Path)
+			result.BytesFreed += b.Size
+		}
+	}
+
+	result.TotalAfter = result.TotalBefore - len(result.Deleted)
+	return result, nil
+}
+
+// RetentionResult contains retention operation results
+type RetentionResult struct {
+	TotalBefore int      `json:"total_before"`
+	TotalAfter  int      `json:"total_after"`
+	Deleted     []string `json:"deleted"`
+	BytesFreed  int64    `json:"bytes_freed"`
+	Errors      []string `json:"errors,omitempty"`
 }

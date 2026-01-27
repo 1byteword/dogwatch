@@ -17,6 +17,7 @@ import (
 	"dogwatch/internal/alerting"
 	"dogwatch/internal/anomaly"
 	"dogwatch/internal/audit"
+	"dogwatch/internal/backup"
 	"dogwatch/internal/cardinality"
 	"dogwatch/internal/containers"
 	"dogwatch/internal/costintel"
@@ -135,6 +136,32 @@ func main() {
 	// Configure backup with data directory
 	web.SetBackupDataDir(*dataDir)
 	fmt.Printf("Backup/restore: http://localhost:%d/api/backup\n", *webPort)
+
+	// Initialize backup scheduler (disabled by default)
+	backupScheduler := backup.NewScheduler(backup.SchedulerConfig{
+		Enabled:   false, // Enable via API or env var
+		DataDir:   *dataDir,
+		OutputDir: *dataDir,
+		Interval:  24 * time.Hour,
+		Retention: backup.DefaultRetentionPolicy(),
+		Compress:  true,
+	})
+	web.SetBackupScheduler(backupScheduler)
+	// Check if auto-backup is enabled via env
+	if os.Getenv("DOGWATCH_AUTO_BACKUP") == "true" {
+		backupScheduler.UpdateConfig(backup.SchedulerConfig{
+			Enabled:   true,
+			DataDir:   *dataDir,
+			OutputDir: *dataDir,
+			Interval:  24 * time.Hour,
+			Retention: backup.DefaultRetentionPolicy(),
+			Compress:  true,
+		})
+		backupScheduler.Start()
+		defer backupScheduler.Stop()
+		fmt.Printf("Auto-backup: enabled (daily)\n")
+	}
+	fmt.Printf("Backup scheduler: http://localhost:%d/api/backup/scheduler\n", *webPort)
 
 	dbPath := filepath.Join(*dataDir, "metrics.db")
 	store, err := storage.New(dbPath)

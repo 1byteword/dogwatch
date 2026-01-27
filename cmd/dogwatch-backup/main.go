@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"dogwatch/internal/backup"
 )
@@ -14,6 +15,8 @@ func main() {
 	restoreCmd := flag.NewFlagSet("restore", flag.ExitOnError)
 	listCmd := flag.NewFlagSet("list", flag.ExitOnError)
 	infoCmd := flag.NewFlagSet("info", flag.ExitOnError)
+	verifyCmd := flag.NewFlagSet("verify", flag.ExitOnError)
+	cleanupCmd := flag.NewFlagSet("cleanup", flag.ExitOnError)
 
 	// Create flags
 	createDataDir := createCmd.String("data", "/var/lib/dogwatch", "Data directory to backup")
@@ -30,6 +33,16 @@ func main() {
 
 	// Info flags
 	infoBackup := infoCmd.String("backup", "", "Backup file to inspect")
+
+	// Verify flags
+	verifyBackup := verifyCmd.String("backup", "", "Backup file to verify")
+
+	// Cleanup flags
+	cleanupDir := cleanupCmd.String("dir", "/var/lib/dogwatch", "Directory to clean up")
+	cleanupMaxBackups := cleanupCmd.Int("max-backups", 10, "Maximum number of backups to keep")
+	cleanupMaxDays := cleanupCmd.Int("max-days", 30, "Maximum age in days")
+	cleanupMinBackups := cleanupCmd.Int("min-backups", 1, "Minimum backups to always keep")
+	cleanupDryRun := cleanupCmd.Bool("dry-run", false, "Show what would be deleted without deleting")
 
 	if len(os.Args) < 2 {
 		printUsage()
@@ -63,6 +76,19 @@ func main() {
 		}
 		doInfo(*infoBackup)
 
+	case "verify":
+		verifyCmd.Parse(os.Args[2:])
+		if *verifyBackup == "" {
+			fmt.Fprintln(os.Stderr, "Error: --backup is required")
+			verifyCmd.Usage()
+			os.Exit(1)
+		}
+		doVerify(*verifyBackup)
+
+	case "cleanup":
+		cleanupCmd.Parse(os.Args[2:])
+		doCleanup(*cleanupDir, *cleanupMaxBackups, *cleanupMaxDays, *cleanupMinBackups, *cleanupDryRun)
+
 	case "help", "-h", "--help":
 		printUsage()
 
@@ -84,6 +110,8 @@ Commands:
   restore  Restore from a backup
   list     List available backups
   info     Show backup information
+  verify   Verify backup integrity
+  cleanup  Apply retention policy to delete old backups
 
 Examples:
   # Create a backup
@@ -102,7 +130,16 @@ Examples:
   dogwatch-backup list --dir /var/lib/dogwatch
 
   # Show backup info
-  dogwatch-backup info --backup backup.tar.gz`)
+  dogwatch-backup info --backup backup.tar.gz
+
+  # Verify backup integrity
+  dogwatch-backup verify --backup backup.tar.gz
+
+  # Clean up old backups (keep last 10, max 30 days)
+  dogwatch-backup cleanup --dir /var/lib/dogwatch --max-backups 10 --max-days 30
+
+  # Dry run cleanup (show what would be deleted)
+  dogwatch-backup cleanup --dir /var/lib/dogwatch --dry-run`)
 }
 
 func doCreate(dataDir, output string, compress bool) {
@@ -236,4 +273,135 @@ func truncateString(s string, max int) string {
 		return s
 	}
 	return "..." + s[len(s)-max+3:]
+}
+
+func doVerify(backupPath string) {
+	fmt.Printf("Verifying backup: %s\n", backupPath)
+
+	result, err := backup.Verify(backupPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println()
+	if result.Valid {
+		fmt.Println("✓ Backup is valid")
+	} else {
+		fmt.Println("✗ Backup is INVALID")
+	}
+
+	fmt.Printf("  Files:      %d\n", result.FileCount)
+	fmt.Printf("  Total size: %s\n", backup.FormatSize(result.TotalSize))
+
+	if result.Metadata != nil {
+		fmt.Printf("  Created:    %s\n", result.Metadata.CreatedAt.Format("2006-01-02 15:04:05 UTC"))
+		fmt.Printf("  Hostname:   %s\n", result.Metadata.Hostname)
+	}
+
+	if len(result.Errors) > 0 {
+		fmt.Println()
+		fmt.Println("Errors:")
+		for _, e := range result.Errors {
+			fmt.Printf("  - %s\n", e)
+		}
+		os.Exit(1)
+	}
+}
+
+func doCleanup(dir string, maxBackups, maxDays, minBackups int, dryRun bool) {
+	fmt.Printf("Cleanup backups in: %s\n", dir)
+	fmt.Printf("  Max backups: %d\n", maxBackups)
+	fmt.Printf("  Max age:     %d days\n", maxDays)
+	fmt.Printf("  Min keep:    %d\n", minBackups)
+
+	if dryRun {
+		fmt.Println("  Mode:        DRY RUN (no files will be deleted)")
+	}
+	fmt.Println()
+
+	// List current backups
+	backups, err := backup.ListBackups(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error listing backups: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Found %d backups\n", len(backups))
+
+	if len(backups) == 0 {
+		fmt.Println("Nothing to clean up")
+		return
+	}
+
+	policy := backup.RetentionPolicy{
+		MaxBackups: maxBackups,
+		MaxAge:     time.Duration(maxDays) * 24 * time.Hour,
+		MinBackups: minBackups,
+	}
+
+	if dryRun {
+		// Show what would be deleted
+		cutoff := time.Now().Add(-policy.MaxAge)
+		var toDelete []backup.BackupInfo
+
+		for i, b := range backups {
+			if len(backups)-len(toDelete) <= policy.MinBackups {
+				break
+			}
+
+			shouldDelete := false
+			if policy.MaxBackups > 0 && i >= policy.MaxBackups {
+				shouldDelete = true
+			}
+			if policy.MaxAge > 0 && b.ModTime.Before(cutoff) {
+				shouldDelete = true
+			}
+
+			if shouldDelete {
+				toDelete = append(toDelete, b)
+			}
+		}
+
+		if len(toDelete) == 0 {
+			fmt.Println("\nNo backups would be deleted")
+			return
+		}
+
+		fmt.Printf("\nWould delete %d backups:\n", len(toDelete))
+		var totalSize int64
+		for _, b := range toDelete {
+			fmt.Printf("  - %s (%s)\n", b.Path, backup.FormatSize(b.Size))
+			totalSize += b.Size
+		}
+		fmt.Printf("\nTotal space to be freed: %s\n", backup.FormatSize(totalSize))
+		return
+	}
+
+	// Actually apply retention
+	result, err := backup.ApplyRetention(dir, policy)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println()
+	if len(result.Deleted) == 0 {
+		fmt.Println("No backups deleted")
+	} else {
+		fmt.Printf("Deleted %d backups:\n", len(result.Deleted))
+		for _, path := range result.Deleted {
+			fmt.Printf("  - %s\n", path)
+		}
+		fmt.Printf("\nSpace freed: %s\n", backup.FormatSize(result.BytesFreed))
+	}
+
+	if len(result.Errors) > 0 {
+		fmt.Println("\nErrors:")
+		for _, e := range result.Errors {
+			fmt.Printf("  - %s\n", e)
+		}
+	}
+
+	fmt.Printf("\nBackups remaining: %d\n", result.TotalAfter)
 }

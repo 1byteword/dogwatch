@@ -12,10 +12,16 @@ import (
 )
 
 var backupDataDir string
+var backupScheduler *backup.Scheduler
 
 // SetBackupDataDir sets the data directory for backup operations
 func SetBackupDataDir(dataDir string) {
 	backupDataDir = dataDir
+}
+
+// SetBackupScheduler sets the backup scheduler
+func SetBackupScheduler(scheduler *backup.Scheduler) {
+	backupScheduler = scheduler
 }
 
 // RegisterBackupRoutes registers backup/restore routes
@@ -23,6 +29,9 @@ func RegisterBackupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/backup", handleBackup)
 	mux.HandleFunc("/api/backup/list", handleBackupList)
 	mux.HandleFunc("/api/backup/download/", handleBackupDownload)
+	mux.HandleFunc("/api/backup/verify", handleBackupVerify)
+	mux.HandleFunc("/api/backup/retention", handleBackupRetention)
+	mux.HandleFunc("/api/backup/scheduler", handleBackupScheduler)
 	mux.HandleFunc("/api/restore", handleRestore)
 }
 
@@ -277,4 +286,205 @@ func containsAny(s, chars string) bool {
 		}
 	}
 	return false
+}
+
+// handleBackupVerify verifies backup integrity
+func handleBackupVerify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		BackupPath string `json:"backup_path"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	if req.BackupPath == "" {
+		http.Error(w, "backup_path is required", http.StatusBadRequest)
+		return
+	}
+
+	// Security: validate path
+	if !isValidBackupPath(req.BackupPath) {
+		http.Error(w, "Invalid backup path", http.StatusBadRequest)
+		return
+	}
+
+	result, err := backup.Verify(req.BackupPath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Verification failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+// handleBackupRetention applies retention policy
+func handleBackupRetention(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		// Return default policy
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(backup.DefaultRetentionPolicy())
+
+	case http.MethodPost:
+		if backupDataDir == "" {
+			http.Error(w, "Backup not configured", http.StatusServiceUnavailable)
+			return
+		}
+
+		var policy backup.RetentionPolicy
+		if r.ContentLength > 0 {
+			if err := json.NewDecoder(r.Body).Decode(&policy); err != nil {
+				http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
+				return
+			}
+		} else {
+			policy = backup.DefaultRetentionPolicy()
+		}
+
+		dir := r.URL.Query().Get("dir")
+		if dir == "" {
+			dir = backupDataDir
+		}
+
+		result, err := backup.ApplyRetention(dir, policy)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Retention failed: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":      true,
+			"result":       result,
+			"bytes_freed":  backup.FormatSize(result.BytesFreed),
+		})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleBackupScheduler manages scheduled backups
+func handleBackupScheduler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		// Return scheduler status
+		if backupScheduler == nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"enabled": false,
+				"running": false,
+				"message": "Scheduler not configured",
+			})
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(backupScheduler.GetStatus())
+
+	case http.MethodPost:
+		if backupScheduler == nil {
+			http.Error(w, "Scheduler not configured", http.StatusServiceUnavailable)
+			return
+		}
+
+		// Check for action parameter
+		action := r.URL.Query().Get("action")
+		switch action {
+		case "run":
+			// Trigger immediate backup
+			run, err := backupScheduler.RunNow()
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Backup failed: %v", err), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(run)
+
+		case "start":
+			if err := backupScheduler.Start(); err != nil {
+				http.Error(w, fmt.Sprintf("Start failed: %v", err), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"message": "Scheduler started",
+			})
+
+		case "stop":
+			backupScheduler.Stop()
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"message": "Scheduler stopped",
+			})
+
+		default:
+			// Update configuration
+			var config struct {
+				Enabled     *bool   `json:"enabled"`
+				IntervalStr string  `json:"interval"`
+				MaxBackups  *int    `json:"max_backups"`
+				MaxAgeDays  *int    `json:"max_age_days"`
+			}
+
+			if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+				http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
+				return
+			}
+
+			// Build new config from current
+			status := backupScheduler.GetStatus()
+			newConfig := backup.SchedulerConfig{
+				Enabled:   status.Enabled,
+				DataDir:   backupDataDir,
+				OutputDir: backupDataDir,
+				Interval:  status.Interval,
+				Retention: backup.DefaultRetentionPolicy(),
+				Compress:  true,
+			}
+
+			if config.Enabled != nil {
+				newConfig.Enabled = *config.Enabled
+			}
+			if config.IntervalStr != "" {
+				interval, err := time.ParseDuration(config.IntervalStr)
+				if err != nil {
+					http.Error(w, fmt.Sprintf("Invalid interval: %v", err), http.StatusBadRequest)
+					return
+				}
+				newConfig.Interval = interval
+			}
+			if config.MaxBackups != nil {
+				newConfig.Retention.MaxBackups = *config.MaxBackups
+			}
+			if config.MaxAgeDays != nil {
+				newConfig.Retention.MaxAge = time.Duration(*config.MaxAgeDays) * 24 * time.Hour
+			}
+
+			if err := backupScheduler.UpdateConfig(newConfig); err != nil {
+				http.Error(w, fmt.Sprintf("Update failed: %v", err), http.StatusInternalServerError)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"message": "Configuration updated",
+				"config":  newConfig,
+			})
+		}
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }
