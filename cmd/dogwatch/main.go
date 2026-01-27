@@ -20,6 +20,7 @@ import (
 	"dogwatch/internal/cardinality"
 	"dogwatch/internal/containers"
 	"dogwatch/internal/costintel"
+	"dogwatch/internal/datashaping"
 	"dogwatch/internal/dbwatch"
 	"dogwatch/internal/sso"
 	"dogwatch/internal/custommetrics"
@@ -212,6 +213,24 @@ func main() {
 	usageTracker := usage.NewTracker(10000)
 	web.SetUsageTracker(usageTracker)
 	fmt.Printf("Usage analytics: http://localhost:%d/api/usage/report\n", *webPort)
+
+	// Create data shaping store
+	shapingDbPath := filepath.Join(*dataDir, "shaping.db")
+	shapingStore, err := datashaping.NewStore(shapingDbPath)
+	if err != nil {
+		log.Printf("Warning: Could not create data shaping storage: %v", err)
+		shapingStore = nil
+	} else {
+		defer shapingStore.Close()
+		web.SetDataShapingStore(shapingStore)
+
+		// Connect data shaping to custom metrics store
+		if customMetricsStore != nil {
+			customMetricsStore.SetDataShapingHook(&metricsShapingAdapter{store: shapingStore})
+		}
+
+		fmt.Printf("Data shaping: http://localhost:%d/api/shaping/rules\n", *webPort)
+	}
 
 	// Create database watch storage
 	dbwatchDbPath := filepath.Join(*dataDir, "dbwatch.db")
@@ -1028,4 +1047,43 @@ func (p *costUsageProvider) CollectUsage() costintel.UsageMetrics {
 	}
 
 	return usage
+}
+
+// metricsShapingAdapter adapts datashaping.Store to the custommetrics.DataShapingHook interface
+type metricsShapingAdapter struct {
+	store *datashaping.Store
+}
+
+func (a *metricsShapingAdapter) EvaluateMetric(name string, tags map[string]string, sizeBytes int) (bool, map[string]string) {
+	if a.store == nil {
+		return true, tags
+	}
+
+	decision := a.store.EvaluateMetric(name, tags, sizeBytes)
+
+	switch decision.Action {
+	case datashaping.ActionDrop:
+		return false, nil
+	case datashaping.ActionTransform:
+		// Apply tag transformations
+		newTags := make(map[string]string)
+		for k, v := range tags {
+			drop := false
+			for _, dt := range decision.DropTags {
+				if k == dt {
+					drop = true
+					break
+				}
+			}
+			if !drop {
+				newTags[k] = v
+			}
+		}
+		for k, v := range decision.AddTags {
+			newTags[k] = v
+		}
+		return true, newTags
+	default:
+		return true, tags
+	}
 }

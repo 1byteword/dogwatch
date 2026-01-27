@@ -58,6 +58,12 @@ type CardinalityHook interface {
 	RecordSeries(name string, tags map[string]string)
 }
 
+// DataShapingHook evaluates data shaping rules
+type DataShapingHook interface {
+	// EvaluateMetric returns (shouldKeep, transformedTags)
+	EvaluateMetric(name string, tags map[string]string, sizeBytes int) (bool, map[string]string)
+}
+
 // Store handles custom metrics persistence
 type Store struct {
 	db *sql.DB
@@ -69,6 +75,9 @@ type Store struct {
 
 	// Cardinality tracking hook
 	cardinalityHook CardinalityHook
+
+	// Data shaping hook
+	shapingHook DataShapingHook
 }
 
 // NewStore creates a new custom metrics store
@@ -123,6 +132,13 @@ func (s *Store) SetCardinalityHook(hook CardinalityHook) {
 	s.cardinalityHook = hook
 }
 
+// SetDataShapingHook sets a hook for data shaping
+func (s *Store) SetDataShapingHook(hook DataShapingHook) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.shapingHook = hook
+}
+
 // tagsToKey creates a unique key for a metric + tags combination
 func tagsToKey(name string, tags map[string]string) string {
 	if len(tags) == 0 {
@@ -146,6 +162,17 @@ func tagsToKey(name string, tags map[string]string) string {
 func (s *Store) Record(dp DataPoint) error {
 	if dp.Timestamp.IsZero() {
 		dp.Timestamp = time.Now()
+	}
+
+	// Apply data shaping rules
+	if s.shapingHook != nil {
+		keep, transformedTags := s.shapingHook.EvaluateMetric(dp.Name, dp.Tags, 100)
+		if !keep {
+			return nil // Drop the metric
+		}
+		if transformedTags != nil {
+			dp.Tags = transformedTags
+		}
 	}
 
 	// Track cardinality
