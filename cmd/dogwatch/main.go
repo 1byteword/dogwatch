@@ -189,6 +189,10 @@ func main() {
 		defer logStore.Close()
 		fmt.Printf("Log storage: %s\n", logDbPath)
 		fmt.Println("Log ingestion: http://localhost:9999/api/logs/ingest")
+
+		// Set up log comparison
+		web.SetLogCompareStore(logStore)
+		fmt.Printf("Log comparison: http://localhost:%d/api/logs/compare\n", *webPort)
 	}
 
 	// Create custom metrics storage
