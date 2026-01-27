@@ -302,6 +302,9 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	// Log comparison endpoints
 	RegisterLogCompareRoutes(mux)
 
+	// Log pattern mining endpoints
+	RegisterLogReduceRoutes(mux)
+
 	// Health check endpoints (no auth required)
 	// Standard paths
 	mux.HandleFunc("/health", s.handleHealth)

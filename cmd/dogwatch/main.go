@@ -29,6 +29,7 @@ import (
 	"dogwatch/internal/federation"
 	"dogwatch/internal/incidents"
 	"dogwatch/internal/kubernetes"
+	"dogwatch/internal/logreduce"
 	"dogwatch/internal/logs"
 	"dogwatch/internal/notify"
 	"dogwatch/internal/oncall"
@@ -193,6 +194,18 @@ func main() {
 		// Set up log comparison
 		web.SetLogCompareStore(logStore)
 		fmt.Printf("Log comparison: http://localhost:%d/api/logs/compare\n", *webPort)
+	}
+
+	// Create log pattern mining storage (LogReduce)
+	logReduceDbPath := filepath.Join(*dataDir, "logreduce.db")
+	logReduceStore, err := logreduce.NewStore(logReduceDbPath, logreduce.DefaultMinerConfig())
+	if err != nil {
+		log.Printf("Warning: Could not create log pattern storage: %v", err)
+	} else {
+		defer logReduceStore.Close()
+		web.SetLogReduceStore(logReduceStore)
+		fmt.Printf("Log pattern mining: %s\n", logReduceDbPath)
+		fmt.Printf("LogReduce: http://localhost:%d/api/logs/patterns\n", *webPort)
 	}
 
 	// Create custom metrics storage
