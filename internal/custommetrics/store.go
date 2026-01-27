@@ -53,6 +53,11 @@ type MetricInfo struct {
 	LastSeen  time.Time         `json:"last_seen"`
 }
 
+// CardinalityHook is called when metrics are recorded for cardinality tracking
+type CardinalityHook interface {
+	RecordSeries(name string, tags map[string]string)
+}
+
 // Store handles custom metrics persistence
 type Store struct {
 	db *sql.DB
@@ -61,6 +66,9 @@ type Store struct {
 	// In-memory aggregation for counters
 	counters map[string]float64
 	counterMu sync.Mutex
+
+	// Cardinality tracking hook
+	cardinalityHook CardinalityHook
 }
 
 // NewStore creates a new custom metrics store
@@ -108,6 +116,13 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// SetCardinalityHook sets a hook for cardinality tracking
+func (s *Store) SetCardinalityHook(hook CardinalityHook) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cardinalityHook = hook
+}
+
 // tagsToKey creates a unique key for a metric + tags combination
 func tagsToKey(name string, tags map[string]string) string {
 	if len(tags) == 0 {
@@ -131,6 +146,11 @@ func tagsToKey(name string, tags map[string]string) string {
 func (s *Store) Record(dp DataPoint) error {
 	if dp.Timestamp.IsZero() {
 		dp.Timestamp = time.Now()
+	}
+
+	// Track cardinality
+	if s.cardinalityHook != nil {
+		s.cardinalityHook.RecordSeries(dp.Name, dp.Tags)
 	}
 
 	// For counters, we accumulate and periodically flush
@@ -184,6 +204,13 @@ func (s *Store) recordPoint(dp DataPoint) error {
 
 // RecordBatch stores multiple data points efficiently
 func (s *Store) RecordBatch(points []DataPoint) error {
+	// Track cardinality outside the lock
+	if s.cardinalityHook != nil {
+		for _, dp := range points {
+			s.cardinalityHook.RecordSeries(dp.Name, dp.Tags)
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

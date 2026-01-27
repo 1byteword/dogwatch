@@ -284,6 +284,9 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	// Cost intelligence endpoints
 	RegisterCostIntelRoutes(mux)
 
+	// Cardinality explorer endpoints
+	RegisterCardinalityRoutes(mux)
+
 	// Health check endpoints (no auth required)
 	// Standard paths
 	mux.HandleFunc("/health", s.handleHealth)

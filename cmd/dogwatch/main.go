@@ -17,6 +17,7 @@ import (
 	"dogwatch/internal/alerting"
 	"dogwatch/internal/anomaly"
 	"dogwatch/internal/audit"
+	"dogwatch/internal/cardinality"
 	"dogwatch/internal/containers"
 	"dogwatch/internal/costintel"
 	"dogwatch/internal/dbwatch"
@@ -197,6 +198,14 @@ func main() {
 		defer customMetricsStore.Close()
 		fmt.Printf("Custom metrics storage: %s\n", customMetricsDbPath)
 	}
+
+	// Create cardinality explorer
+	cardinalityExplorer := cardinality.NewExplorer()
+	if customMetricsStore != nil {
+		customMetricsStore.SetCardinalityHook(cardinalityExplorer)
+	}
+	web.SetCardinalityExplorer(cardinalityExplorer)
+	fmt.Printf("Cardinality explorer: http://localhost:%d/api/cardinality/report\n", *webPort)
 
 	// Create database watch storage
 	dbwatchDbPath := filepath.Join(*dataDir, "dbwatch.db")
