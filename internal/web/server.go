@@ -287,6 +287,9 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	// Cardinality explorer endpoints
 	RegisterCardinalityRoutes(mux)
 
+	// Usage analytics endpoints
+	RegisterUsageRoutes(mux)
+
 	// Health check endpoints (no auth required)
 	// Standard paths
 	mux.HandleFunc("/health", s.handleHealth)
@@ -1524,6 +1527,13 @@ func (s *Server) handleListTraces(w http.ResponseWriter, r *http.Request) {
 		traces = traces[:params.Limit]
 	}
 
+	// Track usage
+	svc := service
+	if svc == "" {
+		svc = "_all"
+	}
+	TrackTraceQuery(svc, "api", len(traces))
+
 	// Set pagination headers
 	w.Header().Set("X-Page-Size", strconv.Itoa(params.Limit))
 	w.Header().Set("X-Has-More", strconv.FormatBool(hasMore))
@@ -2025,6 +2035,13 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	if hasMore {
 		result.Entries = result.Entries[:params.Limit]
 	}
+
+	// Track usage
+	service := q.Service
+	if service == "" {
+		service = "_all"
+	}
+	TrackLogQuery(service, "api", len(result.Entries))
 
 	// Set pagination headers
 	w.Header().Set("X-Total-Count", strconv.Itoa(result.TotalCount))
@@ -2758,6 +2775,13 @@ func (s *Server) handleMetricsQuery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// Track usage
+	resultSize := 0
+	if series != nil {
+		resultSize = len(series.Points)
+	}
+	TrackMetricQuery(name, "api", resultSize)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(series)

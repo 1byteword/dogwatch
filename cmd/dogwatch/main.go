@@ -38,6 +38,7 @@ import (
 	"dogwatch/internal/storage"
 	"dogwatch/internal/synthetics"
 	"dogwatch/internal/trace"
+	"dogwatch/internal/usage"
 	"dogwatch/internal/watch"
 	"dogwatch/internal/web"
 )
@@ -206,6 +207,11 @@ func main() {
 	}
 	web.SetCardinalityExplorer(cardinalityExplorer)
 	fmt.Printf("Cardinality explorer: http://localhost:%d/api/cardinality/report\n", *webPort)
+
+	// Create usage tracker for analytics
+	usageTracker := usage.NewTracker(10000)
+	web.SetUsageTracker(usageTracker)
+	fmt.Printf("Usage analytics: http://localhost:%d/api/usage/report\n", *webPort)
 
 	// Create database watch storage
 	dbwatchDbPath := filepath.Join(*dataDir, "dbwatch.db")
