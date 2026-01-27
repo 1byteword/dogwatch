@@ -18,6 +18,7 @@ import (
 	"dogwatch/internal/anomaly"
 	"dogwatch/internal/audit"
 	"dogwatch/internal/containers"
+	"dogwatch/internal/costintel"
 	"dogwatch/internal/dbwatch"
 	"dogwatch/internal/sso"
 	"dogwatch/internal/custommetrics"
@@ -212,6 +213,33 @@ func main() {
 
 	// Configure cost intelligence
 	web.SetCostIntelStores(traceStore, logStore, customMetricsStore)
+
+	// Create cost intelligence store for trending
+	costDbPath := filepath.Join(*dataDir, "costintel.db")
+	costStore, err := costintel.NewStore(costDbPath)
+	if err != nil {
+		log.Printf("Warning: Could not create cost intelligence storage: %v", err)
+		costStore = nil
+	} else {
+		defer costStore.Close()
+		fmt.Printf("Cost Intelligence storage: %s\n", costDbPath)
+
+		// Create usage provider adapter
+		usageProvider := &costUsageProvider{
+			traceStore:    traceStore,
+			logStore:      logStore,
+			customMetrics: customMetricsStore,
+		}
+
+		// Create collector for periodic cost tracking (hourly)
+		costCollector := costintel.NewCollector(costStore, usageProvider, time.Hour)
+		costCollector.Start()
+		defer costCollector.Stop()
+
+		web.SetCostIntelStore(costStore, costCollector)
+		fmt.Printf("Cost trending: http://localhost:%d/api/cost/trend\n", *webPort)
+	}
+
 	fmt.Printf("Cost Intelligence: http://localhost:%d/api/cost/estimate\n", *webPort)
 
 	// Start OTLP receivers
@@ -925,4 +953,64 @@ func generateSecurePassword() string {
 		}
 	}
 	return string(b)
+}
+
+// costUsageProvider adapts stores to the costintel.UsageProvider interface
+type costUsageProvider struct {
+	traceStore    *trace.Store
+	logStore      *logs.Store
+	customMetrics *custommetrics.Store
+}
+
+func (p *costUsageProvider) CollectUsage() costintel.UsageMetrics {
+	usage := costintel.UsageMetrics{
+		CollectedAt: time.Now(),
+		PeriodDays:  30,
+	}
+
+	// Collect trace metrics (APM data)
+	if p.traceStore != nil {
+		services, err := p.traceStore.GetServices()
+		if err == nil {
+			usage.APMHostCount = len(services)
+			usage.HostCount = len(services)
+
+			for _, svc := range services {
+				traces, err := p.traceStore.ListTraces(1000, svc, 24*time.Hour)
+				if err == nil {
+					usage.SpansPerMonth += int64(len(traces) * 5 * 30)
+				}
+			}
+		}
+	}
+
+	// Collect log metrics
+	if p.logStore != nil {
+		end := time.Now()
+		start := end.Add(-24 * time.Hour)
+
+		query := logs.SearchQuery{
+			StartTime: start,
+			EndTime:   end,
+			Limit:     1,
+		}
+
+		results, err := p.logStore.Search(query)
+		if err == nil && results != nil {
+			dailyLogs := int64(results.TotalCount)
+			usage.LogEventsPerMonth = dailyLogs * 30
+			usage.LogsGBPerMonth = float64(dailyLogs*30) * 0.001 / 1024
+		}
+	}
+
+	// Collect custom metrics count
+	if p.customMetrics != nil {
+		metricInfos, err := p.customMetrics.List()
+		if err == nil {
+			usage.CustomMetricsCount = len(metricInfos)
+			usage.MetricDataPoints = int64(len(metricInfos)) * 60 * 24 * 30
+		}
+	}
+
+	return usage
 }
