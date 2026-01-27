@@ -125,6 +125,11 @@ func main() {
 	if err := os.MkdirAll(*dataDir, 0755); err != nil {
 		log.Printf("Warning: Could not create data directory: %v", err)
 	}
+
+	// Configure backup with data directory
+	web.SetBackupDataDir(*dataDir)
+	fmt.Printf("Backup/restore: http://localhost:%d/api/backup\n", *webPort)
+
 	dbPath := filepath.Join(*dataDir, "metrics.db")
 	store, err := storage.New(dbPath)
 	if err != nil {

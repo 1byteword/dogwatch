@@ -278,6 +278,9 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	// Database watch endpoints
 	RegisterDBWatchRoutes(mux)
 
+	// Backup/restore endpoints
+	RegisterBackupRoutes(mux)
+
 	// Health check endpoints (no auth required)
 	// Standard paths
 	mux.HandleFunc("/health", s.handleHealth)
