@@ -1,10 +1,13 @@
 package custommetrics
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/golang/snappy"
@@ -14,11 +17,24 @@ import (
 // PrometheusReceiver handles Prometheus remote write requests
 type PrometheusReceiver struct {
 	store *Store
+
+	// Stats tracking
+	mu             sync.RWMutex
+	totalRequests  int64
+	totalSamples   int64
+	totalSeries    int64
+	totalErrors    int64
+	lastReceived   time.Time
+	seriesSeen     map[string]struct{}
+	recentErrors   []string
 }
 
 // NewPrometheusReceiver creates a new Prometheus remote write receiver
 func NewPrometheusReceiver(store *Store) *PrometheusReceiver {
-	return &PrometheusReceiver{store: store}
+	return &PrometheusReceiver{
+		store:      store,
+		seriesSeen: make(map[string]struct{}),
+	}
 }
 
 // HandleRemoteWrite handles POST /api/v1/write from Prometheus
@@ -28,9 +44,12 @@ func (r *PrometheusReceiver) HandleRemoteWrite(w http.ResponseWriter, req *http.
 		return
 	}
 
+	atomic.AddInt64(&r.totalRequests, 1)
+
 	// Read compressed body
 	compressed, err := io.ReadAll(req.Body)
 	if err != nil {
+		r.recordError(fmt.Sprintf("read body: %v", err))
 		http.Error(w, fmt.Sprintf("Failed to read body: %v", err), http.StatusBadRequest)
 		return
 	}
@@ -39,6 +58,7 @@ func (r *PrometheusReceiver) HandleRemoteWrite(w http.ResponseWriter, req *http.
 	// Decompress with snappy
 	decompressed, err := snappy.Decode(nil, compressed)
 	if err != nil {
+		r.recordError(fmt.Sprintf("decompress: %v", err))
 		http.Error(w, fmt.Sprintf("Failed to decompress: %v", err), http.StatusBadRequest)
 		return
 	}
@@ -46,28 +66,57 @@ func (r *PrometheusReceiver) HandleRemoteWrite(w http.ResponseWriter, req *http.
 	// Parse protobuf
 	var writeReq prompb.WriteRequest
 	if err := writeReq.Unmarshal(decompressed); err != nil {
+		r.recordError(fmt.Sprintf("parse protobuf: %v", err))
 		http.Error(w, fmt.Sprintf("Failed to parse protobuf: %v", err), http.StatusBadRequest)
 		return
 	}
 
 	// Convert to DataPoints
-	points := r.convertTimeSeries(writeReq.Timeseries)
+	points, seriesKeys := r.convertTimeSeriesWithKeys(writeReq.Timeseries)
+
+	// Track series
+	r.mu.Lock()
+	for _, key := range seriesKeys {
+		r.seriesSeen[key] = struct{}{}
+	}
+	r.totalSeries = int64(len(r.seriesSeen))
+	r.lastReceived = time.Now()
+	r.mu.Unlock()
 
 	// Store
 	if len(points) > 0 {
 		if err := r.store.RecordBatch(points); err != nil {
+			r.recordError(fmt.Sprintf("store: %v", err))
 			log.Printf("Failed to store prometheus metrics: %v", err)
 			http.Error(w, fmt.Sprintf("Failed to store: %v", err), http.StatusInternalServerError)
 			return
 		}
+		atomic.AddInt64(&r.totalSamples, int64(len(points)))
 	}
 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (r *PrometheusReceiver) recordError(msg string) {
+	atomic.AddInt64(&r.totalErrors, 1)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.recentErrors = append(r.recentErrors, fmt.Sprintf("%s: %s", time.Now().Format(time.RFC3339), msg))
+	if len(r.recentErrors) > 10 {
+		r.recentErrors = r.recentErrors[1:]
+	}
+}
+
 // convertTimeSeries converts Prometheus TimeSeries to DataPoints
 func (r *PrometheusReceiver) convertTimeSeries(timeseries []prompb.TimeSeries) []DataPoint {
+	points, _ := r.convertTimeSeriesWithKeys(timeseries)
+	return points
+}
+
+// convertTimeSeriesWithKeys converts Prometheus TimeSeries to DataPoints and returns series keys
+func (r *PrometheusReceiver) convertTimeSeriesWithKeys(timeseries []prompb.TimeSeries) ([]DataPoint, []string) {
 	var points []DataPoint
+	var seriesKeys []string
 
 	for _, ts := range timeseries {
 		// Extract metric name and labels
@@ -85,6 +134,10 @@ func (r *PrometheusReceiver) convertTimeSeries(timeseries []prompb.TimeSeries) [
 		if name == "" {
 			continue
 		}
+
+		// Build series key for tracking unique series
+		seriesKey := buildSeriesKey(name, tags)
+		seriesKeys = append(seriesKeys, seriesKey)
 
 		// Determine metric type from name suffix
 		metricType := guessMetricType(name)
@@ -129,7 +182,16 @@ func (r *PrometheusReceiver) convertTimeSeries(timeseries []prompb.TimeSeries) [
 		}
 	}
 
-	return points
+	return points, seriesKeys
+}
+
+func buildSeriesKey(name string, tags map[string]string) string {
+	// Simple key: name + sorted tags
+	key := name
+	for k, v := range tags {
+		key += "|" + k + "=" + v
+	}
+	return key
 }
 
 // guessMetricType guesses the metric type from the name
@@ -170,7 +232,38 @@ func copyTags(tags map[string]string) map[string]string {
 
 // PrometheusStats returns stats about received metrics
 type PrometheusStats struct {
-	TotalSeries   int64 `json:"total_series"`
-	TotalSamples  int64 `json:"total_samples"`
-	LastReceived  time.Time `json:"last_received,omitempty"`
+	TotalRequests  int64     `json:"total_requests"`
+	TotalSamples   int64     `json:"total_samples"`
+	TotalSeries    int64     `json:"total_series"`
+	TotalErrors    int64     `json:"total_errors"`
+	LastReceived   time.Time `json:"last_received,omitempty"`
+	RecentErrors   []string  `json:"recent_errors,omitempty"`
+}
+
+// GetStats returns Prometheus receiver statistics
+func (r *PrometheusReceiver) GetStats() PrometheusStats {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return PrometheusStats{
+		TotalRequests:  atomic.LoadInt64(&r.totalRequests),
+		TotalSamples:   atomic.LoadInt64(&r.totalSamples),
+		TotalSeries:    r.totalSeries,
+		TotalErrors:    atomic.LoadInt64(&r.totalErrors),
+		LastReceived:   r.lastReceived,
+		RecentErrors:   r.recentErrors,
+	}
+}
+
+// HandleStats handles GET /api/v1/write/stats
+func (r *PrometheusReceiver) HandleStats(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	stats := r.GetStats()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
 }

@@ -156,6 +156,7 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 
 	// Prometheus remote write endpoint
 	mux.HandleFunc("/api/v1/write", s.handlePrometheusRemoteWrite)
+	mux.HandleFunc("/api/v1/write/stats", s.handlePrometheusStats)
 
 	// Synthetics endpoints
 	mux.HandleFunc("/api/synthetics/checks", s.handleSyntheticsChecks)
@@ -2830,6 +2831,15 @@ func (s *Server) handlePrometheusRemoteWrite(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	s.prometheusReceiver.HandleRemoteWrite(w, r)
+}
+
+// handlePrometheusStats returns Prometheus receiver statistics
+func (s *Server) handlePrometheusStats(w http.ResponseWriter, r *http.Request) {
+	if s.prometheusReceiver == nil {
+		http.Error(w, "Prometheus receiver not enabled", http.StatusServiceUnavailable)
+		return
+	}
+	s.prometheusReceiver.HandleStats(w, r)
 }
 
 // Synthetics handlers

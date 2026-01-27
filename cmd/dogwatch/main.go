@@ -244,6 +244,7 @@ func main() {
 	} else {
 		defer customMetricsStore.Close()
 		fmt.Printf("Custom metrics storage: %s\n", customMetricsDbPath)
+		fmt.Printf("Prometheus remote write: http://localhost:%d/api/v1/write\n", *webPort)
 	}
 
 	// Create cardinality explorer
