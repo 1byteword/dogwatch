@@ -293,6 +293,9 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	// Data shaping endpoints
 	RegisterDataShapingRoutes(mux)
 
+	// Quota and chargeback endpoints
+	RegisterQuotaRoutes(mux)
+
 	// Health check endpoints (no auth required)
 	// Standard paths
 	mux.HandleFunc("/health", s.handleHealth)

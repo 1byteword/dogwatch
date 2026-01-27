@@ -34,6 +34,7 @@ import (
 	"dogwatch/internal/oncall"
 	"dogwatch/internal/otlp"
 	"dogwatch/internal/probe"
+	"dogwatch/internal/quotas"
 	"dogwatch/internal/rbac"
 	"dogwatch/internal/slo"
 	"dogwatch/internal/storage"
@@ -230,6 +231,26 @@ func main() {
 		}
 
 		fmt.Printf("Data shaping: http://localhost:%d/api/shaping/rules\n", *webPort)
+	}
+
+	// Create quota and chargeback store
+	quotaDbPath := filepath.Join(*dataDir, "quotas.db")
+	quotaStore, err := quotas.NewStore(quotaDbPath)
+	if err != nil {
+		log.Printf("Warning: Could not create quota storage: %v", err)
+		quotaStore = nil
+	} else {
+		defer quotaStore.Close()
+
+		// Create quota tracker for real-time enforcement
+		quotaTracker := quotas.NewTracker(quotaStore)
+		quotaTracker.Start()
+		defer quotaTracker.Stop()
+
+		web.SetQuotaStore(quotaStore, quotaTracker)
+		fmt.Printf("Quotas storage: %s\n", quotaDbPath)
+		fmt.Printf("Team quotas: http://localhost:%d/api/quotas/teams\n", *webPort)
+		fmt.Printf("Chargeback: http://localhost:%d/api/chargeback/summary\n", *webPort)
 	}
 
 	// Create database watch storage
