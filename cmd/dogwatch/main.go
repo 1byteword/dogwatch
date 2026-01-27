@@ -297,6 +297,18 @@ func main() {
 
 	fmt.Printf("Cost Intelligence: http://localhost:%d/api/cost/estimate\n", *webPort)
 
+	// Set up cost recommendations engine
+	recommendationEngine := costintel.NewRecommendationEngine()
+	recommendationProvider := costintel.NewDataProvider(
+		traceStore,
+		logStore,
+		customMetricsStore,
+		cardinalityExplorer,
+		usageTracker,
+	)
+	web.SetRecommendationEngine(recommendationEngine, recommendationProvider)
+	fmt.Printf("Cost recommendations: http://localhost:%d/api/cost/recommendations\n", *webPort)
+
 	// Start OTLP receivers
 	var otlpServer *otlp.Server
 	if *otlpEnabled && (traceStore != nil || customMetricsStore != nil || logStore != nil) {
