@@ -18,6 +18,7 @@ import (
 	"dogwatch/internal/anomaly"
 	"dogwatch/internal/audit"
 	"dogwatch/internal/containers"
+	"dogwatch/internal/dbwatch"
 	"dogwatch/internal/sso"
 	"dogwatch/internal/custommetrics"
 	"dogwatch/internal/deploys"
@@ -106,6 +107,17 @@ func main() {
 		fmt.Println("  CPU profiler running at 49Hz sampling")
 	}
 
+	// Start database protocol probe (MySQL, PostgreSQL, Redis)
+	fmt.Println("Starting database protocol probe...")
+	dbProbe, err := probe.NewDBProbe()
+	if err != nil {
+		log.Printf("Warning: Database probe failed to start: %v", err)
+		dbProbe = nil
+	} else {
+		defer dbProbe.Close()
+		fmt.Println("  Database probe monitoring MySQL, PostgreSQL, Redis")
+	}
+
 	// Create aggregator
 	agg := aggregator.New()
 
@@ -178,6 +190,19 @@ func main() {
 	} else {
 		defer customMetricsStore.Close()
 		fmt.Printf("Custom metrics storage: %s\n", customMetricsDbPath)
+	}
+
+	// Create database watch storage
+	dbwatchDbPath := filepath.Join(*dataDir, "dbwatch.db")
+	dbwatchStore, err := dbwatch.NewStore(dbwatchDbPath)
+	if err != nil {
+		log.Printf("Warning: Could not create database watch storage: %v", err)
+		dbwatchStore = nil
+	} else {
+		defer dbwatchStore.Close()
+		web.SetDBWatchStore(dbwatchStore)
+		fmt.Printf("Database watch storage: %s\n", dbwatchDbPath)
+		fmt.Println("Database monitoring: http://localhost:9999/api/dbwatch/queries")
 	}
 
 	// Start OTLP receivers
@@ -644,10 +669,20 @@ func main() {
 		}()
 	}
 
+	// Start reading database protocol events
+	if dbProbe != nil {
+		go func() {
+			if err := dbProbe.Run(); err != nil {
+				log.Printf("Database probe error: %v", err)
+			}
+		}()
+	}
+
 	// SSL probe is disabled for MVP - see comments above
 	_ = sslProbe         // silence unused variable warning
 	_ = statsdReceiver   // StatsD receiver runs in background
 	_ = otlpServer       // OTLP server runs in background
+	_ = dbwatchStore     // dbwatch store used in event loop
 
 	// Ticker for stats display
 	statsTicker := time.NewTicker(time.Duration(*interval) * time.Second)
@@ -723,6 +758,12 @@ func main() {
 			}
 			handleHTTPEvent(event, agg, *verbose, "HTTPS")
 
+		case event, ok := <-getDBEvents(dbProbe):
+			if !ok {
+				continue
+			}
+			handleDBEvent(event, dbwatchStore, *verbose)
+
 		case <-statsTicker.C:
 			fmt.Print("\033[2J\033[H")
 			fmt.Println("🐕 dogwatch - eBPF observability")
@@ -762,6 +803,63 @@ func getSSLEvents(p *probe.SSLProbe) <-chan probe.HTTPEvent {
 		return nil
 	}
 	return p.Events()
+}
+
+func getDBEvents(p *probe.DBProbe) <-chan probe.DBEvent {
+	if p == nil {
+		return nil
+	}
+	return p.Events()
+}
+
+func handleDBEvent(event probe.DBEvent, store *dbwatch.Store, verbose bool) {
+	if store == nil {
+		return
+	}
+
+	// Only record queries with latency (response events with timing info)
+	if event.EventType == "response" && event.Latency > 0 {
+		record := &dbwatch.QueryRecord{
+			Timestamp:    event.Timestamp,
+			DBType:       dbwatch.DBType(event.DBType),
+			PID:          event.PID,
+			Comm:         event.Comm,
+			Operation:    event.Operation,
+			Query:        event.Query,
+			Table:        event.Table,
+			Key:          event.Key,
+			LatencyMs:    float64(event.Latency.Microseconds()) / 1000.0,
+			RowsAffected: event.RowsAffected,
+			Error:        event.Error,
+		}
+		store.Record(record)
+	}
+
+	if verbose {
+		dbColor := dbTypeColor(event.DBType)
+		if event.EventType == "query" {
+			query := event.Query
+			if len(query) > 60 {
+				query = query[:60] + "..."
+			}
+			fmt.Printf("[%s%s\033[0m] PID:%-6d %s %s\n", dbColor, strings.ToUpper(event.DBType), event.PID, event.Operation, query)
+		} else if event.Latency > 0 {
+			fmt.Printf("[%s%s\033[0m] PID:%-6d %s %.2fms\n", dbColor, strings.ToUpper(event.DBType), event.PID, event.Operation, float64(event.Latency.Microseconds())/1000.0)
+		}
+	}
+}
+
+func dbTypeColor(dbType string) string {
+	switch dbType {
+	case "mysql":
+		return "\033[34m" // blue
+	case "postgres":
+		return "\033[36m" // cyan
+	case "redis":
+		return "\033[31m" // red
+	default:
+		return ""
+	}
 }
 
 func handleHTTPEvent(event probe.HTTPEvent, agg *aggregator.Aggregator, verbose bool, proto string) {

@@ -271,6 +271,9 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 		s.correlationHandlers.RegisterRoutes(mux)
 	}
 
+	// Database watch endpoints
+	RegisterDBWatchRoutes(mux)
+
 	// Health check endpoints (no auth required)
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/ready", s.handleReady)
