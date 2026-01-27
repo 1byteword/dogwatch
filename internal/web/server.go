@@ -64,6 +64,7 @@ type Server struct {
 	logStore            *logs.Store
 	customMetricsStore  *custommetrics.Store
 	otlpMetricsReceiver *custommetrics.OTLPMetricsReceiver
+	prometheusReceiver  *custommetrics.PrometheusReceiver
 	syntheticsStore     *synthetics.Store
 	syntheticsRunner    *synthetics.Runner
 	sloStore            *slo.Store
@@ -152,6 +153,9 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	mux.HandleFunc("/api/metrics/push", s.handleMetricsPush)
 	mux.HandleFunc("/api/metrics/query", s.handleMetricsQuery)
 	mux.HandleFunc("/api/metrics/list", s.handleMetricsList)
+
+	// Prometheus remote write endpoint
+	mux.HandleFunc("/api/v1/write", s.handlePrometheusRemoteWrite)
 
 	// Synthetics endpoints
 	mux.HandleFunc("/api/synthetics/checks", s.handleSyntheticsChecks)
@@ -637,6 +641,7 @@ func (s *Server) SetLogStore(ls *logs.Store) {
 func (s *Server) SetCustomMetricsStore(cms *custommetrics.Store) {
 	s.customMetricsStore = cms
 	s.otlpMetricsReceiver = custommetrics.NewOTLPMetricsReceiver(cms)
+	s.prometheusReceiver = custommetrics.NewPrometheusReceiver(cms)
 }
 
 // SetSyntheticsStore sets the synthetics storage and starts the runner
@@ -2768,6 +2773,15 @@ func (s *Server) handleMetricsList(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(metrics)
+}
+
+// handlePrometheusRemoteWrite handles Prometheus remote write requests
+func (s *Server) handlePrometheusRemoteWrite(w http.ResponseWriter, r *http.Request) {
+	if s.prometheusReceiver == nil {
+		http.Error(w, "Prometheus receiver not enabled", http.StatusServiceUnavailable)
+		return
+	}
+	s.prometheusReceiver.HandleRemoteWrite(w, r)
 }
 
 // Synthetics handlers
