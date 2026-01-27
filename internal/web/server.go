@@ -275,10 +275,15 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	RegisterDBWatchRoutes(mux)
 
 	// Health check endpoints (no auth required)
+	// Standard paths
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/ready", s.handleReady)
 	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.HandleFunc("/api/ready", s.handleReady)
+	// Kubernetes standard paths
+	mux.HandleFunc("/healthz", s.handleHealthz)
+	mux.HandleFunc("/readyz", s.handleReadyz)
+	mux.HandleFunc("/livez", s.handleLivez)
 
 	// Apply rate limiting middleware
 	rateLimitConfig := DefaultRateLimitConfig()
@@ -341,6 +346,131 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		"checks": checks,
 		"time":   time.Now().UTC().Format(time.RFC3339),
 	})
+}
+
+// handleHealthz is the Kubernetes-standard liveness probe
+// Returns 200 if the process is alive and can handle requests
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	// Check if verbose output requested
+	verbose := r.URL.Query().Get("verbose") == "true"
+
+	checks := make(map[string]string)
+	healthy := true
+
+	// Basic process health - if we're responding, we're alive
+	checks["ping"] = "ok"
+
+	// Check if server can accept connections
+	if s.server != nil {
+		checks["server"] = "ok"
+	} else {
+		checks["server"] = "not initialized"
+		healthy = false
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	if healthy {
+		w.WriteHeader(http.StatusOK)
+		if verbose {
+			for name, status := range checks {
+				fmt.Fprintf(w, "[+] %s %s\n", name, status)
+			}
+		} else {
+			w.Write([]byte("ok"))
+		}
+	} else {
+		w.WriteHeader(http.StatusInternalServerError)
+		for name, status := range checks {
+			if status != "ok" {
+				fmt.Fprintf(w, "[-] %s %s\n", name, status)
+			} else if verbose {
+				fmt.Fprintf(w, "[+] %s %s\n", name, status)
+			}
+		}
+	}
+}
+
+// handleReadyz is the Kubernetes-standard readiness probe
+// Returns 200 only if the service is ready to receive traffic
+func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	verbose := r.URL.Query().Get("verbose") == "true"
+
+	checks := make(map[string]string)
+	ready := true
+
+	// Core components required for readiness
+	if s.agg != nil {
+		checks["aggregator"] = "ok"
+	} else {
+		checks["aggregator"] = "not initialized"
+		ready = false
+	}
+
+	// Storage checks (optional but tracked)
+	if s.store != nil {
+		checks["metrics_store"] = "ok"
+	} else {
+		checks["metrics_store"] = "not configured"
+	}
+
+	if s.traceStore != nil {
+		checks["trace_store"] = "ok"
+	} else {
+		checks["trace_store"] = "not configured"
+	}
+
+	if s.logStore != nil {
+		checks["log_store"] = "ok"
+	} else {
+		checks["log_store"] = "not configured"
+	}
+
+	if s.customMetricsStore != nil {
+		checks["custom_metrics_store"] = "ok"
+	} else {
+		checks["custom_metrics_store"] = "not configured"
+	}
+
+	// Kubernetes collector (optional)
+	if s.k8sCollector != nil {
+		checks["kubernetes"] = "ok"
+	}
+
+	// Cluster federation (optional)
+	if s.cluster != nil {
+		checks["federation"] = "ok"
+	}
+
+	// Alert manager (optional)
+	if s.alertManager != nil {
+		checks["alerting"] = "ok"
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	if ready {
+		w.WriteHeader(http.StatusOK)
+		if verbose {
+			for name, status := range checks {
+				fmt.Fprintf(w, "[+] %s %s\n", name, status)
+			}
+		} else {
+			w.Write([]byte("ok"))
+		}
+	} else {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		for name, status := range checks {
+			if status != "ok" && status != "not configured" {
+				fmt.Fprintf(w, "[-] %s %s\n", name, status)
+			} else if verbose {
+				fmt.Fprintf(w, "[+] %s %s\n", name, status)
+			}
+		}
+	}
+}
+
+// handleLivez is an alias for healthz (Kubernetes liveness)
+func (s *Server) handleLivez(w http.ResponseWriter, r *http.Request) {
+	s.handleHealthz(w, r)
 }
 
 // SetProfiler sets the flame graph profiler
