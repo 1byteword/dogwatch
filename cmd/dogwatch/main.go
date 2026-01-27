@@ -210,6 +210,10 @@ func main() {
 		fmt.Println("Database monitoring: http://localhost:9999/api/dbwatch/queries")
 	}
 
+	// Configure cost intelligence
+	web.SetCostIntelStores(traceStore, logStore, customMetricsStore)
+	fmt.Printf("Cost Intelligence: http://localhost:%d/api/cost/estimate\n", *webPort)
+
 	// Start OTLP receivers
 	var otlpServer *otlp.Server
 	if *otlpEnabled && (traceStore != nil || customMetricsStore != nil || logStore != nil) {

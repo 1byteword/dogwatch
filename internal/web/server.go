@@ -281,6 +281,9 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	// Backup/restore endpoints
 	RegisterBackupRoutes(mux)
 
+	// Cost intelligence endpoints
+	RegisterCostIntelRoutes(mux)
+
 	// Health check endpoints (no auth required)
 	// Standard paths
 	mux.HandleFunc("/health", s.handleHealth)
