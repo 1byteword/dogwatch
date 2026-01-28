@@ -210,19 +210,20 @@ static __always_inline void detect_db_protocol(const char *buf, __u32 size, __u8
     *db_type = DB_TYPE_UNKNOWN;
     *event_type = 0;
 
-    // Try MySQL first (most common)
-    if (is_mysql_query(buf, size)) {
-        *db_type = DB_TYPE_MYSQL;
+    // Try Redis FIRST - it has very distinctive RESP markers (*, +, -, $, :)
+    // and is less likely to false-positive on other protocols
+    if (is_redis_command(buf, size)) {
+        *db_type = DB_TYPE_REDIS;
         *event_type = EVENT_TYPE_QUERY;
         return;
     }
-    if (is_mysql_response(buf, size)) {
-        *db_type = DB_TYPE_MYSQL;
+    if (is_redis_response(buf, size)) {
+        *db_type = DB_TYPE_REDIS;
         *event_type = EVENT_TYPE_RESPONSE;
         return;
     }
 
-    // Try PostgreSQL
+    // Try PostgreSQL - has clear message type markers (Q, P, E, B, T, D, C, etc.)
     if (is_postgres_query(buf, size)) {
         *db_type = DB_TYPE_POSTGRES;
         *event_type = EVENT_TYPE_QUERY;
@@ -234,14 +235,14 @@ static __always_inline void detect_db_protocol(const char *buf, __u32 size, __u8
         return;
     }
 
-    // Try Redis
-    if (is_redis_command(buf, size)) {
-        *db_type = DB_TYPE_REDIS;
+    // Try MySQL last - binary protocol is harder to distinguish
+    if (is_mysql_query(buf, size)) {
+        *db_type = DB_TYPE_MYSQL;
         *event_type = EVENT_TYPE_QUERY;
         return;
     }
-    if (is_redis_response(buf, size)) {
-        *db_type = DB_TYPE_REDIS;
+    if (is_mysql_response(buf, size)) {
+        *db_type = DB_TYPE_MYSQL;
         *event_type = EVENT_TYPE_RESPONSE;
         return;
     }
