@@ -24,10 +24,18 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 
 | Task | Complexity | VISION.md Reference |
 |------|------------|---------------------|
-| MySQL eBPF protocol parsing | 2-3 weeks | [Zero-Config Tracing](VISION.md#1-zero-config-distributed-tracing), [MySQL Wire Format](VISION.md#mysql-protocol-parsing) |
-| PostgreSQL eBPF protocol parsing | 2-3 weeks | [Zero-Config Tracing](VISION.md#1-zero-config-distributed-tracing), [PostgreSQL Wire Format](VISION.md#postgresql-protocol-parsing) |
-| Redis eBPF protocol parsing | 1-2 weeks | [Zero-Config Tracing](VISION.md#1-zero-config-distributed-tracing), [Redis Wire Format](VISION.md#redis-protocol-parsing) |
+| ~~Redis eBPF protocol parsing~~ | ✅ Done | [Zero-Config Tracing](VISION.md#1-zero-config-distributed-tracing), [Redis Wire Format](VISION.md#redis-protocol-parsing) |
+| PostgreSQL eBPF protocol parsing | Test needed | [Zero-Config Tracing](VISION.md#1-zero-config-distributed-tracing), [PostgreSQL Wire Format](VISION.md#postgresql-protocol-parsing) |
+| MySQL eBPF protocol parsing | Test needed | [Zero-Config Tracing](VISION.md#1-zero-config-distributed-tracing), [MySQL Wire Format](VISION.md#mysql-protocol-parsing) |
 | ~~Fix SSL/HTTPS probe~~ | ✅ Done | [TLS Interception](VISION.md#2-tls-interception) |
+
+### P1 - DB Probe Refinements
+
+| Task | Complexity | Notes |
+|------|------------|-------|
+| Reduce MySQL false positives | 2-3 days | Binary protocol matches gRPC/protobuf; add stricter validation |
+| Test PostgreSQL with real server | 1 day | Code exists, needs verification |
+| Test MySQL with real server | 1 day | Code exists, needs verification |
 
 ### P0 - Production Essentials
 
@@ -197,7 +205,7 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 
 | Category | Items |
 |----------|-------|
-| **eBPF** | TCP connections, HTTP/1.1 parsing, CPU profiling/flamegraphs, SSL/HTTPS (tracefs uprobes) |
+| **eBPF** | TCP connections, HTTP/1.1 parsing, CPU profiling/flamegraphs, SSL/HTTPS (tracefs uprobes), Redis protocol |
 | **Storage** | All SQLite stores (metrics, traces, logs, dashboards, alerts, SLOs, synthetics, incidents, on-call, RBAC, audit, SSO, deploys, notify, catalog) |
 | **Alerting** | Rules, evaluation, routing, inhibition |
 | **Notifications** | Slack, PagerDuty, OpsGenie, Discord, MS Teams, Email, Webhook |
