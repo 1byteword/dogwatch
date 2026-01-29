@@ -264,6 +264,69 @@
         .latency.bad { color: #f4212e; }
         .empty-state { padding: 1.5rem; text-align: center; color: #71767b; font-size: 0.8rem; }
 
+        /* Cost Intelligence Widget */
+        .cost-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; padding: 0.5rem 0; }
+        .cost-card { background: #1a1f2e; border: 1px solid #2f3336; border-radius: 8px; padding: 1rem; position: relative; }
+        .cost-card.highlight { border-color: #1d9bf0; background: linear-gradient(135deg, rgba(29,155,240,0.1), transparent); }
+        .cost-vendor { font-size: 0.75rem; color: #71767b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem; }
+        .cost-vendor-logo { width: 16px; height: 16px; border-radius: 3px; }
+        .cost-amount { font-size: 1.8rem; font-weight: 700; color: #e7e9ea; }
+        .cost-amount.savings { color: #00ba7c; }
+        .cost-period { font-size: 0.65rem; color: #71767b; }
+        .cost-breakdown { margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #2f3336; }
+        .cost-breakdown-item { display: flex; justify-content: space-between; font-size: 0.7rem; padding: 0.2rem 0; }
+        .cost-breakdown-label { color: #71767b; }
+        .cost-breakdown-value { color: #e7e9ea; font-family: 'SF Mono', Consolas, monospace; }
+        .cost-savings-badge { position: absolute; top: 0.5rem; right: 0.5rem; background: #0d4429; color: #00ba7c; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.6rem; font-weight: 600; }
+        .cost-summary { display: flex; gap: 1.5rem; padding: 0.75rem 1rem; background: #1a1f2e; border-radius: 8px; margin-top: 0.5rem; }
+        .cost-summary-stat { display: flex; flex-direction: column; }
+        .cost-summary-value { font-size: 1.1rem; font-weight: 600; color: #e7e9ea; font-family: 'SF Mono', Consolas, monospace; }
+        .cost-summary-label { font-size: 0.65rem; color: #71767b; }
+
+        /* DB Watch Widget */
+        .dbwatch-tabs { display: flex; gap: 0; border-bottom: 1px solid #2f3336; }
+        .dbwatch-tab { padding: 0.5rem 1rem; background: none; border: none; color: #71767b; cursor: pointer; font-size: 0.75rem; border-bottom: 2px solid transparent; transition: all 0.15s; }
+        .dbwatch-tab:hover { color: #e7e9ea; background: rgba(255,255,255,0.03); }
+        .dbwatch-tab.active { color: #1d9bf0; border-bottom-color: #1d9bf0; }
+        .dbwatch-stats { display: flex; gap: 1rem; padding: 0.75rem; background: #1a1f2e; border-radius: 8px; margin-bottom: 0.75rem; }
+        .dbwatch-stat { display: flex; flex-direction: column; }
+        .dbwatch-stat-value { font-size: 1.2rem; font-weight: 600; color: #e7e9ea; font-family: 'SF Mono', Consolas, monospace; }
+        .dbwatch-stat-value.slow { color: #ffd400; }
+        .dbwatch-stat-value.error { color: #f4212e; }
+        .dbwatch-stat-label { font-size: 0.65rem; color: #71767b; }
+        .dbwatch-query { padding: 0.6rem 0.8rem; border-bottom: 1px solid #2f3336; }
+        .dbwatch-query:last-child { border-bottom: none; }
+        .dbwatch-query:hover { background: rgba(29,155,240,0.05); }
+        .dbwatch-query-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem; }
+        .dbwatch-query-type { display: flex; align-items: center; gap: 0.5rem; }
+        .dbwatch-db-badge { padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.6rem; font-weight: 600; text-transform: uppercase; }
+        .dbwatch-db-badge.redis { background: #4a1919; color: #f4212e; }
+        .dbwatch-db-badge.postgres { background: #1a2d3d; color: #1d9bf0; }
+        .dbwatch-db-badge.mysql { background: #4a3d19; color: #ffd400; }
+        .dbwatch-op-badge { padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.6rem; font-weight: 500; background: #2f3336; color: #e7e9ea; }
+        .dbwatch-query-latency { font-family: 'SF Mono', Consolas, monospace; font-size: 0.7rem; }
+        .dbwatch-query-latency.slow { color: #ffd400; }
+        .dbwatch-query-latency.fast { color: #00ba7c; }
+        .dbwatch-query-text { font-family: 'SF Mono', Consolas, monospace; font-size: 0.7rem; color: #8b949e; background: #0f1419; padding: 0.4rem 0.6rem; border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+        .dbwatch-query-meta { display: flex; gap: 1rem; font-size: 0.65rem; color: #71767b; margin-top: 0.3rem; }
+
+        /* Cardinality Widget */
+        .cardinality-summary { display: flex; gap: 1rem; padding: 0.75rem; background: #1a1f2e; border-radius: 8px; margin-bottom: 0.75rem; }
+        .cardinality-stat { display: flex; flex-direction: column; flex: 1; }
+        .cardinality-stat-value { font-size: 1.2rem; font-weight: 600; color: #e7e9ea; font-family: 'SF Mono', Consolas, monospace; }
+        .cardinality-stat-value.warning { color: #ffd400; }
+        .cardinality-stat-value.danger { color: #f4212e; }
+        .cardinality-stat-label { font-size: 0.65rem; color: #71767b; }
+        .cardinality-metric { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0.6rem; border-bottom: 1px solid #2f3336; }
+        .cardinality-metric:last-child { border-bottom: none; }
+        .cardinality-metric:hover { background: rgba(29,155,240,0.05); }
+        .cardinality-metric-name { font-size: 0.75rem; font-family: 'SF Mono', Consolas, monospace; color: #e7e9ea; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; margin-right: 1rem; }
+        .cardinality-metric-series { font-size: 0.75rem; font-weight: 600; font-family: 'SF Mono', Consolas, monospace; }
+        .cardinality-bar { height: 4px; background: #2f3336; border-radius: 2px; margin-top: 0.3rem; overflow: hidden; }
+        .cardinality-bar-fill { height: 100%; border-radius: 2px; background: linear-gradient(90deg, #1d9bf0, #7c3aed); }
+        .cardinality-bar-fill.warning { background: linear-gradient(90deg, #ffd400, #ff9800); }
+        .cardinality-bar-fill.danger { background: linear-gradient(90deg, #f4212e, #dc2626); }
+
         /* Flame graph */
         #flamegraph .d3-flame-graph rect { stroke: #0f1419; }
         #flamegraph .d3-flame-graph-label { fill: #e7e9ea !important; font-size: 10px; }
@@ -2442,6 +2505,9 @@
             { id: 'statuspage', x: 0, y: 53, w: 12, h: 5, minW: 6, minH: 4 },
             { id: 'catalog', x: 0, y: 58, w: 12, h: 6, minW: 6, minH: 4 },
             { id: 'correlation', x: 0, y: 64, w: 12, h: 6, minW: 6, minH: 4 },
+            { id: 'costintel', x: 0, y: 70, w: 12, h: 5, minW: 8, minH: 4 },
+            { id: 'dbwatch', x: 0, y: 75, w: 12, h: 6, minW: 8, minH: 5 },
+            { id: 'cardinality', x: 0, y: 81, w: 6, h: 5, minW: 4, minH: 4 },
         ];
 
         function widgetCPU() {
@@ -3152,6 +3218,57 @@
                 </div>`;
         }
 
+        function widgetCostIntel() {
+            return `<div class="widget-header">
+                    <span class="widget-title">Cost Intelligence</span>
+                    <div style="display:flex;gap:0.3rem;">
+                        <select id="cost-period" class="trace-select" style="height:26px;" onchange="loadCostIntel()">
+                            <option value="current">Current Usage</option>
+                            <option value="projected">Projected (30d)</option>
+                        </select>
+                        <button class="btn" onclick="loadCostIntel()">Refresh</button>
+                    </div>
+                </div>
+                <div class="widget-body" id="cost-intel-content">
+                    <div class="empty-state">Loading cost estimates...</div>
+                </div>`;
+        }
+
+        function widgetDBWatch() {
+            return `<div class="widget-header">
+                    <span class="widget-title">Database Queries</span>
+                    <div style="display:flex;gap:0.3rem;">
+                        <select id="dbwatch-db-filter" class="trace-select" style="height:26px;" onchange="loadDBWatch()">
+                            <option value="">All Databases</option>
+                            <option value="redis">Redis</option>
+                            <option value="postgres">PostgreSQL</option>
+                            <option value="mysql">MySQL</option>
+                        </select>
+                        <button class="btn" onclick="loadDBWatch()">Refresh</button>
+                    </div>
+                </div>
+                <div class="dbwatch-tabs">
+                    <button class="dbwatch-tab active" data-tab="queries" onclick="switchDBWatchTab('queries')">Recent Queries</button>
+                    <button class="dbwatch-tab" data-tab="slow" onclick="switchDBWatchTab('slow')">Slow Queries</button>
+                    <button class="dbwatch-tab" data-tab="stats" onclick="switchDBWatchTab('stats')">Stats</button>
+                </div>
+                <div class="widget-body no-pad" id="dbwatch-content" style="overflow:auto;">
+                    <div class="empty-state">Loading database queries...</div>
+                </div>`;
+        }
+
+        function widgetCardinality() {
+            return `<div class="widget-header">
+                    <span class="widget-title">Cardinality Explorer</span>
+                    <div style="display:flex;gap:0.3rem;">
+                        <button class="btn" onclick="loadCardinality()">Refresh</button>
+                    </div>
+                </div>
+                <div class="widget-body" id="cardinality-content" style="overflow:auto;">
+                    <div class="empty-state">Loading cardinality data...</div>
+                </div>`;
+        }
+
         // Initialize GridStack
         const grid = GridStack.init({
             column: 12,
@@ -3216,7 +3333,10 @@
                 endpoints: widgetEndpoints,
                 connlist: widgetConnections,
                 procs: widgetProcesses,
-                flamegraph: widgetFlameGraph
+                flamegraph: widgetFlameGraph,
+                costintel: widgetCostIntel,
+                dbwatch: widgetDBWatch,
+                cardinality: widgetCardinality
             };
             return map[id] ? map[id]() : '';
         }
@@ -9508,6 +9628,279 @@
             window.open(url, '_blank');
         }
 
+        // Cost Intelligence functions
+        function loadCostIntel() {
+            const content = document.getElementById('cost-intel-content');
+            if (!content) return;
+
+            content.innerHTML = '<div class="empty-state">Loading cost estimates...</div>';
+
+            Promise.all([
+                fetch('/api/cost/estimate').then(r => r.ok ? r.json() : null),
+                fetch('/api/cost/usage').then(r => r.ok ? r.json() : null)
+            ]).then(([comparison, usage]) => {
+                if (!comparison || !comparison.estimates) {
+                    content.innerHTML = '<div class="empty-state">Cost data not available yet. Start collecting metrics to see estimates.</div>';
+                    return;
+                }
+
+                const estimates = comparison.estimates;
+                const vendors = ['Datadog', 'New Relic', 'Splunk'];
+                const savings = comparison.dogwatch_savings || {};
+
+                let vendorCards = vendors.map(v => {
+                    const est = estimates[v];
+                    if (!est) return '';
+                    const savingsPct = savings[v] ? Math.round(savings[v]) : 100;
+                    const breakdown = est.breakdown || {};
+
+                    return `<div class="cost-card ${v === 'Datadog' ? 'highlight' : ''}">
+                        ${savingsPct > 0 ? `<span class="cost-savings-badge">Save ${savingsPct}%</span>` : ''}
+                        <div class="cost-vendor">
+                            <span>${v}</span>
+                        </div>
+                        <div class="cost-amount">$${formatNumber(est.total_monthly)}</div>
+                        <div class="cost-period">/month</div>
+                        <div class="cost-breakdown">
+                            ${Object.entries(breakdown).slice(0, 4).map(([k, val]) =>
+                                `<div class="cost-breakdown-item">
+                                    <span class="cost-breakdown-label">${k}</span>
+                                    <span class="cost-breakdown-value">$${formatNumber(val)}</span>
+                                </div>`
+                            ).join('')}
+                        </div>
+                    </div>`;
+                }).join('');
+
+                // Usage summary
+                const usageSummary = usage ? `
+                    <div class="cost-summary">
+                        <div class="cost-summary-stat">
+                            <span class="cost-summary-value">${usage.host_count || 0}</span>
+                            <span class="cost-summary-label">Hosts</span>
+                        </div>
+                        <div class="cost-summary-stat">
+                            <span class="cost-summary-value">${usage.container_count || 0}</span>
+                            <span class="cost-summary-label">Containers</span>
+                        </div>
+                        <div class="cost-summary-stat">
+                            <span class="cost-summary-value">${usage.custom_metrics_count || 0}</span>
+                            <span class="cost-summary-label">Custom Metrics</span>
+                        </div>
+                        <div class="cost-summary-stat">
+                            <span class="cost-summary-value">${formatBytes(usage.logs_gb_per_month * 1024 * 1024 * 1024)}</span>
+                            <span class="cost-summary-label">Logs/mo</span>
+                        </div>
+                        <div class="cost-summary-stat">
+                            <span class="cost-summary-value">${formatNumber(usage.spans_per_month || 0)}</span>
+                            <span class="cost-summary-label">Spans/mo</span>
+                        </div>
+                    </div>
+                ` : '';
+
+                content.innerHTML = `
+                    <div class="cost-grid">${vendorCards}</div>
+                    ${usageSummary}
+                    <div style="text-align:center;margin-top:0.75rem;font-size:0.7rem;color:#71767b;">
+                        With dogwatch: <span style="color:#00ba7c;font-weight:600;">$0/month</span> (self-hosted)
+                    </div>
+                `;
+            }).catch(() => {
+                content.innerHTML = '<div class="empty-state">Failed to load cost data</div>';
+            });
+        }
+
+        function formatNumber(n) {
+            if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+            if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+            return n?.toFixed(0) || '0';
+        }
+
+        // DB Watch functions
+        let dbwatchCurrentTab = 'queries';
+
+        function switchDBWatchTab(tab) {
+            dbwatchCurrentTab = tab;
+            document.querySelectorAll('.dbwatch-tab').forEach(t => {
+                t.classList.toggle('active', t.dataset.tab === tab);
+            });
+            loadDBWatch();
+        }
+
+        function loadDBWatch() {
+            const content = document.getElementById('dbwatch-content');
+            if (!content) return;
+
+            const dbFilter = document.getElementById('dbwatch-db-filter')?.value || '';
+            const dbParam = dbFilter ? `&db_type=${dbFilter}` : '';
+
+            if (dbwatchCurrentTab === 'stats') {
+                loadDBWatchStats(content, dbParam);
+            } else if (dbwatchCurrentTab === 'slow') {
+                loadDBWatchQueries(content, '/api/dbwatch/slow', dbParam);
+            } else {
+                loadDBWatchQueries(content, '/api/dbwatch/queries', dbParam);
+            }
+        }
+
+        function loadDBWatchQueries(content, endpoint, dbParam) {
+            fetch(`${endpoint}?limit=50&since=1h${dbParam}`)
+                .then(r => r.ok ? r.json() : Promise.reject('API error'))
+                .then(queries => {
+                    if (!queries || queries.length === 0) {
+                        content.innerHTML = '<div class="empty-state">No database queries captured yet. Start your application to see queries.</div>';
+                        return;
+                    }
+
+                    content.innerHTML = queries.map(q => {
+                        const dbType = (q.db_type || 'unknown').toLowerCase();
+                        const latencyMs = q.latency_ms || 0;
+                        const latencyClass = latencyMs > 100 ? 'slow' : 'fast';
+                        const opType = q.operation || 'QUERY';
+                        const queryText = q.query || q.command || '-';
+                        const time = new Date(q.timestamp).toLocaleTimeString();
+
+                        return `<div class="dbwatch-query">
+                            <div class="dbwatch-query-header">
+                                <div class="dbwatch-query-type">
+                                    <span class="dbwatch-db-badge ${dbType}">${dbType}</span>
+                                    <span class="dbwatch-op-badge">${opType}</span>
+                                </div>
+                                <span class="dbwatch-query-latency ${latencyClass}">${latencyMs.toFixed(2)}ms</span>
+                            </div>
+                            <div class="dbwatch-query-text" title="${escapeHtml(queryText)}">${escapeHtml(queryText.substring(0, 200))}</div>
+                            <div class="dbwatch-query-meta">
+                                <span>${time}</span>
+                                ${q.table ? `<span>Table: ${escapeHtml(q.table)}</span>` : ''}
+                                ${q.rows_affected ? `<span>Rows: ${q.rows_affected}</span>` : ''}
+                            </div>
+                        </div>`;
+                    }).join('');
+                })
+                .catch(() => {
+                    content.innerHTML = '<div class="empty-state">Database watch not available</div>';
+                });
+        }
+
+        function loadDBWatchStats(content, dbParam) {
+            Promise.all([
+                fetch(`/api/dbwatch/stats?since=1h${dbParam}`).then(r => r.ok ? r.json() : null),
+                fetch(`/api/dbwatch/operations?since=1h${dbParam}`).then(r => r.ok ? r.json() : null)
+            ]).then(([stats, operations]) => {
+                if (!stats || stats.length === 0) {
+                    content.innerHTML = '<div class="empty-state">No database statistics available</div>';
+                    return;
+                }
+
+                const statsHtml = stats.map(s => `
+                    <div class="dbwatch-stats" style="margin:0.5rem;">
+                        <div class="dbwatch-stat">
+                            <span class="dbwatch-stat-value">${s.db_type || 'Unknown'}</span>
+                            <span class="dbwatch-stat-label">Database</span>
+                        </div>
+                        <div class="dbwatch-stat">
+                            <span class="dbwatch-stat-value">${s.total_queries || 0}</span>
+                            <span class="dbwatch-stat-label">Total Queries</span>
+                        </div>
+                        <div class="dbwatch-stat">
+                            <span class="dbwatch-stat-value ${s.avg_latency_ms > 50 ? 'slow' : ''}">${(s.avg_latency_ms || 0).toFixed(1)}ms</span>
+                            <span class="dbwatch-stat-label">Avg Latency</span>
+                        </div>
+                        <div class="dbwatch-stat">
+                            <span class="dbwatch-stat-value slow">${s.slow_queries || 0}</span>
+                            <span class="dbwatch-stat-label">Slow Queries</span>
+                        </div>
+                        <div class="dbwatch-stat">
+                            <span class="dbwatch-stat-value error">${s.errors || 0}</span>
+                            <span class="dbwatch-stat-label">Errors</span>
+                        </div>
+                    </div>
+                `).join('');
+
+                let opsHtml = '';
+                if (operations && operations.length > 0) {
+                    opsHtml = `<div style="padding:0.5rem;">
+                        <div style="font-size:0.7rem;color:#71767b;margin-bottom:0.5rem;">Operation Breakdown</div>
+                        ${operations.map(op => `
+                            <div style="display:flex;justify-content:space-between;padding:0.3rem 0;font-size:0.75rem;">
+                                <span>${op.operation}</span>
+                                <span style="font-family:monospace;">${op.count}</span>
+                            </div>
+                        `).join('')}
+                    </div>`;
+                }
+
+                content.innerHTML = statsHtml + opsHtml;
+            }).catch(() => {
+                content.innerHTML = '<div class="empty-state">Database statistics not available</div>';
+            });
+        }
+
+        // Cardinality functions
+        function loadCardinality() {
+            const content = document.getElementById('cardinality-content');
+            if (!content) return;
+
+            Promise.all([
+                fetch('/api/cardinality/stats').then(r => r.ok ? r.json() : null),
+                fetch('/api/cardinality/high?threshold=500').then(r => r.ok ? r.json() : null)
+            ]).then(([stats, highCard]) => {
+                if (!stats) {
+                    content.innerHTML = '<div class="empty-state">Cardinality data not available yet. Start collecting metrics to analyze cardinality.</div>';
+                    return;
+                }
+
+                const highCardMetrics = highCard?.metrics || [];
+                const highCardCount = highCard?.count || 0;
+
+                const summaryHtml = `
+                    <div class="cardinality-summary">
+                        <div class="cardinality-stat">
+                            <span class="cardinality-stat-value">${stats.total_metrics || 0}</span>
+                            <span class="cardinality-stat-label">Total Metrics</span>
+                        </div>
+                        <div class="cardinality-stat">
+                            <span class="cardinality-stat-value">${stats.total_series || 0}</span>
+                            <span class="cardinality-stat-label">Total Series</span>
+                        </div>
+                        <div class="cardinality-stat">
+                            <span class="cardinality-stat-value ${highCardCount > 0 ? 'warning' : ''}">${highCardCount}</span>
+                            <span class="cardinality-stat-label">High Cardinality</span>
+                        </div>
+                        <div class="cardinality-stat">
+                            <span class="cardinality-stat-value">${stats.total_tag_keys || 0}</span>
+                            <span class="cardinality-stat-label">Tag Keys</span>
+                        </div>
+                    </div>
+                `;
+
+                let metricsHtml = '';
+                if (highCardMetrics.length > 0) {
+                    const maxSeries = Math.max(...highCardMetrics.map(m => m.series_count || 0), 1);
+                    metricsHtml = `<div style="font-size:0.7rem;color:#71767b;margin:0.5rem 0;">High Cardinality Metrics (>${highCard.threshold || 500} series)</div>` +
+                        highCardMetrics.slice(0, 10).map(m => {
+                            const pct = ((m.series_count || 0) / maxSeries) * 100;
+                            const barClass = m.series_count > 5000 ? 'danger' : m.series_count > 1000 ? 'warning' : '';
+                            return `<div class="cardinality-metric">
+                                <div style="flex:1;min-width:0;">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                                        <span class="cardinality-metric-name">${escapeHtml(m.name || m.metric_name)}</span>
+                                        <span class="cardinality-metric-series ${m.series_count > 5000 ? 'danger' : m.series_count > 1000 ? 'warning' : ''}">${m.series_count}</span>
+                                    </div>
+                                    <div class="cardinality-bar"><div class="cardinality-bar-fill ${barClass}" style="width:${pct}%"></div></div>
+                                </div>
+                            </div>`;
+                        }).join('');
+                } else {
+                    metricsHtml = '<div style="padding:0.5rem;font-size:0.75rem;color:#71767b;">No high cardinality metrics detected. Looking good!</div>';
+                }
+
+                content.innerHTML = summaryHtml + metricsHtml;
+            }).catch(() => {
+                content.innerHTML = '<div class="empty-state">Cardinality explorer not available</div>';
+            });
+        }
+
         // Initialize Anomaly, Alerting, Notifications, On-Call, and Audit
         setTimeout(loadAnomalies, 1300);
         setInterval(loadAnomalies, 10000);
@@ -9519,6 +9912,14 @@
         setInterval(loadOnCallWidget, 30000);
         setTimeout(loadAuditWidget, 1700);
         setInterval(loadAuditWidget, 30000);
+
+        // Initialize Cost Intelligence, DB Watch, and Cardinality
+        setTimeout(loadCostIntel, 1800);
+        setInterval(loadCostIntel, 60000); // Refresh every minute
+        setTimeout(loadDBWatch, 1900);
+        setInterval(loadDBWatch, 5000); // Refresh every 5 seconds
+        setTimeout(loadCardinality, 2000);
+        setInterval(loadCardinality, 30000); // Refresh every 30 seconds
     </script>
 </body>
 </html>
