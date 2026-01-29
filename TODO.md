@@ -16,7 +16,7 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 | **Features** | Dashboards ✅, SLOs ✅, Synthetics ✅, Incidents ✅, On-call ✅, Catalog ✅, Anomaly ✅, K8s ✅, Federation ✅ |
 | **Cost Intel** | Cost calculators ✅, Cardinality ✅, Usage analytics ✅, Data shaping ✅, Quotas ✅ |
 | **Correlation** | Change correlation ✅, Alert enrichment ✅, Dependency graph ✅ |
-| **NOT Built** | BubbleUp, Dependency-aware alerting, Blast radius, Lookout homepage |
+| **NOT Built** | Dependency-aware alerting, Blast radius, Lookout homepage |
 
 ---
 
@@ -86,7 +86,7 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 
 | Task | Complexity | VISION.md Reference |
 |------|------------|---------------------|
-| BubbleUp (statistical anomaly explanation) | 3 weeks | [BubbleUp](VISION.md#4-bubbleup-automatic-root-cause-analysis) |
+| ~~BubbleUp (statistical anomaly explanation)~~ | ✅ Done | [BubbleUp](VISION.md#4-bubbleup-automatic-root-cause-analysis) |
 | ~~Change correlation engine~~ | ✅ Done | [Change Correlation](VISION.md#5-change-correlation) |
 | ~~Alert auto-enrichment (deploys, related alerts)~~ | ✅ Done | [Pain Point: Slow Incident Response](VISION.md#pain-point-5-slow-incident-response--high) |
 
@@ -221,6 +221,7 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 | **UI** | Web server, Service map, History graphs, Demo data |
 | **Cost Intel** | Datadog/New Relic/Splunk calculators, Cost trending, Recommendations, Cardinality explorer, Usage analytics, Data shaping, Team quotas |
 | **Correlation** | Change correlation engine, Alert auto-enrichment, Deploy-incident correlation, Dependency graph |
+| **Root Cause** | BubbleUp (chi-squared analysis, lift calculation, dimension ranking) |
 | **Logs** | LogCompare (time period comparison), LogReduce (pattern detection) |
 | **Production** | Prometheus remote write receiver, Health check endpoints (/healthz, /readyz, /livez) |
 
@@ -244,9 +245,9 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 
 | Question | Answer |
 |----------|--------|
-| **Build first** | BubbleUp (Phase 3) |
+| **Build first** | Dependency-aware alerting, Blast radius (Phase 3) |
 | **Makes people pay** | ✅ Cost Intelligence, Control Plane, LogCompare - all done |
-| **Makes people stay** | BubbleUp (not built), Lookout, Entity synthesis |
+| **Makes people stay** | ✅ BubbleUp, Lookout (not built), Entity synthesis (not built) |
 | **The moat** | Zero-config eBPF + cost transparency |
 | **What's broken** | Nothing critical (MySQL works with plaintext, TLS needs SSL probe) |
 | **Full context** | [VISION.md](VISION.md) (22,400 lines) |
