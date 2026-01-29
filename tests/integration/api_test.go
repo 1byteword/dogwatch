@@ -13,9 +13,9 @@ import (
 	"time"
 )
 
-// TestServerURL returns the dogwatch server URL for integration tests.
+// serverURL returns the dogwatch server URL for integration tests.
 // Default is http://localhost:9999, override with DOGWATCH_TEST_URL env var.
-func TestServerURL() string {
+func serverURL() string {
 	if url := os.Getenv("DOGWATCH_TEST_URL"); url != "" {
 		return url
 	}
@@ -26,9 +26,9 @@ func TestServerURL() string {
 func skipIfNoServer(t *testing.T) {
 	t.Helper()
 	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get(TestServerURL() + "/api/health")
+	resp, err := client.Get(serverURL() + "/api/health")
 	if err != nil {
-		t.Skipf("dogwatch server not reachable at %s: %v", TestServerURL(), err)
+		t.Skipf("dogwatch server not reachable at %s: %v", serverURL(), err)
 	}
 	resp.Body.Close()
 }
@@ -37,7 +37,7 @@ func skipIfNoServer(t *testing.T) {
 func TestHealthEndpoint(t *testing.T) {
 	skipIfNoServer(t)
 
-	resp, err := http.Get(TestServerURL() + "/api/health")
+	resp, err := http.Get(serverURL() + "/api/health")
 	if err != nil {
 		t.Fatalf("health check failed: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestHealthEndpoint(t *testing.T) {
 func TestMetricsEndpoint(t *testing.T) {
 	skipIfNoServer(t)
 
-	resp, err := http.Get(TestServerURL() + "/api/metrics")
+	resp, err := http.Get(serverURL() + "/api/metrics")
 	if err != nil {
 		t.Fatalf("metrics endpoint failed: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestMetricsEndpoint(t *testing.T) {
 func TestSystemMetrics(t *testing.T) {
 	skipIfNoServer(t)
 
-	resp, err := http.Get(TestServerURL() + "/api/system")
+	resp, err := http.Get(serverURL() + "/api/system")
 	if err != nil {
 		t.Fatalf("system endpoint failed: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestSystemMetrics(t *testing.T) {
 func TestTracesEndpoint(t *testing.T) {
 	skipIfNoServer(t)
 
-	resp, err := http.Get(TestServerURL() + "/api/traces")
+	resp, err := http.Get(serverURL() + "/api/traces")
 	if err != nil {
 		t.Fatalf("traces endpoint failed: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestLogsIngest(t *testing.T) {
 
 	body, _ := json.Marshal(logEntry)
 	resp, err := http.Post(
-		TestServerURL()+"/api/logs/ingest",
+		serverURL()+"/api/logs/ingest",
 		"application/json",
 		bytes.NewBuffer(body),
 	)
@@ -168,7 +168,7 @@ func TestAlertingRulesAPI(t *testing.T) {
 	skipIfNoServer(t)
 
 	// List rules
-	resp, err := http.Get(TestServerURL() + "/api/alerting/rules")
+	resp, err := http.Get(serverURL() + "/api/alerting/rules")
 	if err != nil {
 		t.Fatalf("list rules failed: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestAlertingRulesAPI(t *testing.T) {
 func TestDashboardsAPI(t *testing.T) {
 	skipIfNoServer(t)
 
-	resp, err := http.Get(TestServerURL() + "/api/dashboards")
+	resp, err := http.Get(serverURL() + "/api/dashboards")
 	if err != nil {
 		t.Fatalf("list dashboards failed: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestDashboardsAPI(t *testing.T) {
 func TestSLOsAPI(t *testing.T) {
 	skipIfNoServer(t)
 
-	resp, err := http.Get(TestServerURL() + "/api/slos")
+	resp, err := http.Get(serverURL() + "/api/slos")
 	if err != nil {
 		t.Fatalf("SLOs endpoint failed: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestSLOsAPI(t *testing.T) {
 func TestSyntheticsAPI(t *testing.T) {
 	skipIfNoServer(t)
 
-	resp, err := http.Get(TestServerURL() + "/api/synthetics/checks")
+	resp, err := http.Get(serverURL() + "/api/synthetics/checks")
 	if err != nil {
 		t.Fatalf("synthetics endpoint failed: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestSyntheticsAPI(t *testing.T) {
 func TestCostIntelligenceAPI(t *testing.T) {
 	skipIfNoServer(t)
 
-	resp, err := http.Get(TestServerURL() + "/api/cost/estimate")
+	resp, err := http.Get(serverURL() + "/api/cost/estimate")
 	if err != nil {
 		t.Fatalf("cost estimate endpoint failed: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestCostIntelligenceAPI(t *testing.T) {
 func TestContainersAPI(t *testing.T) {
 	skipIfNoServer(t)
 
-	resp, err := http.Get(TestServerURL() + "/api/containers")
+	resp, err := http.Get(serverURL() + "/api/containers")
 	if err != nil {
 		t.Fatalf("containers endpoint failed: %v", err)
 	}
@@ -270,7 +270,7 @@ func TestContainersAPI(t *testing.T) {
 func TestIncidentsAPI(t *testing.T) {
 	skipIfNoServer(t)
 
-	resp, err := http.Get(TestServerURL() + "/api/incidents")
+	resp, err := http.Get(serverURL() + "/api/incidents")
 	if err != nil {
 		t.Fatalf("incidents endpoint failed: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestIncidentsAPI(t *testing.T) {
 func TestOnCallAPI(t *testing.T) {
 	skipIfNoServer(t)
 
-	resp, err := http.Get(TestServerURL() + "/api/oncall/schedules")
+	resp, err := http.Get(serverURL() + "/api/oncall/schedules")
 	if err != nil {
 		t.Fatalf("oncall endpoint failed: %v", err)
 	}
@@ -300,7 +300,7 @@ func TestOnCallAPI(t *testing.T) {
 func TestDeploymentsAPI(t *testing.T) {
 	skipIfNoServer(t)
 
-	resp, err := http.Get(TestServerURL() + "/api/deploys")
+	resp, err := http.Get(serverURL() + "/api/deploys")
 	if err != nil {
 		t.Fatalf("deploys endpoint failed: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestBackupAPI(t *testing.T) {
 	skipIfNoServer(t)
 
 	// Test backup list/status
-	resp, err := http.Get(TestServerURL() + "/api/backup")
+	resp, err := http.Get(serverURL() + "/api/backup")
 	if err != nil {
 		t.Fatalf("backup endpoint failed: %v", err)
 	}
@@ -334,7 +334,7 @@ func TestAPIRateLimiting(t *testing.T) {
 
 	// Make multiple requests to trigger rate limit headers
 	for i := 0; i < 5; i++ {
-		resp, err := http.Get(TestServerURL() + "/api/health")
+		resp, err := http.Get(serverURL() + "/api/health")
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
@@ -352,7 +352,7 @@ func TestCORSHeaders(t *testing.T) {
 	skipIfNoServer(t)
 
 	client := &http.Client{}
-	req, _ := http.NewRequest("OPTIONS", TestServerURL()+"/api/health", nil)
+	req, _ := http.NewRequest("OPTIONS", serverURL()+"/api/health", nil)
 	req.Header.Set("Origin", "http://example.com")
 	req.Header.Set("Access-Control-Request-Method", "GET")
 
@@ -380,7 +380,7 @@ func TestJSONContentType(t *testing.T) {
 
 	for _, endpoint := range endpoints {
 		t.Run(endpoint, func(t *testing.T) {
-			resp, err := http.Get(TestServerURL() + endpoint)
+			resp, err := http.Get(serverURL() + endpoint)
 			if err != nil {
 				t.Fatalf("request failed: %v", err)
 			}
@@ -400,7 +400,7 @@ func TestJSONContentType(t *testing.T) {
 func TestInvalidEndpoint(t *testing.T) {
 	skipIfNoServer(t)
 
-	resp, err := http.Get(TestServerURL() + "/api/nonexistent/endpoint/12345")
+	resp, err := http.Get(serverURL() + "/api/nonexistent/endpoint/12345")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -416,7 +416,7 @@ func TestQueryParameters(t *testing.T) {
 	skipIfNoServer(t)
 
 	// Test traces with parameters
-	url := fmt.Sprintf("%s/api/traces?limit=10&since=1h", TestServerURL())
+	url := fmt.Sprintf("%s/api/traces?limit=10&since=1h", serverURL())
 	resp, err := http.Get(url)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
@@ -446,7 +446,7 @@ func TestLargePayloadHandling(t *testing.T) {
 
 	body, _ := json.Marshal(logs)
 	resp, err := http.Post(
-		TestServerURL()+"/api/logs/ingest",
+		serverURL()+"/api/logs/ingest",
 		"application/json",
 		bytes.NewBuffer(body),
 	)
