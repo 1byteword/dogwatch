@@ -19,6 +19,7 @@ import (
 	"dogwatch/internal/aggregator"
 	"dogwatch/internal/alerting"
 	"dogwatch/internal/anomaly"
+	"dogwatch/internal/bubbleup"
 	"dogwatch/internal/catalog"
 	"dogwatch/internal/correlation"
 	"dogwatch/internal/query"
@@ -89,6 +90,8 @@ type Server struct {
 	catalogDiscovery    *catalog.DiscoveryService
 	correlationEngine   *correlation.Engine
 	correlationHandlers *CorrelationHandlers
+	bubbleupAnalyzer    *bubbleup.Analyzer
+	bubbleupHandlers    *BubbleUpHandlers
 	server              *http.Server
 	mu                  sync.RWMutex
 }
@@ -273,6 +276,12 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	s.initCorrelation()
 	if s.correlationHandlers != nil {
 		s.correlationHandlers.RegisterRoutes(mux)
+	}
+
+	// BubbleUp endpoints
+	s.initBubbleUp()
+	if s.bubbleupHandlers != nil {
+		s.bubbleupHandlers.RegisterRoutes(mux)
 	}
 
 	// Database watch endpoints
@@ -615,6 +624,12 @@ func (s *Server) initCorrelation() {
 	}
 }
 
+// initBubbleUp initializes the BubbleUp analyzer
+func (s *Server) initBubbleUp() {
+	s.bubbleupAnalyzer = bubbleup.NewAnalyzer(s.traceStore)
+	s.bubbleupHandlers = NewBubbleUpHandlers(s.bubbleupAnalyzer)
+}
+
 // GetCorrelationEngine returns the correlation engine for external use
 func (s *Server) GetCorrelationEngine() *correlation.Engine {
 	return s.correlationEngine
@@ -626,6 +641,9 @@ func (s *Server) SetTraceStore(ts *trace.Store) {
 	s.otlpReceiver = trace.NewOTLPReceiver(ts)
 	if s.correlationEngine != nil {
 		s.correlationEngine.SetTraceStore(ts)
+	}
+	if s.bubbleupAnalyzer != nil {
+		s.bubbleupAnalyzer.SetTraceStore(ts)
 	}
 }
 

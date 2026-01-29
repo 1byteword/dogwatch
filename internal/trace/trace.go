@@ -1,9 +1,11 @@
 package trace
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -406,6 +408,177 @@ func (s *Store) cleanup() {
 
 	s.db.Exec(`DELETE FROM spans WHERE start_time < ?`, cutoff)
 	s.db.Exec(`DELETE FROM traces WHERE start_time < ?`, cutoff)
+}
+
+// SpanQueryOptions for querying spans with filters
+type SpanQueryOptions struct {
+	Service       string
+	TimeStart     time.Time
+	TimeEnd       time.Time
+	MinDurationMs float64
+	MaxDurationMs float64
+	Status        string // "ERROR", "OK", or "" for all
+	Limit         int
+}
+
+// QuerySpans returns spans matching the given criteria
+func (s *Store) QuerySpans(ctx context.Context, opts SpanQueryOptions) ([]Span, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `
+		SELECT trace_id, span_id, parent_span_id, name, service_name, kind,
+			   start_time, end_time, duration_ms, status, status_message, attributes
+		FROM spans WHERE 1=1
+	`
+	var args []interface{}
+
+	if opts.Service != "" {
+		query += ` AND service_name = ?`
+		args = append(args, opts.Service)
+	}
+	if !opts.TimeStart.IsZero() {
+		query += ` AND start_time >= ?`
+		args = append(args, opts.TimeStart.UTC().Format(time.RFC3339Nano))
+	}
+	if !opts.TimeEnd.IsZero() {
+		query += ` AND start_time <= ?`
+		args = append(args, opts.TimeEnd.UTC().Format(time.RFC3339Nano))
+	}
+	if opts.MinDurationMs > 0 {
+		query += ` AND duration_ms >= ?`
+		args = append(args, opts.MinDurationMs)
+	}
+	if opts.MaxDurationMs > 0 {
+		query += ` AND duration_ms < ?`
+		args = append(args, opts.MaxDurationMs)
+	}
+	if opts.Status != "" {
+		query += ` AND status = ?`
+		args = append(args, opts.Status)
+	}
+
+	query += ` ORDER BY start_time DESC`
+
+	if opts.Limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, opts.Limit)
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return s.scanSpans(rows)
+}
+
+// GetSpansByIDs retrieves specific spans by their IDs
+func (s *Store) GetSpansByIDs(ctx context.Context, spanIDs []string) ([]Span, error) {
+	if len(spanIDs) == 0 {
+		return nil, nil
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	placeholders := make([]string, len(spanIDs))
+	args := make([]interface{}, len(spanIDs))
+	for i, id := range spanIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	query := fmt.Sprintf(`
+		SELECT trace_id, span_id, parent_span_id, name, service_name, kind,
+			   start_time, end_time, duration_ms, status, status_message, attributes
+		FROM spans WHERE span_id IN (%s)
+	`, strings.Join(placeholders, ","))
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return s.scanSpans(rows)
+}
+
+// GetLatencyPercentile calculates the latency at a given percentile for a service
+func (s *Store) GetLatencyPercentile(ctx context.Context, service string, percentile float64, start, end time.Time) (float64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `
+		SELECT duration_ms FROM spans
+		WHERE start_time >= ? AND start_time <= ?
+	`
+	args := []interface{}{
+		start.UTC().Format(time.RFC3339Nano),
+		end.UTC().Format(time.RFC3339Nano),
+	}
+
+	if service != "" {
+		query += ` AND service_name = ?`
+		args = append(args, service)
+	}
+
+	query += ` ORDER BY duration_ms ASC`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var durations []float64
+	for rows.Next() {
+		var d float64
+		if err := rows.Scan(&d); err != nil {
+			continue
+		}
+		durations = append(durations, d)
+	}
+
+	if len(durations) == 0 {
+		return 0, fmt.Errorf("no spans found")
+	}
+
+	// Calculate percentile index
+	idx := int(float64(len(durations)) * percentile / 100.0)
+	if idx >= len(durations) {
+		idx = len(durations) - 1
+	}
+
+	return durations[idx], nil
+}
+
+func (s *Store) scanSpans(rows *sql.Rows) ([]Span, error) {
+	var spans []Span
+	for rows.Next() {
+		var span Span
+		var startTime, endTime, attrs string
+		var parentSpanID, kind, status, statusMsg sql.NullString
+
+		if err := rows.Scan(
+			&span.TraceID, &span.SpanID, &parentSpanID, &span.Name, &span.ServiceName,
+			&kind, &startTime, &endTime, &span.DurationMs, &status, &statusMsg, &attrs,
+		); err != nil {
+			continue
+		}
+
+		span.ParentSpanID = parentSpanID.String
+		span.Kind = kind.String
+		span.Status = status.String
+		span.StatusMsg = statusMsg.String
+		span.StartTime, _ = time.Parse(time.RFC3339Nano, startTime)
+		span.EndTime, _ = time.Parse(time.RFC3339Nano, endTime)
+		json.Unmarshal([]byte(attrs), &span.Attributes)
+
+		spans = append(spans, span)
+	}
+	return spans, nil
 }
 
 // Close closes the database
