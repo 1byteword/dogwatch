@@ -1,14 +1,14 @@
 package otlp
 
 import (
-	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
 
-	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
-	colmetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
+	colmetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
+	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -109,8 +109,8 @@ func unmarshalRequest(r *http.Request, body []byte, msg proto.Message) error {
 		return proto.Unmarshal(body, msg)
 	}
 
-	// Default to JSON
-	return json.Unmarshal(body, msg)
+	// Use protojson for JSON - handles protobuf field naming conventions
+	return protojson.Unmarshal(body, msg)
 }
 
 // writeResponse writes response in the same format as request
@@ -124,7 +124,8 @@ func writeResponse(w http.ResponseWriter, r *http.Request, msg proto.Message) {
 		return
 	}
 
-	// Default to JSON
+	// Use protojson for JSON response
 	w.Header().Set("Content-Type", contentTypeJSON)
-	json.NewEncoder(w).Encode(msg)
+	data, _ := protojson.Marshal(msg)
+	w.Write(data)
 }
