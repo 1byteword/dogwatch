@@ -1,28 +1,39 @@
 package main
 
 import (
+	"debug/elf"
 	"fmt"
-
-	"github.com/cilium/ebpf/link"
 )
 
 func main() {
 	path := "/lib/x86_64-linux-gnu/libssl.so.3"
-	ex, err := link.OpenExecutable(path)
+	f, err := elf.Open(path)
 	if err != nil {
-		fmt.Printf("OpenExecutable error: %v\n", err)
+		fmt.Printf("Open error: %v\n", err)
 		return
 	}
+	defer f.Close()
 
 	fmt.Printf("Opened: %s\n", path)
 
-	syms := []string{"SSL_write", "SSL_read", "SSL_write_ex", "SSL_read_ex"}
-	for _, s := range syms {
-		offset, err := ex.Address(s)
-		if err != nil {
-			fmt.Printf("Symbol %s: ERROR - %v\n", s, err)
-		} else {
-			fmt.Printf("Symbol %s: offset 0x%x\n", s, offset)
+	syms, err := f.DynamicSymbols()
+	if err != nil {
+		fmt.Printf("DynamicSymbols error: %v\n", err)
+		return
+	}
+
+	targets := []string{"SSL_write", "SSL_read", "SSL_write_ex", "SSL_read_ex"}
+	for _, target := range targets {
+		found := false
+		for _, sym := range syms {
+			if sym.Name == target {
+				fmt.Printf("Symbol %s: offset 0x%x, size %d\n", target, sym.Value, sym.Size)
+				found = true
+				break
+			}
+		}
+		if !found {
+			fmt.Printf("Symbol %s: NOT FOUND\n", target)
 		}
 	}
 }

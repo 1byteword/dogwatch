@@ -263,29 +263,87 @@ func (p *DBProbe) parseResponse(event *DBEvent, raw rawDBEvent) {
 	}
 }
 
+// looksLikeText checks if data appears to be printable text (not encrypted/binary)
+func looksLikeText(data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+	// Check first 64 bytes (or all if shorter)
+	checkLen := len(data)
+	if checkLen > 64 {
+		checkLen = 64
+	}
+	printable := 0
+	for i := 0; i < checkLen; i++ {
+		c := data[i]
+		// Printable ASCII, tab, newline, carriage return
+		if (c >= 32 && c <= 126) || c == '\t' || c == '\n' || c == '\r' {
+			printable++
+		}
+	}
+	// At least 80% should be printable for valid SQL/commands
+	return float64(printable)/float64(checkLen) >= 0.8
+}
+
 // MySQL wire protocol parsing
 func (p *DBProbe) parseMySQLQuery(event *DBEvent, payload []byte) {
-	if len(payload) < 5 {
+	if len(payload) < 6 {
 		return
 	}
 
-	// Skip 4-byte header (3 length + 1 seq)
+	// Parse 3-byte length (little-endian)
+	pktLen := int(payload[0]) | int(payload[1])<<8 | int(payload[2])<<16
+	if pktLen < 1 || pktLen > 16777215 {
+		return
+	}
+
+	// Verify packet length is consistent
+	expectedTotal := pktLen + 4
+	if expectedTotal > len(payload)+100 || len(payload) > expectedTotal+1000 {
+		return
+	}
+
+	// Note: sequence number resets to 0 for each new command in MySQL protocol
+	// but we don't filter on it since persistent connections can have any state
+	_ = payload[3] // seqNum, unused
+
 	cmd := payload[4]
 	data := payload[5:]
 
+	// Skip encrypted/binary data
+	if len(data) > 0 && !looksLikeText(data) {
+		return
+	}
+
+	// Trim leading null bytes from data (sometimes protocol noise)
+	data = trimLeadingNulls(data)
+
 	switch cmd {
 	case 0x03: // COM_QUERY
+		// Verify query starts with SQL keyword
+		if !looksLikeSQLQuery(data) {
+			return
+		}
 		event.Operation = "QUERY"
 		event.Query = sanitizeQuery(string(data))
 		event.Table = extractTableName(event.Query)
 	case 0x16: // COM_STMT_PREPARE
+		if !looksLikeSQLQuery(data) {
+			return
+		}
 		event.Operation = "PREPARE"
 		event.Query = sanitizeQuery(string(data))
 	case 0x17: // COM_STMT_EXECUTE
 		event.Operation = "EXECUTE"
 	case 0x02: // COM_INIT_DB
+		// Database name should be printable
+		if len(data) > 0 && !isAlphaOrUnderscore(data[0]) {
+			return
+		}
 		event.Operation = "USE"
-		event.Query = string(data)
+		event.Query = sanitizeQuery(string(data))
+	default:
+		return // Unknown command
 	}
 
 	// Extract operation from query
@@ -294,38 +352,175 @@ func (p *DBProbe) parseMySQLQuery(event *DBEvent, payload []byte) {
 	}
 }
 
+// looksLikeSQLQuery checks if data starts with a common SQL keyword
+func looksLikeSQLQuery(data []byte) bool {
+	if len(data) < 3 {
+		return false
+	}
+	// Trim leading whitespace
+	start := 0
+	for start < len(data) && (data[start] == ' ' || data[start] == '\t' || data[start] == '\n') {
+		start++
+	}
+	if start >= len(data) {
+		return false
+	}
+
+	// Get first character (uppercase)
+	c := data[start]
+	if c >= 'a' && c <= 'z' {
+		c -= 32
+	}
+
+	// Common SQL keywords
+	switch c {
+	case 'S': // SELECT, SET, SHOW
+		return true
+	case 'I': // INSERT
+		return true
+	case 'U': // UPDATE, USE
+		return true
+	case 'D': // DELETE, DROP, DESC
+		return true
+	case 'C': // CREATE, COMMIT, CALL
+		return true
+	case 'A': // ALTER
+		return true
+	case 'B': // BEGIN
+		return true
+	case 'R': // ROLLBACK, REPLACE
+		return true
+	case 'E': // EXPLAIN, EXECUTE
+		return true
+	case 'T': // TRUNCATE
+		return true
+	case 'G': // GRANT
+		return true
+	case 'L': // LOCK, LOAD
+		return true
+	case 'W': // WITH
+		return true
+	case '/': // /* comment */
+		return true
+	case '(': // Subquery
+		return true
+	}
+	return false
+}
+
+// isAlphaOrUnderscore checks if byte is a-z, A-Z, or _
+func isAlphaOrUnderscore(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_'
+}
+
+// trimLeadingNulls removes leading null/control bytes from data
+func trimLeadingNulls(data []byte) []byte {
+	start := 0
+	// Skip null bytes and other non-printable control characters
+	for start < len(data) && data[start] < 32 && data[start] != '\t' && data[start] != '\n' {
+		start++
+	}
+	return data[start:]
+}
+
 func (p *DBProbe) parseMySQLResponse(event *DBEvent, payload []byte) {
 	if len(payload) < 5 {
 		return
 	}
 
-	// Skip 4-byte header
+	// Check if payload looks like valid MySQL response
+	if !looksLikeMySQLResponse(payload) {
+		return
+	}
+
+	// Parse header
+	pktLen := int(payload[0]) | int(payload[1])<<8 | int(payload[2])<<16
+	seqNum := payload[3]
 	status := payload[4]
+
+	// Sequence number validation (responses have seq >= 1 typically)
+	if seqNum > 100 {
+		return
+	}
 
 	switch status {
 	case 0x00: // OK packet
+		// OK packet should have reasonable length (min 3 bytes for affected_rows, last_insert_id)
+		if pktLen < 3 {
+			return
+		}
 		event.Operation = "OK"
 		if len(payload) > 5 {
 			// Affected rows is length-encoded int
 			event.RowsAffected = int(payload[5])
 		}
 	case 0xff: // ERR packet
+		// ERR: 0xff + 2-byte error code + optional '#' + 5-byte state + message
+		if pktLen < 3 || len(payload) < 7 {
+			return
+		}
+		// Validate error code range (MySQL errors are 1000-4999 typically)
+		errCode := int(payload[5]) | int(payload[6])<<8
+		if errCode < 1000 || errCode > 10000 {
+			// Check for '#' marker which indicates SQLSTATE follows
+			if len(payload) < 8 || payload[7] != '#' {
+				return
+			}
+		}
 		event.Operation = "ERROR"
-		if len(payload) > 7 {
-			// Error code is 2 bytes, then message
-			event.Error = sanitizeQuery(string(payload[9:]))
+		// Error message starts after error code and optional SQLSTATE
+		msgStart := 7
+		if len(payload) > 7 && payload[7] == '#' {
+			msgStart = 13 // Skip '#' + 5-char SQLSTATE
+		}
+		if len(payload) > msgStart && looksLikeText(payload[msgStart:]) {
+			event.Error = sanitizeQuery(string(payload[msgStart:]))
 		}
 	case 0xfe: // EOF packet
+		// EOF packet is exactly 5 bytes payload in MySQL 4.1+
+		if pktLen != 5 && pktLen != 1 {
+			return
+		}
 		event.Operation = "EOF"
 	default:
-		// Result set (first byte is field count)
-		event.Operation = "RESULT"
+		// Result set - first byte is field count
+		// Be conservative: only accept small field counts (1-50 typical)
+		if status >= 1 && status <= 50 {
+			// Field count packet should be small
+			if pktLen <= 9 {
+				event.Operation = "RESULT"
+			}
+		}
 	}
+}
+
+// looksLikeMySQLResponse checks if payload appears to be valid MySQL protocol
+func looksLikeMySQLResponse(payload []byte) bool {
+	if len(payload) < 5 {
+		return false
+	}
+	// Check packet length field (first 3 bytes, little-endian)
+	packetLen := int(payload[0]) | int(payload[1])<<8 | int(payload[2])<<16
+	// Packet length should be reasonable and match payload
+	if packetLen <= 0 || packetLen > 16*1024*1024 {
+		return false
+	}
+	// Sequence number should be small
+	seqNum := payload[3]
+	if seqNum > 100 {
+		return false
+	}
+	return true
 }
 
 // PostgreSQL wire protocol parsing
 func (p *DBProbe) parsePostgresQuery(event *DBEvent, payload []byte) {
 	if len(payload) < 5 {
+		return
+	}
+
+	// Check if it looks like valid PostgreSQL protocol
+	if !looksLikePostgresMessage(payload) {
 		return
 	}
 
@@ -335,7 +530,7 @@ func (p *DBProbe) parsePostgresQuery(event *DBEvent, payload []byte) {
 	case 'Q': // Simple Query
 		event.Operation = "QUERY"
 		// Length is bytes 1-4 (big-endian), then query string
-		if len(payload) > 5 {
+		if len(payload) > 5 && looksLikeText(payload[5:]) {
 			event.Query = sanitizeQuery(strings.TrimRight(string(payload[5:]), "\x00"))
 			event.Table = extractTableName(event.Query)
 			event.Operation = extractSQLOperation(event.Query)
@@ -345,7 +540,7 @@ func (p *DBProbe) parsePostgresQuery(event *DBEvent, payload []byte) {
 		// Statement name (null-terminated), then query
 		if idx := bytes.IndexByte(payload[5:], 0); idx >= 0 {
 			queryStart := 5 + idx + 1
-			if queryStart < len(payload) {
+			if queryStart < len(payload) && looksLikeText(payload[queryStart:]) {
 				event.Query = sanitizeQuery(strings.TrimRight(string(payload[queryStart:]), "\x00"))
 			}
 		}
@@ -356,8 +551,36 @@ func (p *DBProbe) parsePostgresQuery(event *DBEvent, payload []byte) {
 	}
 }
 
+// looksLikePostgresMessage checks if payload looks like valid PostgreSQL protocol
+func looksLikePostgresMessage(payload []byte) bool {
+	if len(payload) < 5 {
+		return false
+	}
+	// First byte should be a valid message type (printable ASCII letter)
+	msgType := payload[0]
+	validTypes := "QPEBCDTRZCS12n"
+	isValidType := false
+	for i := 0; i < len(validTypes); i++ {
+		if msgType == validTypes[i] {
+			isValidType = true
+			break
+		}
+	}
+	if !isValidType {
+		return false
+	}
+	// Length field (bytes 1-4, big-endian) should be reasonable
+	msgLen := int(payload[1])<<24 | int(payload[2])<<16 | int(payload[3])<<8 | int(payload[4])
+	return msgLen > 0 && msgLen < 16*1024*1024
+}
+
 func (p *DBProbe) parsePostgresResponse(event *DBEvent, payload []byte) {
 	if len(payload) < 5 {
+		return
+	}
+
+	// Check if it looks like valid PostgreSQL protocol
+	if !looksLikePostgresMessage(payload) {
 		return
 	}
 
@@ -371,7 +594,7 @@ func (p *DBProbe) parsePostgresResponse(event *DBEvent, payload []byte) {
 	case 'C': // CommandComplete
 		event.Operation = "COMPLETE"
 		// The tag follows: "SELECT 1", "INSERT 0 1", etc.
-		if len(payload) > 5 {
+		if len(payload) > 5 && looksLikeText(payload[5:]) {
 			tag := strings.TrimRight(string(payload[5:]), "\x00")
 			parts := strings.Fields(tag)
 			if len(parts) > 0 {
@@ -454,27 +677,56 @@ func (p *DBProbe) parseRedisCommand(event *DBEvent, payload []byte) {
 }
 
 func (p *DBProbe) parseRedisResponse(event *DBEvent, payload []byte) {
-	if len(payload) < 1 {
+	if len(payload) < 3 {
 		return
 	}
 
 	switch payload[0] {
-	case '+': // Simple string
+	case '+': // Simple string: +OK\r\n
+		// Must have \r\n
+		if !bytes.Contains(payload[:min(len(payload), 100)], []byte("\r\n")) {
+			return
+		}
 		event.Operation = "OK"
 		line := strings.TrimRight(string(payload[1:]), "\r\n")
 		if line != "OK" {
 			event.Query = line
 		}
-	case '-': // Error
+	case '-': // Error: -ERR message\r\n or -WRONGTYPE message\r\n
+		// Must have \r\n and start with known error prefix
+		if !bytes.Contains(payload[:min(len(payload), 200)], []byte("\r\n")) {
+			return
+		}
+		// Redis errors start with error type like ERR, WRONGTYPE, NOSCRIPT, etc.
+		// NOT with ---- (like certificates)
+		if len(payload) > 4 && payload[1] == '-' && payload[2] == '-' && payload[3] == '-' {
+			return // Looks like certificate ----BEGIN
+		}
+		line := strings.TrimRight(string(payload[1:]), "\r\n")
+		// Validate it looks like a Redis error (uppercase word at start)
+		if len(line) > 0 && (line[0] < 'A' || line[0] > 'Z') {
+			return
+		}
 		event.Operation = "ERROR"
-		event.Error = strings.TrimRight(string(payload[1:]), "\r\n")
-	case ':': // Integer
+		event.Error = line
+	case ':': // Integer: :123\r\n
+		if !bytes.Contains(payload[:min(len(payload), 50)], []byte("\r\n")) {
+			return
+		}
 		event.Operation = "INT"
 		line := strings.TrimRight(string(payload[1:]), "\r\n")
 		fmt.Sscanf(line, "%d", &event.RowsAffected)
-	case '$': // Bulk string
+	case '$': // Bulk string: $6\r\nfoobar\r\n
+		// Must have length followed by \r\n
+		if !bytes.Contains(payload[:min(len(payload), 20)], []byte("\r\n")) {
+			return
+		}
 		event.Operation = "BULK"
-	case '*': // Array
+	case '*': // Array: *2\r\n...
+		// Must have count followed by \r\n
+		if !bytes.Contains(payload[:min(len(payload), 20)], []byte("\r\n")) {
+			return
+		}
 		event.Operation = "ARRAY"
 	}
 }

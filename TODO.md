@@ -9,12 +9,14 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 | Category | Status |
 |----------|--------|
 | **Codebase** | ~45,500 lines Go, 29 packages |
-| **eBPF Probes** | TCP ✅, HTTP/1.1 ✅, CPU profiling ✅, SSL ✅ |
+| **eBPF Probes** | TCP ✅, HTTP/1.1 ✅, CPU profiling ✅, SSL ✅, Redis ✅, PostgreSQL ✅, MySQL ✅ |
 | **Storage** | SQLite for all stores (metrics, traces, logs, alerts, etc.) |
 | **Auth** | RBAC ✅, API keys ✅, OAuth2 ✅, SAML ✅ |
 | **Alerting** | Rules ✅, evaluation ✅, routing ✅, 7 notification channels ✅ |
 | **Features** | Dashboards ✅, SLOs ✅, Synthetics ✅, Incidents ✅, On-call ✅, Catalog ✅, Anomaly ✅, K8s ✅, Federation ✅ |
-| **NOT Built** | All 7 killer features, DB protocol parsing, Cost Intelligence, BubbleUp, backup/restore |
+| **Cost Intel** | Cost calculators ✅, Cardinality ✅, Usage analytics ✅, Data shaping ✅, Quotas ✅ |
+| **Correlation** | Change correlation ✅, Alert enrichment ✅, Dependency graph ✅ |
+| **NOT Built** | BubbleUp, Dependency-aware alerting, Blast radius, Lookout homepage |
 
 ---
 
@@ -26,16 +28,16 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 |------|------------|---------------------|
 | ~~Redis eBPF protocol parsing~~ | ✅ Done | [Zero-Config Tracing](VISION.md#1-zero-config-distributed-tracing), [Redis Wire Format](VISION.md#redis-protocol-parsing) |
 | ~~PostgreSQL eBPF protocol parsing~~ | ✅ Done | [Zero-Config Tracing](VISION.md#1-zero-config-distributed-tracing), [PostgreSQL Wire Format](VISION.md#postgresql-protocol-parsing) |
-| MySQL eBPF protocol parsing | ⚠️ Needs work | [Zero-Config Tracing](VISION.md#1-zero-config-distributed-tracing), [MySQL Wire Format](VISION.md#mysql-protocol-parsing) |
+| ~~MySQL eBPF protocol parsing~~ | ✅ Done | [Zero-Config Tracing](VISION.md#1-zero-config-distributed-tracing), [MySQL Wire Format](VISION.md#mysql-protocol-parsing) |
 | ~~Fix SSL/HTTPS probe~~ | ✅ Done | [TLS Interception](VISION.md#2-tls-interception) |
 
 ### P1 - DB Probe Refinements
 
 | Task | Complexity | Notes |
 |------|------------|-------|
-| Fix MySQL protocol detection | 2-3 days | Too many false positives; query text parsing broken; needs stricter validation |
+| ~~Fix MySQL protocol detection~~ | ✅ Done | Stricter BPF validation, handles MySQL 8 query attributes, reduced false positives |
 | ~~Test PostgreSQL with real server~~ | ✅ Done | Verified: CREATE, INSERT, SELECT with latency tracking |
-| ~~Test MySQL with real server~~ | ⚠️ Tested | Events detected but query parsing broken, many false positives |
+| ~~Test MySQL with real server~~ | ✅ Done | Verified: SELECT, INSERT, UPDATE with plaintext connections (TLS requires SSL probe) |
 
 ### P0 - Production Essentials
 
@@ -43,8 +45,8 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 |------|------------|---------------------|
 | ~~OTLP receiver (gRPC + HTTP)~~ | ✅ Done | [Ingest Protocol Support](VISION.md#ingest-protocol-support) |
 | ~~Backup & restore CLI~~ | ✅ Done | [Backup & Disaster Recovery](VISION.md#2-backup--disaster-recovery) |
-| Health check endpoints (`/healthz`, `/readyz`) | 2 days | [Production Essentials](VISION.md#production-essentials) |
-| Prometheus remote write receiver | 3 days | [Prometheus Compatibility](VISION.md#prometheus-compatibility) |
+| ~~Health check endpoints (`/healthz`, `/readyz`)~~ | ✅ Done | [Production Essentials](VISION.md#production-essentials) |
+| ~~Prometheus remote write receiver~~ | ✅ Done | [Prometheus Compatibility](VISION.md#prometheus-compatibility) |
 
 ---
 
@@ -54,26 +56,27 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 
 | Task | Complexity | VISION.md Reference |
 |------|------------|---------------------|
-| Datadog cost calculator | 1 week | [Cost Intelligence](VISION.md#2-cost-intelligence) |
-| New Relic cost calculator | 3 days | [Cost Intelligence](VISION.md#2-cost-intelligence) |
-| Cost trending dashboard | 1 week | [Cost Intelligence](VISION.md#2-cost-intelligence) |
-| Cost recommendations engine | 1 week | [Cost Intelligence](VISION.md#2-cost-intelligence) |
+| ~~Datadog cost calculator~~ | ✅ Done | [Cost Intelligence](VISION.md#2-cost-intelligence) |
+| ~~New Relic cost calculator~~ | ✅ Done | [Cost Intelligence](VISION.md#2-cost-intelligence) |
+| ~~Splunk cost calculator~~ | ✅ Done | [Cost Intelligence](VISION.md#2-cost-intelligence) |
+| ~~Cost trending dashboard~~ | ✅ Done | [Cost Intelligence](VISION.md#2-cost-intelligence) |
+| ~~Cost recommendations engine~~ | ✅ Done | [Cost Intelligence](VISION.md#2-cost-intelligence) |
 
 ### P0 - Control Plane
 
 | Task | Complexity | VISION.md Reference |
 |------|------------|---------------------|
-| Usage analytics (what's queried vs wasted) | 2 weeks | [Control Plane](VISION.md#3-control-plane) |
-| Cardinality explorer | 1 week | [Control Plane](VISION.md#3-control-plane), [Pain Point: Cardinality](VISION.md#pain-point-3-cardinality-explosions--high) |
-| Data shaping rules (drop/aggregate at ingest) | 2 weeks | [Control Plane](VISION.md#3-control-plane) |
-| Team quotas & chargeback | 1 week | [Control Plane](VISION.md#3-control-plane) |
+| ~~Usage analytics (what's queried vs wasted)~~ | ✅ Done | [Control Plane](VISION.md#3-control-plane) |
+| ~~Cardinality explorer~~ | ✅ Done | [Control Plane](VISION.md#3-control-plane), [Pain Point: Cardinality](VISION.md#pain-point-3-cardinality-explosions--high) |
+| ~~Data shaping rules (drop/aggregate at ingest)~~ | ✅ Done | [Control Plane](VISION.md#3-control-plane) |
+| ~~Team quotas & chargeback~~ | ✅ Done | [Control Plane](VISION.md#3-control-plane) |
 
 ### P1 - Log Analysis
 
 | Task | Complexity | VISION.md Reference |
 |------|------------|---------------------|
-| LogCompare (time period comparison) | 2 weeks | [LogCompare](VISION.md#1-logcompare--steal-this) |
-| Pattern detection / LogReduce | 3 weeks | [LogReduce](VISION.md#3-logreduce--pattern-detection--steal-this) |
+| ~~LogCompare (time period comparison)~~ | ✅ Done | [LogCompare](VISION.md#1-logcompare--steal-this) |
+| ~~Pattern detection / LogReduce~~ | ✅ Done | [LogReduce](VISION.md#3-logreduce--pattern-detection--steal-this) |
 
 ---
 
@@ -84,14 +87,14 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 | Task | Complexity | VISION.md Reference |
 |------|------------|---------------------|
 | BubbleUp (statistical anomaly explanation) | 3 weeks | [BubbleUp](VISION.md#4-bubbleup-automatic-root-cause-analysis) |
-| Change correlation engine | 2 weeks | [Change Correlation](VISION.md#5-change-correlation) |
-| Alert auto-enrichment (deploys, related alerts) | 1 week | [Pain Point: Slow Incident Response](VISION.md#pain-point-5-slow-incident-response--high) |
+| ~~Change correlation engine~~ | ✅ Done | [Change Correlation](VISION.md#5-change-correlation) |
+| ~~Alert auto-enrichment (deploys, related alerts)~~ | ✅ Done | [Pain Point: Slow Incident Response](VISION.md#pain-point-5-slow-incident-response--high) |
 
 ### P1 - Dependencies
 
 | Task | Complexity | VISION.md Reference |
 |------|------------|---------------------|
-| Dependency graph from traces | 2 weeks | [Pain Point: Microservices Dependencies](VISION.md#pain-point-13-microservices-dependency-hell--high) |
+| ~~Dependency graph from traces~~ | ✅ Done | [Pain Point: Microservices Dependencies](VISION.md#pain-point-13-microservices-dependency-hell--high) |
 | Dependency-aware alerting | 1 week | [Pain Point: Microservices Dependencies](VISION.md#pain-point-13-microservices-dependency-hell--high) |
 | Blast radius estimation | 1 week | [Pain Point: Microservices Dependencies](VISION.md#pain-point-13-microservices-dependency-hell--high) |
 
@@ -213,9 +216,13 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 | **Notifications** | Slack, PagerDuty, OpsGenie, Discord, MS Teams, Email, Webhook |
 | **Auth** | RBAC (Owner/Admin/Editor/Viewer), API keys, JWT sessions, OAuth2, SAML SSO |
 | **Features** | Dashboards, SLOs, Synthetics, Incidents, On-call, Service catalog, Anomaly detection (IForest), Deploy tracking |
-| **Infrastructure** | Federation (gossip), K8s collector, Container monitoring, Rate limiting, Pagination |
+| **Infrastructure** | Federation (gossip), K8s collector, Container monitoring, Rate limiting, Pagination, Health checks |
 | **APM SDK** | HTTP middleware, SQL/Redis/gRPC instrumentation |
 | **UI** | Web server, Service map, History graphs, Demo data |
+| **Cost Intel** | Datadog/New Relic/Splunk calculators, Cost trending, Recommendations, Cardinality explorer, Usage analytics, Data shaping, Team quotas |
+| **Correlation** | Change correlation engine, Alert auto-enrichment, Deploy-incident correlation, Dependency graph |
+| **Logs** | LogCompare (time period comparison), LogReduce (pattern detection) |
+| **Production** | Prometheus remote write receiver, Health check endpoints (/healthz, /readyz, /livez) |
 
 ---
 
@@ -237,11 +244,11 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 
 | Question | Answer |
 |----------|--------|
-| **Build first** | MySQL/PG/Redis parsing → OTLP → Backup |
-| **Makes people pay** | Cost Intelligence, Control Plane, LogCompare |
-| **Makes people stay** | BubbleUp, Lookout, Entity synthesis |
+| **Build first** | BubbleUp (Phase 3) |
+| **Makes people pay** | ✅ Cost Intelligence, Control Plane, LogCompare - all done |
+| **Makes people stay** | BubbleUp (not built), Lookout, Entity synthesis |
 | **The moat** | Zero-config eBPF + cost transparency |
-| **What's broken** | Nothing critical currently |
+| **What's broken** | Nothing critical (MySQL works with plaintext, TLS needs SSL probe) |
 | **Full context** | [VISION.md](VISION.md) (22,400 lines) |
 
 ---

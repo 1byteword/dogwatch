@@ -52,24 +52,77 @@ struct {
 // Format: 3-byte length (LE) + 1-byte seq + payload
 // COM_QUERY = 0x03, COM_STMT_PREPARE = 0x16, COM_STMT_EXECUTE = 0x17
 static __always_inline int is_mysql_query(const char *buf, __u32 size) {
-    if (size < 5) return 0;
+    if (size < 6) return 0;  // Need at least header + cmd + 1 byte
 
-    char b0, b1, b2, b3, b4;
-    bpf_probe_read_user(&b0, 1, buf);
-    bpf_probe_read_user(&b1, 1, buf + 1);
-    bpf_probe_read_user(&b2, 1, buf + 2);
-    bpf_probe_read_user(&b3, 1, buf + 3);
-    bpf_probe_read_user(&b4, 1, buf + 4);
+    char header[6];
+    bpf_probe_read_user(header, 6, buf);
 
-    // Check if length field is reasonable (payload length = total - 4)
-    __u32 pkt_len = (__u32)((__u8)b0) | ((__u32)((__u8)b1) << 8) | ((__u32)((__u8)b2) << 16);
+    // Parse 3-byte length (little-endian)
+    __u32 pkt_len = (__u32)((__u8)header[0]) |
+                    ((__u32)((__u8)header[1]) << 8) |
+                    ((__u32)((__u8)header[2]) << 16);
+
+    // Packet length must be reasonable AND match buffer size
+    // pkt_len is payload length, total packet = pkt_len + 4
     if (pkt_len < 1 || pkt_len > 16777215) return 0;
 
-    // Check command byte (after 4-byte header)
-    // COM_QUERY=0x03, COM_STMT_PREPARE=0x16, COM_STMT_EXECUTE=0x17
-    // COM_INIT_DB=0x02, COM_FIELD_LIST=0x04
-    if (b4 == 0x03 || b4 == 0x16 || b4 == 0x17 || b4 == 0x02) {
+    // Verify packet length is consistent with actual data size
+    // Allow some tolerance for partial reads, but total should be close
+    __u32 expected_total = pkt_len + 4;
+    if (expected_total > size + 100) return 0;  // Way too big
+    if (size > expected_total + 1000) return 0; // Data way bigger than packet claims
+
+    // Sequence number - for new commands it resets to 0, but we allow any value
+    // since persistent connections may have various states
+    // Just reject clearly invalid values
+    __u8 seq_num = (__u8)header[3];
+    (void)seq_num;  // Currently unused, kept for future validation
+
+    // Command byte
+    __u8 cmd = (__u8)header[4];
+
+    // COM_QUERY (0x03) - basic validation, detailed check in userspace
+    if (cmd == 0x03) {
+        if (pkt_len < 2) return 0;  // Need some query text
+        // MySQL 8+ may have extra bytes before query (query attributes)
+        // Check first few bytes for printable SQL or skip leading nulls
+        char query_bytes[4];
+        bpf_probe_read_user(query_bytes, 4, buf + 5);
+
+        // Skip leading control characters (MySQL 8 query attributes)
+        for (int i = 0; i < 4; i++) {
+            char c = query_bytes[i];
+            // Found printable char - accept
+            if (c >= 32 && c <= 126) return 1;
+            if (c == '\t' || c == '\n' || c == '\r') return 1;
+            // Control char 0-31 (except tab/newline) - skip and continue
+        }
+        // All 4 bytes were control chars - likely not SQL
+        return 0;
+    }
+
+    // COM_STMT_PREPARE (0x16)
+    if (cmd == 0x16) {
+        if (pkt_len < 2) return 0;
         return 1;
+    }
+
+    // COM_STMT_EXECUTE (0x17) - has specific binary format
+    // First 4 bytes after cmd are statement ID (uint32)
+    if (cmd == 0x17 && pkt_len >= 5) {
+        return 1;
+    }
+
+    // COM_INIT_DB (0x02) - database name should be printable
+    if (cmd == 0x02 && pkt_len >= 2) {
+        char db_char;
+        bpf_probe_read_user(&db_char, 1, buf + 5);
+        if ((db_char >= 'a' && db_char <= 'z') ||
+            (db_char >= 'A' && db_char <= 'Z') ||
+            db_char == '_') {
+            return 1;
+        }
+        return 0;
     }
 
     return 0;
@@ -79,26 +132,68 @@ static __always_inline int is_mysql_query(const char *buf, __u32 size) {
 static __always_inline int is_mysql_response(const char *buf, __u32 size) {
     if (size < 5) return 0;
 
-    char b0, b1, b2, b3, b4;
-    bpf_probe_read_user(&b0, 1, buf);
-    bpf_probe_read_user(&b1, 1, buf + 1);
-    bpf_probe_read_user(&b2, 1, buf + 2);
-    bpf_probe_read_user(&b3, 1, buf + 3);
-    bpf_probe_read_user(&b4, 1, buf + 4);
+    char header[12];
+    __u32 read_len = size < 12 ? size : 12;
+    bpf_probe_read_user(header, read_len, buf);
 
-    // Check length is reasonable
-    __u32 pkt_len = (__u32)((__u8)b0) | ((__u32)((__u8)b1) << 8) | ((__u32)((__u8)b2) << 16);
+    // Parse 3-byte length (little-endian)
+    __u32 pkt_len = (__u32)((__u8)header[0]) |
+                    ((__u32)((__u8)header[1]) << 8) |
+                    ((__u32)((__u8)header[2]) << 16);
+
+    // Packet length must be reasonable
     if (pkt_len < 1 || pkt_len > 16777215) return 0;
 
-    // OK packet: 0x00, EOF: 0xfe, ERR: 0xff
-    if (b4 == 0x00 || b4 == 0xfe || b4 == 0xff) {
-        return 1;
+    // Verify packet length is consistent with actual data size
+    __u32 expected_total = pkt_len + 4;
+    if (expected_total > size + 100) return 0;
+    if (size > expected_total + 1000) return 0;
+
+    // Sequence number for responses is typically 1+ (after query's 0)
+    __u8 seq_num = (__u8)header[3];
+    // Could be any value in a conversation, but very high is suspicious
+    if (seq_num > 100) return 0;
+
+    __u8 status = (__u8)header[4];
+
+    // OK packet (0x00) - has specific structure
+    // Byte 5+ are affected_rows (length-encoded), last_insert_id, status_flags, warnings
+    if (status == 0x00) {
+        // OK packet should be at least 7 bytes total (header + min OK body)
+        if (pkt_len >= 3) return 1;
+        return 0;
     }
 
-    // Could be result set (field count as first byte)
-    // Field count is typically 1-250 for result sets
-    if ((__u8)b4 >= 1 && (__u8)b4 <= 250) {
-        return 1;
+    // ERR packet (0xff) - has error code and message
+    if (status == 0xff) {
+        // ERR packet: 0xff + 2-byte error code + '#' + 5-char state + message
+        if (pkt_len >= 3 && size >= 9) {
+            // Error code is 2 bytes after 0xff
+            // Optionally followed by '#' marker
+            // Only match if error code is in valid MySQL range (1000-4999 common)
+            __u16 err_code = (__u16)((__u8)header[5]) | ((__u16)((__u8)header[6]) << 8);
+            if (err_code >= 1000 && err_code < 10000) return 1;
+            // Also accept errors without code validation if '#' marker present
+            if (size >= 8 && header[7] == '#') return 1;
+        }
+        return 0;
+    }
+
+    // EOF packet (0xfe) - MySQL 4.1+ has warnings and status
+    if (status == 0xfe) {
+        // EOF is exactly 5 bytes payload in MySQL 4.1+: 0xfe + 2 warnings + 2 status
+        if (pkt_len == 5 || pkt_len == 1) return 1;
+        return 0;
+    }
+
+    // Result set - first packet has field count (1-252, but typically small)
+    // This is the trickiest case - could be confused with other protocols
+    // Only accept if field count is reasonable (1-50 columns typical)
+    if (status >= 1 && status <= 50) {
+        // For result sets, the packet length should be small (just the count)
+        if (pkt_len == 1 || (pkt_len <= 9 && pkt_len >= 1)) {
+            return 1;
+        }
     }
 
     return 0;
@@ -186,20 +281,42 @@ static __always_inline int is_redis_command(const char *buf, __u32 size) {
 }
 
 // Redis response detection
-// +OK, -ERR, :123, $<len>, *<count>
+// +OK\r\n, -ERR message\r\n, :123\r\n, $<len>\r\n, *<count>\r\n
 static __always_inline int is_redis_response(const char *buf, __u32 size) {
-    if (size < 3) return 0;
+    if (size < 4) return 0;
 
-    char b0;
-    bpf_probe_read_user(&b0, 1, buf);
+    char header[4];
+    bpf_probe_read_user(header, 4, buf);
+
+    char b0 = header[0];
+    char b1 = header[1];
 
     // Simple string: +
-    // Error: -
-    // Integer: :
-    // Bulk string: $
-    // Array: *
-    if (b0 == '+' || b0 == '-' || b0 == ':' || b0 == '$' || b0 == '*') {
-        return 1;
+    if (b0 == '+') return 1;
+
+    // Error: - but NOT ----BEGIN (certificate)
+    if (b0 == '-') {
+        if (b1 == '-') return 0;  // Likely certificate ----
+        if (b1 >= 'A' && b1 <= 'Z') return 1;  // Error type like ERR, WRONGTYPE
+        return 0;
+    }
+
+    // Integer: :123
+    if (b0 == ':') {
+        if ((b1 >= '0' && b1 <= '9') || b1 == '-') return 1;
+        return 0;
+    }
+
+    // Bulk string: $6
+    if (b0 == '$') {
+        if ((b1 >= '0' && b1 <= '9') || b1 == '-') return 1;
+        return 0;
+    }
+
+    // Array: *2
+    if (b0 == '*') {
+        if ((b1 >= '0' && b1 <= '9') || b1 == '-') return 1;
+        return 0;
     }
 
     return 0;
@@ -249,7 +366,7 @@ static __always_inline void detect_db_protocol(const char *buf, __u32 size, __u8
 }
 
 // Emit a database event
-static __always_inline void emit_db_event(char *buf, size_t count, __u8 db_type, __u8 event_type) {
+static __always_inline void emit_db_event(char *buf, __u32 count, __u8 db_type, __u8 event_type) {
     struct db_event *e = bpf_ringbuf_reserve(&db_events, sizeof(*e), 0);
     if (!e) {
         return;
@@ -260,17 +377,16 @@ static __always_inline void emit_db_event(char *buf, size_t count, __u8 db_type,
     e->pid = pid_tgid >> 32;
     e->tid = (__u32)pid_tgid;
     e->uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
-    e->payload_size = count > MAX_PAYLOAD_SIZE ? MAX_PAYLOAD_SIZE : count;
     e->db_type = db_type;
     e->event_type = event_type;
 
     bpf_get_current_comm(&e->comm, sizeof(e->comm));
 
-    // Read payload safely
-    __u32 read_size = e->payload_size;
-    if (read_size > MAX_PAYLOAD_SIZE) {
-        read_size = MAX_PAYLOAD_SIZE;
-    }
+    // Read payload safely - explicit bounds for BPF verifier
+    __u32 read_size = count > MAX_PAYLOAD_SIZE ? MAX_PAYLOAD_SIZE : count;
+    read_size &= (MAX_PAYLOAD_SIZE - 1);  // Verifier-friendly bound: 0-511
+    e->payload_size = read_size;
+
     bpf_probe_read_user(&e->payload, read_size, buf);
 
     bpf_ringbuf_submit(e, 0);
@@ -281,11 +397,13 @@ SEC("tracepoint/syscalls/sys_enter_write")
 int trace_db_write_entry(struct trace_event_raw_sys_enter *ctx)
 {
     char *buf = (char *)ctx->args[1];
-    size_t count = (size_t)ctx->args[2];
+    __u64 raw_count = (__u64)ctx->args[2];
 
-    if (count < 4 || count > 65535) {
+    // Explicit bound for BPF verifier
+    if (raw_count < 4 || raw_count > 65535) {
         return 0;
     }
+    __u32 count = raw_count & 0xFFFF;
 
     __u8 db_type, event_type;
     detect_db_protocol(buf, count, &db_type, &event_type);
@@ -326,8 +444,9 @@ int trace_db_read_exit(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    size_t count = (size_t)ret;
-    if (count < 4 || count > 65535) {
+    // Explicit bound for BPF verifier
+    __u32 count = (__u32)ret & 0xFFFF;  // Max 65535
+    if (count < 4) {
         return 0;
     }
 
@@ -346,11 +465,13 @@ SEC("tracepoint/syscalls/sys_enter_sendto")
 int trace_db_sendto_entry(struct trace_event_raw_sys_enter *ctx)
 {
     char *buf = (char *)ctx->args[1];
-    size_t count = (size_t)ctx->args[2];
+    __u64 raw_count = (__u64)ctx->args[2];
 
-    if (count < 4 || count > 65535) {
+    // Explicit bound for BPF verifier
+    if (raw_count < 4 || raw_count > 65535) {
         return 0;
     }
+    __u32 count = raw_count & 0xFFFF;
 
     __u8 db_type, event_type;
     detect_db_protocol(buf, count, &db_type, &event_type);
@@ -391,8 +512,9 @@ int trace_db_recvfrom_exit(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    size_t count = (size_t)ret;
-    if (count < 4 || count > 65535) {
+    // Explicit bound for BPF verifier
+    __u32 count = (__u32)ret & 0xFFFF;  // Max 65535
+    if (count < 4) {
         return 0;
     }
 

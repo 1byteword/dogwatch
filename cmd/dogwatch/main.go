@@ -987,8 +987,14 @@ func handleDBEvent(event probe.DBEvent, store *dbwatch.Store, verbose bool) {
 		return
 	}
 
+	// Skip events without valid operation (filtered encrypted traffic)
+	if event.Operation == "" {
+		return
+	}
+
 	// Only record queries with latency (response events with timing info)
-	if event.EventType == "response" && event.Latency > 0 {
+	// Also require either a query or known operation to filter encrypted junk
+	if event.EventType == "response" && event.Latency > 0 && (event.Query != "" || event.Operation == "OK" || event.Operation == "ERROR") {
 		record := &dbwatch.QueryRecord{
 			Timestamp:    event.Timestamp,
 			DBType:       dbwatch.DBType(event.DBType),
