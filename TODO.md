@@ -26,16 +26,16 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 |------|------------|---------------------|
 | ~~Redis eBPF protocol parsing~~ | ✅ Done | [Zero-Config Tracing](VISION.md#1-zero-config-distributed-tracing), [Redis Wire Format](VISION.md#redis-protocol-parsing) |
 | ~~PostgreSQL eBPF protocol parsing~~ | ✅ Done | [Zero-Config Tracing](VISION.md#1-zero-config-distributed-tracing), [PostgreSQL Wire Format](VISION.md#postgresql-protocol-parsing) |
-| MySQL eBPF protocol parsing | Test needed | [Zero-Config Tracing](VISION.md#1-zero-config-distributed-tracing), [MySQL Wire Format](VISION.md#mysql-protocol-parsing) |
+| MySQL eBPF protocol parsing | ⚠️ Needs work | [Zero-Config Tracing](VISION.md#1-zero-config-distributed-tracing), [MySQL Wire Format](VISION.md#mysql-protocol-parsing) |
 | ~~Fix SSL/HTTPS probe~~ | ✅ Done | [TLS Interception](VISION.md#2-tls-interception) |
 
 ### P1 - DB Probe Refinements
 
 | Task | Complexity | Notes |
 |------|------------|-------|
-| Reduce MySQL false positives | 2-3 days | Binary protocol matches gRPC/protobuf; add stricter validation |
+| Fix MySQL protocol detection | 2-3 days | Too many false positives; query text parsing broken; needs stricter validation |
 | ~~Test PostgreSQL with real server~~ | ✅ Done | Verified: CREATE, INSERT, SELECT with latency tracking |
-| Test MySQL with real server | 1 day | Code exists, needs verification |
+| ~~Test MySQL with real server~~ | ⚠️ Tested | Events detected but query parsing broken, many false positives |
 
 ### P0 - Production Essentials
 
