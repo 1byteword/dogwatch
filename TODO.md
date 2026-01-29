@@ -42,7 +42,7 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 | Task | Complexity | VISION.md Reference |
 |------|------------|---------------------|
 | ~~OTLP receiver (gRPC + HTTP)~~ | ✅ Done | [Ingest Protocol Support](VISION.md#ingest-protocol-support) |
-| Backup & restore CLI | 1 week | [Backup & Disaster Recovery](VISION.md#2-backup--disaster-recovery) |
+| ~~Backup & restore CLI~~ | ✅ Done | [Backup & Disaster Recovery](VISION.md#2-backup--disaster-recovery) |
 | Health check endpoints (`/healthz`, `/readyz`) | 2 days | [Production Essentials](VISION.md#production-essentials) |
 | Prometheus remote write receiver | 3 days | [Prometheus Compatibility](VISION.md#prometheus-compatibility) |
 
@@ -207,6 +207,7 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 |----------|-------|
 | **eBPF** | TCP connections, HTTP/1.1 parsing, CPU profiling/flamegraphs, SSL/HTTPS (tracefs uprobes), Redis protocol, PostgreSQL protocol |
 | **OTLP** | gRPC (4317) + HTTP (4318) receivers for traces, metrics, logs |
+| **Backup** | CLI + API, scheduler, retention policy, verification |
 | **Storage** | All SQLite stores (metrics, traces, logs, dashboards, alerts, SLOs, synthetics, incidents, on-call, RBAC, audit, SSO, deploys, notify, catalog) |
 | **Alerting** | Rules, evaluation, routing, inhibition |
 | **Notifications** | Slack, PagerDuty, OpsGenie, Discord, MS Teams, Email, Webhook |
