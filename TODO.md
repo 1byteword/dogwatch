@@ -241,6 +241,47 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 
 ---
 
+## Frontend Performance Refactoring (In Progress)
+
+Goal: Transform 557KB monolithic frontend into modular, real-time system.
+
+### Completed
+| Task | Status |
+|------|--------|
+| CSS extraction - variables.css | ✅ Done |
+| CSS extraction - base.css | ✅ Done |
+| CSS extraction - components.css | ✅ Done |
+| CSS extraction - layout.css | ✅ Done |
+| WebSocket backend (websocket.go) | ✅ Done |
+| WebSocket client (js/websocket.js) | ✅ Done |
+| Lazy loader (js/loader.js) | ✅ Done |
+| Web Component: status-badge.js | ✅ Done |
+| Web Component: metrics-card.js | ✅ Done |
+| Web Component: service-map.js | ✅ Done |
+| Web Component: trace-viewer.js | ✅ Done |
+| Web Component: log-viewer.js | ✅ Done |
+
+### Not Yet Started
+| Task | Notes |
+|------|-------|
+| Wire WebSocket hub to main.go | Add hub creation, route registration, periodic broadcasts |
+| Wire WebSocket to watch engine | Broadcast state changes on watch transitions |
+| Update index.html | Remove inline CSS, add CSS links, add JS imports |
+| Update bubbleup.html | Remove inline CSS, add CSS links |
+| Remove polling from frontend | Replace setInterval calls with WebSocket subscriptions |
+| Add /api/ws route to server.go | Register WebSocket upgrade handler |
+| Test WebSocket connection | Verify real-time updates work |
+| Verify CSS extraction | Visual regression check |
+
+### Target Metrics
+| Metric | Current | Target | Status |
+|--------|---------|--------|--------|
+| Initial HTML | 557KB | <100KB | Pending |
+| API calls/8hr | ~7,200 | <500 | Pending |
+| Time to interactive | ~3s | <1.5s | Pending |
+
+---
+
 ## Quick Reference
 
 | Question | Answer |
