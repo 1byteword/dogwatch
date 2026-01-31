@@ -820,6 +820,9 @@ func main() {
 		if alertManager != nil {
 			lookoutEngine.SetAlertManager(alertManager)
 		}
+		if deployStore != nil {
+			lookoutEngine.SetDeploysStore(deployStore)
+		}
 		lookoutHandlers := web.NewLookoutHandlers(lookoutEngine)
 		lookoutHandlers.RegisterRoutes(webServer.Mux())
 		fmt.Printf("Lookout homepage: http://localhost:%d/lookout\n", *webPort)

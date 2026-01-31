@@ -12,6 +12,7 @@ import (
 	"dogwatch/internal/alerting"
 	"dogwatch/internal/anomaly"
 	"dogwatch/internal/catalog"
+	"dogwatch/internal/deploys"
 )
 
 // Severity levels for Lookout items
@@ -45,12 +46,14 @@ type Item struct {
 	ServiceID   string `json:"service_id,omitempty"`
 	ServiceName string `json:"service_name,omitempty"`
 	MetricName  string `json:"metric_name,omitempty"`
+	EntityID    string `json:"entity_id,omitempty"`   // Link to entity explorer
+	EntityType  string `json:"entity_type,omitempty"` // SERVICE, HOST, etc.
 
-	// Values
+	// Values with baseline comparison
 	CurrentValue  float64 `json:"current_value,omitempty"`
 	BaselineValue float64 `json:"baseline_value,omitempty"`
 	Deviation     float64 `json:"deviation,omitempty"`      // Standard deviations
-	ChangePercent float64 `json:"change_percent,omitempty"` // Percentage change
+	ChangePercent float64 `json:"change_percent,omitempty"` // Percentage change from baseline
 
 	// Impact assessment
 	Impact       string   `json:"impact"`         // "critical", "high", "medium", "low"
@@ -65,6 +68,26 @@ type Item struct {
 	// Related items
 	RelatedAlerts    []string `json:"related_alerts,omitempty"`
 	RelatedAnomalies []string `json:"related_anomalies,omitempty"`
+	RelatedDeploys   []string `json:"related_deploys,omitempty"` // Recent deploys that might explain this
+
+	// Quick action URLs
+	AcknowledgeURL  string `json:"acknowledge_url,omitempty"`
+	SilenceURL      string `json:"silence_url,omitempty"`
+	InvestigateURL  string `json:"investigate_url,omitempty"`
+	EntityURL       string `json:"entity_url,omitempty"`
+}
+
+// RecentDeploy represents a recent deployment that might explain issues
+type RecentDeploy struct {
+	ID          string    `json:"id"`
+	Service     string    `json:"service"`
+	Version     string    `json:"version"`
+	Environment string    `json:"environment"`
+	Timestamp   time.Time `json:"timestamp"`
+	User        string    `json:"user"`
+	Status      string    `json:"status"`
+	TimeAgo     string    `json:"time_ago"`
+	CommitURL   string    `json:"commit_url,omitempty"`
 }
 
 // Overview is the main Lookout response
@@ -86,6 +109,10 @@ type Overview struct {
 	UnhealthyServices int `json:"unhealthy_services"`
 	DegradedServices  int `json:"degraded_services"`
 	TotalServices     int `json:"total_services"`
+
+	// Recent changes that might explain issues
+	RecentDeploys []RecentDeploy `json:"recent_deploys"`
+	DeployCount   int            `json:"deploy_count_1h"` // Deploys in last hour
 }
 
 // Engine is the main Lookout engine
@@ -93,6 +120,7 @@ type Engine struct {
 	catalogStore   *catalog.Store
 	anomalyService *anomaly.Service
 	alertManager   *alerting.AlertManager
+	deploysStore   *deploys.Store
 
 	// Cached overview
 	lastOverview   *Overview
@@ -146,6 +174,13 @@ func (e *Engine) SetAlertManager(am *alerting.AlertManager) {
 	e.mu.Unlock()
 }
 
+// SetDeploysStore sets the deploys store
+func (e *Engine) SetDeploysStore(store *deploys.Store) {
+	e.mu.Lock()
+	e.deploysStore = store
+	e.mu.Unlock()
+}
+
 // GetOverview returns the current Lookout overview
 func (e *Engine) GetOverview() *Overview {
 	e.mu.RLock()
@@ -166,10 +201,22 @@ func (e *Engine) refresh() *Overview {
 	defer e.mu.Unlock()
 
 	overview := &Overview{
-		Timestamp: time.Now(),
-		Critical:  []Item{},
-		Warning:   []Item{},
-		Info:      []Item{},
+		Timestamp:     time.Now(),
+		Critical:      []Item{},
+		Warning:       []Item{},
+		Info:          []Item{},
+		RecentDeploys: []RecentDeploy{},
+	}
+
+	// Collect recent deploys first (for correlation)
+	recentDeploys := e.collectRecentDeploys()
+	overview.RecentDeploys = recentDeploys
+	overview.DeployCount = len(recentDeploys)
+
+	// Build service -> deploy map for correlation
+	serviceDeployMap := make(map[string][]string)
+	for _, d := range recentDeploys {
+		serviceDeployMap[d.Service] = append(serviceDeployMap[d.Service], d.ID)
 	}
 
 	// Collect items from all sources
@@ -183,6 +230,11 @@ func (e *Engine) refresh() *Overview {
 
 	// 3. Get service health issues
 	items = append(items, e.collectHealthIssues()...)
+
+	// Enrich items with entity links, action URLs, and related deploys
+	for i := range items {
+		e.enrichItem(&items[i], serviceDeployMap)
+	}
 
 	// Sort by severity and time
 	sort.Slice(items, func(i, j int) bool {
@@ -224,6 +276,91 @@ func (e *Engine) refresh() *Overview {
 	e.lastUpdateAt = time.Now()
 
 	return overview
+}
+
+// collectRecentDeploys gets recent deployments that might explain issues
+func (e *Engine) collectRecentDeploys() []RecentDeploy {
+	if e.deploysStore == nil {
+		return nil
+	}
+
+	// Get deploys from last 2 hours
+	start := time.Now().Add(-2 * time.Hour)
+	end := time.Now()
+
+	deployments, err := e.deploysStore.ListByTimeRange(start, end)
+	if err != nil {
+		log.Printf("[lookout] Error getting recent deploys: %v", err)
+		return nil
+	}
+
+	var recent []RecentDeploy
+	for _, d := range deployments {
+		recent = append(recent, RecentDeploy{
+			ID:          d.ID,
+			Service:     d.Service,
+			Version:     d.Version,
+			Environment: d.Environment,
+			Timestamp:   d.Timestamp,
+			User:        d.User,
+			Status:      d.Status,
+			TimeAgo:     formatDuration(time.Since(d.Timestamp)),
+			CommitURL:   d.CommitURL,
+		})
+	}
+
+	// Sort by most recent first
+	sort.Slice(recent, func(i, j int) bool {
+		return recent[i].Timestamp.After(recent[j].Timestamp)
+	})
+
+	// Limit to 10 most recent
+	if len(recent) > 10 {
+		recent = recent[:10]
+	}
+
+	return recent
+}
+
+// enrichItem adds entity links, action URLs, and related deploys
+func (e *Engine) enrichItem(item *Item, serviceDeployMap map[string][]string) {
+	// Add entity linking
+	if item.ServiceID != "" {
+		item.EntityID = "SERVICE:" + item.ServiceID
+		item.EntityType = "SERVICE"
+		item.EntityURL = "/api/entities/SERVICE:" + item.ServiceID
+	} else if item.ServiceName != "" {
+		item.EntityID = "SERVICE:" + item.ServiceName
+		item.EntityType = "SERVICE"
+		item.EntityURL = "/api/entities/SERVICE:" + item.ServiceName
+	}
+
+	// Compute change percent from baseline
+	if item.BaselineValue > 0 && item.CurrentValue > 0 {
+		item.ChangePercent = ((item.CurrentValue - item.BaselineValue) / item.BaselineValue) * 100
+	}
+
+	// Add related deploys
+	if item.ServiceName != "" {
+		if deploys, ok := serviceDeployMap[item.ServiceName]; ok {
+			item.RelatedDeploys = deploys
+		}
+	}
+
+	// Add quick action URLs based on item type
+	switch item.Type {
+	case TypeAlert:
+		item.AcknowledgeURL = fmt.Sprintf("/api/alerting/alerts/%s/acknowledge", item.ID)
+		item.SilenceURL = fmt.Sprintf("/api/alerting/alerts/%s/silence", item.ID)
+		item.InvestigateURL = fmt.Sprintf("/api/traces?service=%s", item.ServiceName)
+	case TypeAnomaly:
+		item.InvestigateURL = fmt.Sprintf("/api/metrics/query?metric=%s", item.MetricName)
+		if item.ServiceName != "" {
+			item.InvestigateURL = fmt.Sprintf("/api/traces?service=%s", item.ServiceName)
+		}
+	case TypeHealth:
+		item.InvestigateURL = fmt.Sprintf("/api/catalog/services/%s", item.ServiceID)
+	}
 }
 
 // collectAnomalies gets recent anomalies from the anomaly service
