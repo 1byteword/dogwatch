@@ -16,7 +16,7 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 | **Features** | Dashboards ✅, SLOs ✅, Synthetics ✅, Incidents ✅, On-call ✅, Catalog ✅, Anomaly ✅, K8s ✅, Federation ✅ |
 | **Cost Intel** | Cost calculators ✅, Cardinality ✅, Usage analytics ✅, Data shaping ✅, Quotas ✅ |
 | **Correlation** | Change correlation ✅, Alert enrichment ✅, Dependency graph ✅ |
-| **NOT Built** | Entity relationship mapping |
+| **NOT Built** | Visual query builder |
 
 ---
 
@@ -108,7 +108,7 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 |------|------------|---------------------|
 | ~~Lookout homepage (anomalies at a glance)~~ | ✅ Done | [Lookout](VISION.md#2-lookout-automatic-anomaly-overview--steal-this) |
 | ~~Entity synthesis (auto-discover services)~~ | ✅ Done | [Entity Synthesis](VISION.md#1-entity-synthesis--steal-this) |
-| Entity relationship mapping | 2 weeks | [Entity Synthesis](VISION.md#1-entity-synthesis--steal-this) |
+| ~~Entity relationship mapping~~ | ✅ Done | [Entity Synthesis](VISION.md#1-entity-synthesis--steal-this) |
 
 ### P1 - Query & Developer Experience
 
@@ -286,7 +286,7 @@ Goal: Transform 557KB monolithic frontend into modular, real-time system.
 
 | Question | Answer |
 |----------|--------|
-| **Build first** | Entity relationship mapping or Visual query builder (Phase 4) |
+| **Build first** | Visual query builder or "My Services" view (Phase 4) |
 | **Makes people pay** | ✅ Cost Intelligence, Control Plane, LogCompare - all done |
 | **Makes people stay** | ✅ BubbleUp, Lookout (not built), Entity synthesis (not built) |
 | **The moat** | Zero-config eBPF + cost transparency |
