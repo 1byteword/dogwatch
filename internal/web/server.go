@@ -1,6 +1,7 @@
 package web
 
 import (
+	"compress/gzip"
 	"context"
 	"embed"
 	"encoding/json"
@@ -43,7 +44,7 @@ import (
 	"github.com/google/uuid"
 )
 
-//go:embed static/*
+//go:embed all:static
 var staticFiles embed.FS
 
 // FlameGraphProvider interface for getting flame graph data
@@ -92,6 +93,8 @@ type Server struct {
 	correlationHandlers *CorrelationHandlers
 	bubbleupAnalyzer    *bubbleup.Analyzer
 	bubbleupHandlers    *BubbleUpHandlers
+	myServicesHandlers  *MyServicesHandlers
+	wsHub               *Hub
 	server              *http.Server
 	mux                 *http.ServeMux
 	mu                  sync.RWMutex
@@ -102,6 +105,61 @@ func (s *Server) Mux() *http.ServeMux {
 	return s.mux
 }
 
+// gzipResponseWriter wraps http.ResponseWriter with gzip compression
+type gzipResponseWriter struct {
+	http.ResponseWriter
+	Writer *gzip.Writer
+}
+
+func (w *gzipResponseWriter) Write(b []byte) (int, error) {
+	return w.Writer.Write(b)
+}
+
+// gzipMiddleware compresses responses for compressible content types
+func gzipMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+
+		// Add cache headers for static assets
+		if strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".css") {
+			// Cache JS/CSS for 1 hour, allow stale-while-revalidate
+			w.Header().Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
+		} else if strings.HasSuffix(path, ".woff2") || strings.HasSuffix(path, ".woff") || strings.HasSuffix(path, ".ttf") {
+			// Cache fonts for 1 year (they rarely change)
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else if strings.HasSuffix(path, ".png") || strings.HasSuffix(path, ".jpg") || strings.HasSuffix(path, ".svg") || strings.HasSuffix(path, ".ico") {
+			// Cache images for 1 day
+			w.Header().Set("Cache-Control", "public, max-age=86400")
+		}
+
+		// Check if client accepts gzip
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Only compress certain file types
+		compress := strings.HasSuffix(path, ".js") ||
+			strings.HasSuffix(path, ".css") ||
+			strings.HasSuffix(path, ".html") ||
+			strings.HasSuffix(path, ".json") ||
+			strings.HasSuffix(path, ".svg")
+
+		if !compress {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		gz := gzip.NewWriter(w)
+		defer gz.Close()
+
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Del("Content-Length") // Length changes with compression
+
+		next.ServeHTTP(&gzipResponseWriter{ResponseWriter: w, Writer: gz}, r)
+	})
+}
+
 // New creates a new web server
 func New(agg *aggregator.Aggregator, port int) *Server {
 	s := &Server{
@@ -109,12 +167,19 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 		metrics: metrics.NewCollector(),
 	}
 
+	// Initialize WebSocket hub for real-time updates
+	s.wsHub = NewHub()
+	go s.wsHub.Run()
+
 	mux := http.NewServeMux()
 	s.mux = mux
 
-	// Serve static files
+	// Serve static files with gzip compression
 	staticFS, _ := fs.Sub(staticFiles, "static")
-	mux.Handle("/", http.FileServer(http.FS(staticFS)))
+	mux.Handle("/", gzipMiddleware(http.FileServer(http.FS(staticFS))))
+
+	// WebSocket endpoint for real-time updates
+	mux.HandleFunc("/api/ws", s.wsHub.ServeWS)
 
 	// API endpoints
 	mux.HandleFunc("/api/stats", s.handleStats)
@@ -323,6 +388,9 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	// Log pattern mining endpoints
 	RegisterLogReduceRoutes(mux)
 
+	// Query builder endpoints
+	RegisterQueryRoutes(mux, s)
+
 	// Health check endpoints (no auth required)
 	// Standard paths
 	mux.HandleFunc("/health", s.handleHealth)
@@ -342,6 +410,24 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 		Addr:    fmt.Sprintf(":%d", port),
 		Handler: rateLimitedHandler,
 	}
+
+	// Start periodic WebSocket broadcasts for real-time updates
+	s.wsHub.StartPeriodicBroadcasts(
+		func() interface{} {
+			// System stats
+			if s.metrics != nil {
+				return s.metrics.Collect()
+			}
+			return nil
+		},
+		func() interface{} {
+			// Service map
+			if s.agg != nil {
+				return s.buildServiceMapData()
+			}
+			return nil
+		},
+	)
 
 	return s
 }
@@ -613,6 +699,28 @@ func (s *Server) GetCatalogDiscovery() *catalog.DiscoveryService {
 	return s.catalogDiscovery
 }
 
+// SetMyServicesHandlers sets up the My Services handlers
+func (s *Server) SetMyServicesHandlers(handlers *MyServicesHandlers) {
+	s.myServicesHandlers = handlers
+
+	// Wire up stores that the server has
+	if s.deployStore != nil {
+		handlers.SetDeploysStore(s.deployStore)
+	}
+	if s.incidentStore != nil {
+		handlers.SetIncidentStore(s.incidentStore)
+	}
+	if s.oncallStore != nil && s.oncallCalculator != nil {
+		handlers.SetOncallStore(s.oncallStore, s.oncallCalculator)
+	}
+	if s.sloStore != nil {
+		handlers.SetSLOStore(s.sloStore)
+	}
+
+	// Register routes
+	handlers.RegisterRoutes(s.mux)
+}
+
 // initCorrelation initializes the correlation engine
 func (s *Server) initCorrelation() {
 	s.correlationEngine = correlation.NewEngine()
@@ -656,6 +764,32 @@ func (s *Server) SetTraceStore(ts *trace.Store) {
 	}
 }
 
+// SetSpanCallback sets a callback for span processing (for entity synthesis)
+func (s *Server) SetSpanCallback(cb trace.SpanCallback) {
+	if s.otlpReceiver != nil {
+		// Wrap callback to also broadcast to WebSocket subscribers
+		wrappedCb := func(span trace.Span) {
+			// Call the original callback (entity synthesis)
+			if cb != nil {
+				cb(span)
+			}
+			// Broadcast to WebSocket subscribers (real-time trace updates)
+			if s.wsHub != nil && s.wsHub.TopicSubscriberCount(TopicTraces) > 0 {
+				s.wsHub.BroadcastTrace(map[string]interface{}{
+					"trace_id":     span.TraceID,
+					"span_id":      span.SpanID,
+					"service_name": span.ServiceName,
+					"name":         span.Name,
+					"duration_ms":  span.DurationMs,
+					"status":       span.Status,
+					"timestamp":    span.StartTime,
+				})
+			}
+		}
+		s.otlpReceiver.SetSpanCallback(wrappedCb)
+	}
+}
+
 // SetWatchStore sets the watch storage and starts the engine
 func (s *Server) SetWatchStore(ws *watch.Store) {
 	s.watchStore = ws
@@ -666,6 +800,11 @@ func (s *Server) SetWatchStore(ws *watch.Store) {
 	// Connect pager if already set up
 	if s.pager != nil {
 		s.watchEngine.SetPager(s.pager)
+	}
+
+	// Connect WebSocket broadcaster for real-time updates
+	if s.wsHub != nil {
+		s.watchEngine.SetBroadcaster(s.wsHub)
 	}
 
 	s.watchEngine.Start()
@@ -898,6 +1037,11 @@ func (s *Server) SetAlertManager(am *alerting.AlertManager) {
 	defer s.mu.Unlock()
 	s.alertManager = am
 	SetAlertManager(am) // Set for handlers
+
+	// Connect WebSocket broadcaster for real-time alert updates
+	if s.wsHub != nil {
+		am.SetBroadcaster(s.wsHub)
+	}
 }
 
 // GetAlertManager returns the alert manager
@@ -1125,18 +1269,18 @@ type ServiceMapResponse struct {
 	Links []ServiceMapLink `json:"links"`
 }
 
-func (s *Server) handleServiceMap(w http.ResponseWriter, r *http.Request) {
+// buildServiceMapData constructs service map data for WebSocket broadcasts
+func (s *Server) buildServiceMapData() *ServiceMapResponse {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	stats := s.agg.GetStats()
 
 	nodeMap := make(map[string]ServiceMapNode)
-	linkMap := make(map[string]ServiceMapLink) // Use map to dedupe/merge links
+	linkMap := make(map[string]ServiceMapLink)
 
 	// Add nodes and links from TCP connections (eBPF data)
 	for _, conn := range stats.Connections {
-		// Source node (process)
 		sourceID := conn.Comm
 		if _, exists := nodeMap[sourceID]; !exists {
 			nodeMap[sourceID] = ServiceMapNode{
@@ -1146,7 +1290,6 @@ func (s *Server) handleServiceMap(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Target node (remote)
 		targetID := fmt.Sprintf("%s:%d", conn.Remote, conn.Port)
 		if _, exists := nodeMap[targetID]; !exists {
 			nodeMap[targetID] = ServiceMapNode{
@@ -1169,7 +1312,6 @@ func (s *Server) handleServiceMap(w http.ResponseWriter, r *http.Request) {
 		deps, err := s.traceStore.GetServiceDependencies()
 		if err == nil {
 			for _, dep := range deps {
-				// Add service nodes
 				if _, exists := nodeMap[dep.Parent]; !exists {
 					nodeMap[dep.Parent] = ServiceMapNode{
 						ID:   dep.Parent,
@@ -1185,7 +1327,6 @@ func (s *Server) handleServiceMap(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
-				// Add/merge link
 				linkKey := dep.Parent + "->" + dep.Child
 				if existing, exists := linkMap[linkKey]; exists {
 					existing.Count += dep.CallCount
@@ -1211,11 +1352,14 @@ func (s *Server) handleServiceMap(w http.ResponseWriter, r *http.Request) {
 		links = append(links, link)
 	}
 
-	resp := ServiceMapResponse{
+	return &ServiceMapResponse{
 		Nodes: nodes,
 		Links: links,
 	}
+}
 
+func (s *Server) handleServiceMap(w http.ResponseWriter, r *http.Request) {
+	resp := s.buildServiceMapData()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
@@ -2131,6 +2275,18 @@ func (s *Server) handleLogIngest(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
+			// Broadcast to WebSocket subscribers (real-time log streaming)
+			if s.wsHub != nil && s.wsHub.TopicSubscriberCount(TopicLogs) > 0 {
+				for _, entry := range entries {
+					s.wsHub.BroadcastLog(map[string]interface{}{
+						"message":   entry.Message,
+						"level":     entry.Level,
+						"service":   entry.Service,
+						"host":      entry.Host,
+						"timestamp": entry.Timestamp,
+					})
+				}
+			}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]int{"ingested": len(entries)})
 			return
@@ -2146,6 +2302,16 @@ func (s *Server) handleLogIngest(w http.ResponseWriter, r *http.Request) {
 		if err := s.logStore.Insert(&entry); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+		// Broadcast to WebSocket subscribers
+		if s.wsHub != nil && s.wsHub.TopicSubscriberCount(TopicLogs) > 0 {
+			s.wsHub.BroadcastLog(map[string]interface{}{
+				"message":   entry.Message,
+				"level":     entry.Level,
+				"service":   entry.Service,
+				"host":      entry.Host,
+				"timestamp": entry.Timestamp,
+			})
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]int{"ingested": 1})
@@ -2192,6 +2358,18 @@ func (s *Server) handleLogIngest(w http.ResponseWriter, r *http.Request) {
 			if err := s.logStore.InsertBatch(entries); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
+			}
+			// Broadcast to WebSocket subscribers
+			if s.wsHub != nil && s.wsHub.TopicSubscriberCount(TopicLogs) > 0 {
+				for _, entry := range entries {
+					s.wsHub.BroadcastLog(map[string]interface{}{
+						"message":   entry.Message,
+						"level":     entry.Level,
+						"service":   entry.Service,
+						"host":      entry.Host,
+						"timestamp": entry.Timestamp,
+					})
+				}
 			}
 		}
 

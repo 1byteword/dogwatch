@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+// AlertBroadcaster interface for broadcasting alert state changes via WebSocket
+type AlertBroadcaster interface {
+	BroadcastAlert(alert interface{})
+}
+
 // Inhibitor manages alert inhibition and silencing
 type Inhibitor struct {
 	store    *Store
@@ -406,8 +411,9 @@ type AlertManager struct {
 	Inhibitor          *Inhibitor
 	DependencyAlerting *DependencyAlerting
 
-	stopCh chan struct{}
-	wg     sync.WaitGroup
+	broadcaster AlertBroadcaster
+	stopCh      chan struct{}
+	wg          sync.WaitGroup
 }
 
 // NewAlertManager creates a new alert manager
@@ -437,6 +443,22 @@ func NewAlertManager(dbPath string, metricsProvider MetricsProvider) (*AlertMana
 			return
 		}
 		router.Route(alert)
+
+		// Broadcast to WebSocket subscribers
+		if am.broadcaster != nil {
+			am.broadcaster.BroadcastAlert(map[string]interface{}{
+				"id":         alert.ID,
+				"rule_id":    alert.RuleID,
+				"rule_name":  alert.RuleName,
+				"state":      alert.State,
+				"severity":   alert.Severity,
+				"value":      alert.Value,
+				"threshold":  alert.Threshold,
+				"labels":     alert.Labels,
+				"fired_at":   alert.FiredAt,
+				"resolved_at": alert.ResolvedAt,
+			})
+		}
 	})
 
 	return am, nil
@@ -462,6 +484,11 @@ func (am *AlertManager) EnableDependencyAlerting(da *DependencyAlerting) {
 	am.DependencyAlerting = da
 	am.Inhibitor.SetDependencyAlerting(da)
 	log.Printf("[alerting] Dependency-aware alerting enabled")
+}
+
+// SetBroadcaster sets the WebSocket broadcaster for real-time alert updates
+func (am *AlertManager) SetBroadcaster(broadcaster AlertBroadcaster) {
+	am.broadcaster = broadcaster
 }
 
 // Start starts all alerting components
