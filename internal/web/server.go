@@ -93,7 +93,13 @@ type Server struct {
 	bubbleupAnalyzer    *bubbleup.Analyzer
 	bubbleupHandlers    *BubbleUpHandlers
 	server              *http.Server
+	mux                 *http.ServeMux
 	mu                  sync.RWMutex
+}
+
+// Mux returns the underlying HTTP mux for registering additional routes
+func (s *Server) Mux() *http.ServeMux {
+	return s.mux
 }
 
 // New creates a new web server
@@ -104,6 +110,7 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	}
 
 	mux := http.NewServeMux()
+	s.mux = mux
 
 	// Serve static files
 	staticFS, _ := fs.Sub(staticFiles, "static")

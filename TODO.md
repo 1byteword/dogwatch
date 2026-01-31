@@ -16,7 +16,7 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 | **Features** | Dashboards ✅, SLOs ✅, Synthetics ✅, Incidents ✅, On-call ✅, Catalog ✅, Anomaly ✅, K8s ✅, Federation ✅ |
 | **Cost Intel** | Cost calculators ✅, Cardinality ✅, Usage analytics ✅, Data shaping ✅, Quotas ✅ |
 | **Correlation** | Change correlation ✅, Alert enrichment ✅, Dependency graph ✅ |
-| **NOT Built** | Dependency-aware alerting, Blast radius, Lookout homepage |
+| **NOT Built** | Lookout homepage |
 
 ---
 
@@ -95,8 +95,8 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 | Task | Complexity | VISION.md Reference |
 |------|------------|---------------------|
 | ~~Dependency graph from traces~~ | ✅ Done | [Pain Point: Microservices Dependencies](VISION.md#pain-point-13-microservices-dependency-hell--high) |
-| Dependency-aware alerting | 1 week | [Pain Point: Microservices Dependencies](VISION.md#pain-point-13-microservices-dependency-hell--high) |
-| Blast radius estimation | 1 week | [Pain Point: Microservices Dependencies](VISION.md#pain-point-13-microservices-dependency-hell--high) |
+| ~~Dependency-aware alerting~~ | ✅ Done | [Pain Point: Microservices Dependencies](VISION.md#pain-point-13-microservices-dependency-hell--high) |
+| ~~Blast radius estimation~~ | ✅ Done | [Pain Point: Microservices Dependencies](VISION.md#pain-point-13-microservices-dependency-hell--high) |
 
 ---
 
@@ -286,7 +286,7 @@ Goal: Transform 557KB monolithic frontend into modular, real-time system.
 
 | Question | Answer |
 |----------|--------|
-| **Build first** | Dependency-aware alerting, Blast radius (Phase 3) |
+| **Build first** | Lookout homepage (Phase 4) |
 | **Makes people pay** | ✅ Cost Intelligence, Control Plane, LogCompare - all done |
 | **Makes people stay** | ✅ BubbleUp, Lookout (not built), Entity synthesis (not built) |
 | **The moat** | Zero-config eBPF + cost transparency |

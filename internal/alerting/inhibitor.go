@@ -566,3 +566,11 @@ func (am *AlertManager) GetDependencyContext(alert *Alert) *DependencyContext {
 	}
 	return am.DependencyAlerting.GetDependencyContext(alert)
 }
+
+// GetFiringAlerts returns all currently firing alerts
+func (am *AlertManager) GetFiringAlerts() []*Alert {
+	if am.Evaluator == nil {
+		return nil
+	}
+	return am.Evaluator.GetFiringAlerts()
+}

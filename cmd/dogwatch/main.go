@@ -33,6 +33,7 @@ import (
 	"dogwatch/internal/kubernetes"
 	"dogwatch/internal/logreduce"
 	"dogwatch/internal/logs"
+	"dogwatch/internal/lookout"
 	"dogwatch/internal/notify"
 	"dogwatch/internal/oncall"
 	"dogwatch/internal/otlp"
@@ -806,6 +807,21 @@ func main() {
 				fmt.Printf("Anomaly detection: http://localhost:%d/api/anomaly\n", *webPort)
 			}
 		}
+
+		// Set up Lookout engine (What's Different Right Now homepage)
+		lookoutEngine := lookout.NewEngine(lookout.DefaultConfig())
+		if catalogStore != nil {
+			lookoutEngine.SetCatalogStore(catalogStore)
+		}
+		if anomalyService != nil {
+			lookoutEngine.SetAnomalyService(anomalyService)
+		}
+		if alertManager != nil {
+			lookoutEngine.SetAlertManager(alertManager)
+		}
+		lookoutHandlers := web.NewLookoutHandlers(lookoutEngine)
+		lookoutHandlers.RegisterRoutes(webServer.Mux())
+		fmt.Printf("Lookout homepage: http://localhost:%d/lookout\n", *webPort)
 
 		go func() {
 			fmt.Printf("Web UI available at http://localhost:%d\n", *webPort)
