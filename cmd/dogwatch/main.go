@@ -16,6 +16,7 @@ import (
 	"dogwatch/internal/aggregator"
 	"dogwatch/internal/alerting"
 	"dogwatch/internal/anomaly"
+	"dogwatch/internal/catalog"
 	"dogwatch/internal/audit"
 	"dogwatch/internal/backup"
 	"dogwatch/internal/cardinality"
@@ -442,6 +443,17 @@ func main() {
 		fmt.Printf("On-call storage: %s\n", oncallDbPath)
 	}
 
+	// Create service catalog storage
+	catalogDbPath := filepath.Join(*dataDir, "catalog.db")
+	catalogStore, err := catalog.NewStore(catalogDbPath)
+	if err != nil {
+		log.Printf("Warning: Could not create catalog storage: %v", err)
+		catalogStore = nil
+	} else {
+		defer catalogStore.Close()
+		fmt.Printf("Service catalog: %s\n", catalogDbPath)
+	}
+
 	// Create RBAC storage and auth
 	rbacDbPath := filepath.Join(*dataDir, "rbac.db")
 	rbacStore, err := rbac.NewStore(rbacDbPath)
@@ -743,6 +755,14 @@ func main() {
 			alertManager.Start()
 			webServer.SetAlertManager(alertManager)
 			fmt.Printf("Alerting: http://localhost:%d/api/alerting\n", *webPort)
+
+			// Enable dependency-aware alerting if catalog store is available
+			if catalogStore != nil {
+				dependencyAlerting := alerting.NewDependencyAlerting(catalogStore)
+				alertManager.EnableDependencyAlerting(dependencyAlerting)
+				fmt.Printf("Dependency-aware alerting: enabled\n")
+				fmt.Printf("Blast radius: http://localhost:%d/api/alerting/blast-radius/{service_id}\n", *webPort)
+			}
 		}
 
 		// Set up federation cluster

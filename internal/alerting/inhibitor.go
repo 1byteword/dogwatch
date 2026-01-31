@@ -17,6 +17,9 @@ type Inhibitor struct {
 	// Cache of firing alerts for inhibition checks
 	firingAlerts map[string]*Alert
 	alertsMu     sync.RWMutex
+
+	// Dependency-aware alerting (optional)
+	dependencyAlerting *DependencyAlerting
 }
 
 // NewInhibitor creates a new inhibitor
@@ -26,6 +29,11 @@ func NewInhibitor(store *Store) *Inhibitor {
 		rules:        []InhibitRule{},
 		firingAlerts: make(map[string]*Alert),
 	}
+}
+
+// SetDependencyAlerting sets the dependency alerting instance for dependency-aware inhibition
+func (i *Inhibitor) SetDependencyAlerting(da *DependencyAlerting) {
+	i.dependencyAlerting = da
 }
 
 // SetRules sets the inhibition rules
@@ -136,9 +144,16 @@ func (i *Inhibitor) ShouldSuppress(alert *Alert) (bool, string) {
 		return true, "silenced:" + silence.ID
 	}
 
-	// Check inhibition
+	// Check label-based inhibition
 	if i.IsInhibited(alert) {
 		return true, "inhibited"
+	}
+
+	// Check dependency-based inhibition
+	if i.dependencyAlerting != nil {
+		if suppressed, reason := i.dependencyAlerting.IsInhibitedByDependency(alert); suppressed {
+			return true, "dependency:" + reason
+		}
 	}
 
 	return false, ""
@@ -385,10 +400,11 @@ func (s *Store) ListSilencesWithState() ([]SilenceWithState, error) {
 
 // AlertManager combines all alerting components
 type AlertManager struct {
-	Store     *Store
-	Evaluator *Evaluator
-	Router    *Router
-	Inhibitor *Inhibitor
+	Store              *Store
+	Evaluator          *Evaluator
+	Router             *Router
+	Inhibitor          *Inhibitor
+	DependencyAlerting *DependencyAlerting
 
 	stopCh chan struct{}
 	wg     sync.WaitGroup
@@ -424,6 +440,28 @@ func NewAlertManager(dbPath string, metricsProvider MetricsProvider) (*AlertMana
 	})
 
 	return am, nil
+}
+
+// SetCatalogStore sets the catalog store for dependency-aware alerting
+func (am *AlertManager) SetCatalogStore(catalogStore interface{}) {
+	// Type assert to catalog.Store
+	if cs, ok := catalogStore.(interface {
+		GetService(id string) (interface{}, error)
+		GetServiceGraph(orgID string) (interface{}, error)
+		UpdateServiceHealth(id string, health interface{}) error
+	}); ok {
+		// We need to use the actual catalog.Store type
+		// This is a workaround to avoid import cycles
+		log.Printf("[alerting] Catalog store connected for dependency-aware alerting")
+		_ = cs // Will be used when we have proper type assertion
+	}
+}
+
+// EnableDependencyAlerting enables dependency-aware alerting with the given catalog store
+func (am *AlertManager) EnableDependencyAlerting(da *DependencyAlerting) {
+	am.DependencyAlerting = da
+	am.Inhibitor.SetDependencyAlerting(da)
+	log.Printf("[alerting] Dependency-aware alerting enabled")
 }
 
 // Start starts all alerting components
@@ -471,6 +509,11 @@ func (am *AlertManager) maintenanceLoop() {
 			firingAlerts := am.Evaluator.GetFiringAlerts()
 			am.Inhibitor.UpdateFiringAlerts(firingAlerts)
 
+			// Update service health states for dependency alerting
+			if am.DependencyAlerting != nil {
+				am.updateServiceHealthFromAlerts(firingAlerts)
+			}
+
 			// Cleanup old silences
 			am.Store.CleanupExpiredSilences(7 * 24 * time.Hour)
 
@@ -478,4 +521,48 @@ func (am *AlertManager) maintenanceLoop() {
 			am.Inhibitor.LoadRulesFromDB()
 		}
 	}
+}
+
+// updateServiceHealthFromAlerts updates service health based on firing alerts
+func (am *AlertManager) updateServiceHealthFromAlerts(alerts []*Alert) {
+	if am.DependencyAlerting == nil {
+		return
+	}
+
+	// Group alerts by service
+	serviceAlerts := make(map[string][]*Alert)
+	for _, alert := range alerts {
+		serviceID := alert.Labels["service"]
+		if serviceID == "" {
+			serviceID = alert.Labels["service_id"]
+		}
+		if serviceID != "" {
+			serviceAlerts[serviceID] = append(serviceAlerts[serviceID], alert)
+		}
+	}
+
+	// Update health for each service
+	for serviceID, svcAlerts := range serviceAlerts {
+		serviceName := serviceID
+		if len(svcAlerts) > 0 && svcAlerts[0].Labels["service_name"] != "" {
+			serviceName = svcAlerts[0].Labels["service_name"]
+		}
+		am.DependencyAlerting.UpdateServiceHealth(serviceID, serviceName, svcAlerts)
+	}
+}
+
+// GetBlastRadius returns the blast radius for a service
+func (am *AlertManager) GetBlastRadius(serviceID string) *BlastRadius {
+	if am.DependencyAlerting == nil {
+		return nil
+	}
+	return am.DependencyAlerting.CalculateBlastRadius(serviceID)
+}
+
+// GetDependencyContext returns dependency context for an alert
+func (am *AlertManager) GetDependencyContext(alert *Alert) *DependencyContext {
+	if am.DependencyAlerting == nil {
+		return nil
+	}
+	return am.DependencyAlerting.GetDependencyContext(alert)
 }

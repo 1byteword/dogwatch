@@ -42,6 +42,10 @@ func RegisterAlertingRoutes(mux *http.ServeMux) {
 
 	// Status
 	mux.HandleFunc("/api/alerting/status", handleAlertingStatus)
+
+	// Dependency-aware alerting
+	mux.HandleFunc("/api/alerting/blast-radius/", handleBlastRadius)
+	mux.HandleFunc("/api/alerting/dependency-context/", handleDependencyContext)
 }
 
 // handleAlertRules handles GET/POST for alert rules
@@ -522,15 +526,111 @@ func handleAlertingStatus(w http.ResponseWriter, r *http.Request) {
 	groups := serverAlertManager.Router.GetGroups()
 
 	status := map[string]interface{}{
-		"total_rules":      len(rules),
-		"enabled_rules":    len(enabledRules),
-		"firing_alerts":    len(firingAlerts),
-		"pending_alerts":   len(pendingAlerts),
-		"active_silences":  len(activeSilences),
-		"inhibition_rules": len(inhibitRules),
-		"alert_groups":     len(groups),
-		"uptime":           "running",
+		"total_rules":              len(rules),
+		"enabled_rules":            len(enabledRules),
+		"firing_alerts":            len(firingAlerts),
+		"pending_alerts":           len(pendingAlerts),
+		"active_silences":          len(activeSilences),
+		"inhibition_rules":         len(inhibitRules),
+		"alert_groups":             len(groups),
+		"uptime":                   "running",
+		"dependency_alerting":      serverAlertManager.DependencyAlerting != nil,
 	}
 
 	json.NewEncoder(w).Encode(status)
+}
+
+// handleBlastRadius returns the blast radius for a service
+func handleBlastRadius(w http.ResponseWriter, r *http.Request) {
+	if serverAlertManager == nil {
+		http.Error(w, "alerting not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract service ID from path: /api/alerting/blast-radius/{service_id}
+	path := strings.TrimPrefix(r.URL.Path, "/api/alerting/blast-radius/")
+	serviceID := strings.TrimSuffix(path, "/")
+
+	if serviceID == "" {
+		http.Error(w, "service ID required", http.StatusBadRequest)
+		return
+	}
+
+	blastRadius := serverAlertManager.GetBlastRadius(serviceID)
+	if blastRadius == nil {
+		// Return empty blast radius if dependency alerting not enabled
+		blastRadius = &alerting.BlastRadius{
+			FailedService:    serviceID,
+			AffectedServices: []alerting.AffectedService{},
+			TotalAffected:    0,
+			EstimatedImpact:  "unknown",
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(blastRadius)
+}
+
+// handleDependencyContext returns the dependency context for an alert
+func handleDependencyContext(w http.ResponseWriter, r *http.Request) {
+	if serverAlertManager == nil {
+		http.Error(w, "alerting not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract alert ID from path: /api/alerting/dependency-context/{alert_id}
+	path := strings.TrimPrefix(r.URL.Path, "/api/alerting/dependency-context/")
+	alertID := strings.TrimSuffix(path, "/")
+
+	if alertID == "" {
+		http.Error(w, "alert ID required", http.StatusBadRequest)
+		return
+	}
+
+	// Find the alert
+	var targetAlert *alerting.Alert
+	for _, alert := range serverAlertManager.Evaluator.GetFiringAlerts() {
+		if alert.ID == alertID {
+			targetAlert = alert
+			break
+		}
+	}
+
+	if targetAlert == nil {
+		// Check pending alerts too
+		for _, alert := range serverAlertManager.Evaluator.GetPendingAlerts() {
+			if alert.ID == alertID {
+				targetAlert = alert
+				break
+			}
+		}
+	}
+
+	if targetAlert == nil {
+		http.Error(w, "alert not found", http.StatusNotFound)
+		return
+	}
+
+	ctx := serverAlertManager.GetDependencyContext(targetAlert)
+	if ctx == nil {
+		// Return empty context if dependency alerting not enabled
+		ctx = &alerting.DependencyContext{
+			UpstreamServices: []alerting.ServiceAlertState{},
+			IsLikelySymptom:  false,
+			ShouldSuppress:   false,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ctx)
 }
