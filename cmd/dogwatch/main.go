@@ -31,6 +31,7 @@ import (
 	"dogwatch/internal/federation"
 	"dogwatch/internal/incidents"
 	"dogwatch/internal/kubernetes"
+	"dogwatch/internal/entity"
 	"dogwatch/internal/logreduce"
 	"dogwatch/internal/logs"
 	"dogwatch/internal/lookout"
@@ -822,6 +823,13 @@ func main() {
 		lookoutHandlers := web.NewLookoutHandlers(lookoutEngine)
 		lookoutHandlers.RegisterRoutes(webServer.Mux())
 		fmt.Printf("Lookout homepage: http://localhost:%d/lookout\n", *webPort)
+
+		// Set up Entity Synthesis (auto-discover services, hosts, databases)
+		entitySynthesizer := entity.NewSynthesizer(entity.DefaultConfig())
+		entitySynthesizer.Start()
+		entityHandlers := web.NewEntityHandlers(entitySynthesizer)
+		entityHandlers.RegisterRoutes(webServer.Mux())
+		fmt.Printf("Entity Explorer: http://localhost:%d/entities\n", *webPort)
 
 		go func() {
 			fmt.Printf("Web UI available at http://localhost:%d\n", *webPort)
