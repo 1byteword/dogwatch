@@ -260,13 +260,14 @@ Goal: Transform 557KB monolithic frontend into modular, real-time system.
 | Web Component: service-map.js | ✅ Done |
 | Web Component: trace-viewer.js | ✅ Done |
 | Web Component: log-viewer.js | ✅ Done |
+| Update index.html (CSS extraction) | ✅ Done |
+| Dashboard CSS file | ✅ Done |
 
 ### Not Yet Started
 | Task | Notes |
 |------|-------|
 | Wire WebSocket hub to main.go | Add hub creation, route registration, periodic broadcasts |
 | Wire WebSocket to watch engine | Broadcast state changes on watch transitions |
-| Update index.html | Remove inline CSS, add CSS links, add JS imports |
 | Update bubbleup.html | Remove inline CSS, add CSS links |
 | Remove polling from frontend | Replace setInterval calls with WebSocket subscriptions |
 | Add /api/ws route to server.go | Register WebSocket upgrade handler |
@@ -276,7 +277,7 @@ Goal: Transform 557KB monolithic frontend into modular, real-time system.
 ### Target Metrics
 | Metric | Current | Target | Status |
 |--------|---------|--------|--------|
-| Initial HTML | 557KB | <100KB | Pending |
+| Initial HTML | 476KB | <100KB | In Progress (was 557KB) |
 | API calls/8hr | ~7,200 | <500 | Pending |
 | Time to interactive | ~3s | <1.5s | Pending |
 
