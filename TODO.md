@@ -16,7 +16,7 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 | **Features** | Dashboards ✅, SLOs ✅, Synthetics ✅, Incidents ✅, On-call ✅, Catalog ✅, Anomaly ✅, K8s ✅, Federation ✅ |
 | **Cost Intel** | Cost calculators ✅, Cardinality ✅, Usage analytics ✅, Data shaping ✅, Quotas ✅ |
 | **Correlation** | Change correlation ✅, Alert enrichment ✅, Dependency graph ✅ |
-| **NOT Built** | Lookout homepage |
+| **NOT Built** | Entity synthesis |
 
 ---
 
@@ -106,7 +106,7 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 
 | Task | Complexity | VISION.md Reference |
 |------|------------|---------------------|
-| Lookout homepage (anomalies at a glance) | 2 weeks | [Lookout](VISION.md#2-lookout-automatic-anomaly-overview--steal-this) |
+| ~~Lookout homepage (anomalies at a glance)~~ | ✅ Done | [Lookout](VISION.md#2-lookout-automatic-anomaly-overview--steal-this) |
 | Entity synthesis (auto-discover services) | 3 weeks | [Entity Synthesis](VISION.md#1-entity-synthesis--steal-this) |
 | Entity relationship mapping | 2 weeks | [Entity Synthesis](VISION.md#1-entity-synthesis--steal-this) |
 
@@ -116,7 +116,7 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 |------|------------|---------------------|
 | Visual query builder | 3 weeks | [Query Builder UX](VISION.md#2-query-builder-ux--steal-this) |
 | "My Services" developer view | 1 week | [Pain Point: Developer Experience](VISION.md#pain-point-6-developer-experience-gap--medium) |
-| "My On-Call" view | 3 days | [Pain Point: On-Call Burnout](VISION.md#pain-point-7-on-call-burnout--medium) |
+| ~~"My On-Call" view~~ | ✅ Done | [Pain Point: On-Call Burnout](VISION.md#pain-point-7-on-call-burnout--medium) |
 
 ---
 
@@ -286,7 +286,7 @@ Goal: Transform 557KB monolithic frontend into modular, real-time system.
 
 | Question | Answer |
 |----------|--------|
-| **Build first** | Lookout homepage (Phase 4) |
+| **Build first** | Entity synthesis or "My On-Call" view (Phase 4) |
 | **Makes people pay** | ✅ Cost Intelligence, Control Plane, LogCompare - all done |
 | **Makes people stay** | ✅ BubbleUp, Lookout (not built), Entity synthesis (not built) |
 | **The moat** | Zero-config eBPF + cost transparency |

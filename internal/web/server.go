@@ -195,6 +195,8 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	mux.HandleFunc("/api/oncall", s.handleOnCallSchedules)
 	mux.HandleFunc("/api/oncall/", s.handleOnCallSchedule)
 	mux.HandleFunc("/api/oncall/current", s.handleCurrentOnCall)
+	mux.HandleFunc("/api/oncall/my", s.handleMyOnCall)
+	mux.HandleFunc("/my-oncall", s.handleMyOnCallPage)
 	mux.HandleFunc("/api/escalation", s.handleEscalationPolicies)
 	mux.HandleFunc("/api/escalation/", s.handleEscalationPolicy)
 
