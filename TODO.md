@@ -218,7 +218,7 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 | **Features** | Dashboards, SLOs, Synthetics, Incidents, On-call, Service catalog, Anomaly detection (IForest), Deploy tracking |
 | **Infrastructure** | Federation (gossip), K8s collector, Container monitoring, Rate limiting, Pagination, Health checks |
 | **APM SDK** | HTTP middleware, SQL/Redis/gRPC instrumentation |
-| **UI** | Web server, Service map, History graphs, Demo data |
+| **UI** | Web server, Service map, History graphs, Demo data, Lookout homepage, Entity synthesis/mapping, My On-Call dashboard |
 | **Cost Intel** | Datadog/New Relic/Splunk calculators, Cost trending, Recommendations, Cardinality explorer, Usage analytics, Data shaping, Team quotas |
 | **Correlation** | Change correlation engine, Alert auto-enrichment, Deploy-incident correlation, Dependency graph |
 | **Root Cause** | BubbleUp (chi-squared analysis, lift calculation, dimension ranking) |
@@ -288,7 +288,7 @@ Goal: Transform 557KB monolithic frontend into modular, real-time system.
 |----------|--------|
 | **Build first** | Visual query builder or "My Services" view (Phase 4) |
 | **Makes people pay** | ✅ Cost Intelligence, Control Plane, LogCompare - all done |
-| **Makes people stay** | ✅ BubbleUp, Lookout (not built), Entity synthesis (not built) |
+| **Makes people stay** | ✅ BubbleUp, Lookout, Entity synthesis - all done |
 | **The moat** | Zero-config eBPF + cost transparency |
 | **What's broken** | Nothing critical (MySQL works with plaintext, TLS needs SSL probe) |
 | **Full context** | [VISION.md](VISION.md) (22,400 lines) |
