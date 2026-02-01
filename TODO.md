@@ -165,25 +165,25 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 
 | Task | Complexity | VISION.md Reference |
 |------|------------|---------------------|
-| Write-ahead log (WAL) | 2 weeks | [Architectural Gaps](VISION.md#1-write-ahead-log-wal) |
-| Hot/warm/cold storage tiering | 3 weeks | [Architectural Gaps](VISION.md#2-hotwarmcold-tiering) |
-| Pluggable storage backends | 4 weeks | [Pluggable Storage](VISION.md#pluggable-storage-architecture) |
+| ~~Write-ahead log (WAL)~~ | ✅ Done | [Architectural Gaps](VISION.md#1-write-ahead-log-wal) |
+| ~~Hot/warm/cold storage tiering~~ | ✅ Done | [Architectural Gaps](VISION.md#2-hotwarmcold-tiering) |
+| ~~Pluggable storage backends~~ | ✅ Done | [Pluggable Storage](VISION.md#pluggable-storage-architecture) |
 
 ### P2 - Sampling
 
 | Task | Complexity | VISION.md Reference |
 |------|------------|---------------------|
-| Head sampling with priority rules | 1 week | [Sampling & Data Reduction](VISION.md#3-sampling--data-reduction) |
-| Tail sampling (keep traces with errors) | 2 weeks | [Sampling & Data Reduction](VISION.md#3-sampling--data-reduction) |
-| Adaptive sampling | 2 weeks | [Sampling & Data Reduction](VISION.md#3-sampling--data-reduction) |
+| ~~Head sampling with priority rules~~ | ✅ Done | [Sampling & Data Reduction](VISION.md#3-sampling--data-reduction) |
+| ~~Tail sampling (keep traces with errors)~~ | ✅ Done | [Sampling & Data Reduction](VISION.md#3-sampling--data-reduction) |
+| ~~Adaptive sampling~~ | ✅ Done | [Sampling & Data Reduction](VISION.md#3-sampling--data-reduction) |
 
 ### P2 - Migration
 
 | Task | Complexity | VISION.md Reference |
 |------|------------|---------------------|
-| Datadog dashboard import | 2 weeks | [Migration Assistant](VISION.md#7-migration-assistant) |
-| Grafana dashboard import | 1 week | [Migration Assistant](VISION.md#7-migration-assistant) |
-| Alert rule import | 1 week | [Migration Assistant](VISION.md#7-migration-assistant) |
+| ~~Datadog dashboard import~~ | ✅ Done | [Migration Assistant](VISION.md#7-migration-assistant) |
+| ~~Grafana dashboard import~~ | ✅ Done | [Migration Assistant](VISION.md#7-migration-assistant) |
+| ~~Alert rule import~~ | ✅ Done | [Migration Assistant](VISION.md#7-migration-assistant) |
 
 ### P3 - Future
 
@@ -290,6 +290,9 @@ These are the deep technical capabilities that create defensible competitive adv
 | **Query** | DQL (pipe + SQL syntax), Cross-signal JOINs, BM25 full-text search, Recording rules, Knowledge objects (macros, field extractions, lookups) |
 | **Security** | Threat detection (13 rules), Security dashboard, MITRE ATT&CK mapping, Alert investigation |
 | **Compliance** | PII detection (email, phone, SSN, credit cards, API keys, JWT), Redaction strategies (mask, hash, tokenize) |
+| **Data Arch** | WAL (write-ahead log), Hot/warm/cold tiering, Pluggable backends (LocalFS, S3, GCS) |
+| **Sampling** | Head sampling (priority rules), Tail sampling (error/latency detection), Adaptive sampling (per-service rates) |
+| **Migration** | Datadog import (dashboards, monitors), Grafana import (dashboards, alerts), Prometheus rules, Auto-format detection |
 
 ---
 
