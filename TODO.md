@@ -147,15 +147,15 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 |------|------------|---------------------|
 | ~~Threat detection rules (shell-in-container, cryptominers)~~ | ✅ Done | [Security Observability](VISION.md#6-security-observability) |
 | ~~Security dashboard~~ | ✅ Done | [Security Observability](VISION.md#6-security-observability) |
-| SIEM export (CEF/LEEF) | 1 week | [Security Observability](VISION.md#6-security-observability) |
+| ~~SIEM export (CEF/LEEF)~~ | ✅ Done | [Security Observability](VISION.md#6-security-observability) |
 
 ### P1 - Compliance
 
 | Task | Complexity | VISION.md Reference |
 |------|------------|---------------------|
 | ~~PII detection & redaction~~ | ✅ Done | [Pain Point: Compliance](VISION.md#pain-point-10-compliance--audit-gaps--high) |
-| Enhanced audit logging (query audit) | 1 week | [Pain Point: Compliance](VISION.md#pain-point-10-compliance--audit-gaps--high) |
-| Compliance reports (SOC2 evidence) | 2 weeks | [Pain Point: Compliance](VISION.md#pain-point-10-compliance--audit-gaps--high) |
+| ~~Enhanced audit logging (query audit)~~ | ✅ Done | [Pain Point: Compliance](VISION.md#pain-point-10-compliance--audit-gaps--high) |
+| ~~Compliance reports (SOC2 evidence)~~ | ✅ Done | [Pain Point: Compliance](VISION.md#pain-point-10-compliance--audit-gaps--high) |
 
 ---
 

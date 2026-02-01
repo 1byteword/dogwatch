@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"dogwatch/internal/audit"
 	"dogwatch/internal/logs"
 
 	"github.com/google/uuid"
@@ -208,6 +209,9 @@ func (s *Server) handleQueryExecute(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now().Add(-duration)
 	endTime := time.Now()
 
+	// Track query execution for audit
+	queryStart := time.Now()
+
 	// Execute based on data source
 	var rows []map[string]interface{}
 	var err error
@@ -227,6 +231,52 @@ func (s *Server) handleQueryExecute(w http.ResponseWriter, r *http.Request) {
 	default:
 		// Try metrics as default
 		rows, err = s.executeMetricsQuery(req.Query, startTime, endTime)
+	}
+
+	queryDuration := time.Since(queryStart)
+
+	// Log query execution to audit trail
+	if queryAuditHook != nil {
+		var errorMsg string
+		success := err == nil
+		if !success {
+			errorMsg = err.Error()
+		}
+
+		// Determine query type based on syntax
+		var queryType audit.QueryType
+		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(req.Query)), "SELECT") {
+			queryType = audit.QueryTypeSQL
+		} else {
+			queryType = audit.QueryTypeDQL
+		}
+
+		// Extract services from results if available
+		var services []string
+		serviceMap := make(map[string]bool)
+		for _, row := range rows {
+			if svc, ok := row["service"].(string); ok && svc != "" {
+				serviceMap[svc] = true
+			}
+		}
+		for svc := range serviceMap {
+			services = append(services, svc)
+		}
+
+		queryAuditHook.LogQueryExecution(
+			r.Context(),
+			queryType,
+			req.Query,
+			source,
+			audit.TimeRange{Start: startTime, End: endTime},
+			int64(len(rows)),
+			queryDuration,
+			success,
+			errorMsg,
+			false, // PII access detection would need PII store integration
+			nil,
+			services,
+		)
 	}
 
 	if err != nil {

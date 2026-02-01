@@ -46,7 +46,9 @@ import (
 	"dogwatch/internal/rbac"
 	"dogwatch/internal/recording"
 	"dogwatch/internal/security"
+	"dogwatch/internal/siem"
 	"dogwatch/internal/slo"
+	"dogwatch/internal/compliance"
 	"dogwatch/internal/storage"
 	"dogwatch/internal/synthetics"
 	"dogwatch/internal/trace"
@@ -581,7 +583,7 @@ func main() {
 		fmt.Printf("Notification channels: http://localhost:%d/api/notify/channels\n", *webPort)
 	}
 
-	// Create audit logging store
+	// Create audit logging store with async logger for compliance
 	auditDbPath := filepath.Join(*dataDir, "audit.db")
 	auditStore, err := audit.NewStore(auditDbPath)
 	if err != nil {
@@ -589,18 +591,73 @@ func main() {
 	} else {
 		defer auditStore.Close()
 		web.SetAuditStore(auditStore)
+
+		// Create async audit logger for performance
+		auditLoggerConfig := audit.DefaultLoggerConfig()
+		auditLogger := audit.NewLogger(auditStore, auditLoggerConfig)
+		auditLogger.Start()
+		defer auditLogger.Stop()
+		web.SetAuditLogger(auditLogger)
+
+		// Create query audit hook for DQL/SQL query tracking
+		queryAuditHook := audit.NewQueryAuditHook(auditStore, auditLogger)
+		web.SetQueryAuditHook(queryAuditHook)
+
 		fmt.Printf("Audit storage: %s\n", auditDbPath)
 		fmt.Printf("Audit logs: http://localhost:%d/api/audit/logs\n", *webPort)
+		fmt.Printf("Query audit: http://localhost:%d/api/audit/queries\n", *webPort)
+		fmt.Printf("Auth audit: http://localhost:%d/api/audit/auth\n", *webPort)
+		fmt.Printf("Admin audit: http://localhost:%d/api/audit/admin\n", *webPort)
 	}
 
 	// Create security threat detection store
 	securityDbPath := filepath.Join(*dataDir, "security.db")
 	securityStore, err := security.NewStore(securityDbPath)
+	var siemManager *siem.Manager
 	if err != nil {
 		log.Printf("Warning: Could not create security storage: %v", err)
 	} else {
 		defer securityStore.Close()
 		fmt.Printf("Security storage: %s\n", securityDbPath)
+
+		// Create compliance reporting store
+		complianceDbPath := filepath.Join(*dataDir, "compliance.db")
+		complianceStore, compErr := compliance.NewStore(complianceDbPath)
+		if compErr != nil {
+			log.Printf("Warning: Could not create compliance storage: %v", compErr)
+		} else {
+			defer complianceStore.Close()
+			// Create evidence collector
+			collector := compliance.NewEvidenceCollector(compliance.CollectorOptions{
+				RBACStore:     rbacStore,
+				AuditStore:    auditStore,
+				SecurityStore: securityStore,
+				SLOStore:      sloStore,
+				DeploysStore:  deployStore,
+				IncidentStore: incidentStore,
+				AlertManager:  nil, // Set after alert manager is created
+				BackupDataDir: *dataDir,
+			})
+			// Create report generator
+			complianceGenerator := compliance.NewReportGenerator(collector, complianceStore)
+			web.SetComplianceStore(complianceStore, complianceGenerator)
+			fmt.Printf("Compliance storage: %s\n", complianceDbPath)
+			fmt.Printf("Compliance reports: http://localhost:%d/api/compliance/reports\n", *webPort)
+		}
+
+		// Create SIEM export store and manager
+		siemDbPath := filepath.Join(*dataDir, "siem.db")
+		siemStore, siemErr := siem.NewStore(siemDbPath)
+		if siemErr != nil {
+			log.Printf("Warning: Could not create SIEM storage: %v", siemErr)
+		} else {
+			defer siemStore.Close()
+			siemManager = siem.NewManager(siemStore)
+			siemManager.SetSecurityStore(securityStore)
+			web.SetSIEMManager(siemManager, siemStore)
+			fmt.Printf("SIEM export storage: %s\n", siemDbPath)
+			fmt.Printf("SIEM export API: http://localhost:%d/api/siem/config\n", *webPort)
+		}
 
 		// Create security detector with store
 		securityDetector := security.NewDetector(security.DetectorConfig{
@@ -608,6 +665,10 @@ func main() {
 			DedupWindow: 5 * time.Minute,
 			AlertCallback: func(alert *security.SecurityAlert) {
 				log.Printf("[security] ALERT: %s - %s (severity: %s)", alert.RuleName, alert.Title, alert.Severity)
+				// Export to SIEM if configured
+				if siemManager != nil {
+					siemManager.ProcessSecurityAlert(alert)
+				}
 			},
 		})
 		_ = securityDetector // Will be wired to eBPF probes and web handlers by another agent
@@ -984,6 +1045,22 @@ func main() {
 			web.RegisterSecurityRoutes(webServer.Mux())
 			fmt.Printf("Security storage: %s\n", securityDbPath)
 			fmt.Printf("Security dashboard: http://localhost:%d/security.html\n", *webPort)
+		}
+
+		// Register SIEM export routes
+		web.RegisterSIEMRoutes(webServer.Mux())
+
+		// Register compliance reporting routes
+		web.RegisterComplianceRoutes(webServer.Mux())
+
+		// Start SIEM manager if configured
+		if siemManager != nil {
+			if err := siemManager.Start(); err != nil {
+				log.Printf("Warning: Could not start SIEM manager: %v", err)
+			} else {
+				defer siemManager.Stop()
+				fmt.Printf("SIEM export: enabled (%d active workers)\n", siemManager.GetWorkerCount())
+			}
 		}
 
 		go func() {

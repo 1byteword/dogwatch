@@ -457,3 +457,268 @@ func RequestBodyReader(r *http.Request) ([]byte, error) {
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	return body, nil
 }
+
+// QueryAuditHook is called when a query is executed
+type QueryAuditHook struct {
+	store  *Store
+	logger *Logger
+}
+
+// NewQueryAuditHook creates a new query audit hook
+func NewQueryAuditHook(store *Store, logger *Logger) *QueryAuditHook {
+	return &QueryAuditHook{
+		store:  store,
+		logger: logger,
+	}
+}
+
+// LogQueryExecution logs a query execution from an HTTP context
+func (h *QueryAuditHook) LogQueryExecution(ctx context.Context, queryType QueryType, queryText, dataSource string, timeRange TimeRange, rowsReturned int64, duration time.Duration, success bool, errorMsg string, piiAccessed bool, piiTypes, services []string) {
+	entry := &QueryAuditEntry{
+		Timestamp:        time.Now(),
+		QueryType:        queryType,
+		QueryText:        queryText,
+		DataSource:       dataSource,
+		TimeRange:        timeRange,
+		RowsReturned:     rowsReturned,
+		Success:          success,
+		ErrorMessage:     errorMsg,
+		AccessedPII:      piiAccessed,
+		PIITypesAccessed: piiTypes,
+		ServicesAccessed: services,
+	}
+	entry.SetDuration(duration)
+
+	// Extract user context
+	if ac := GetAuditContext(ctx); ac != nil {
+		entry.UserID = ac.UserID
+		entry.Username = ac.UserEmail
+		entry.SessionID = ac.SessionID
+		entry.IPAddress = ac.UserIP
+		entry.UserAgent = ac.UserAgent
+		entry.OrgID = ac.OrgID
+		entry.RequestID = ac.RequestID
+	}
+
+	// Use async logger if available, otherwise write directly
+	if h.logger != nil {
+		h.logger.LogQuery(entry)
+	} else if h.store != nil {
+		if err := h.store.LogQueryAudit(entry); err != nil {
+			log.Printf("[audit] Failed to log query execution: %v", err)
+		}
+	}
+}
+
+// LogAuthEvent logs an authentication event
+func LogAuthEvent(store *Store, logger *Logger, eventType string, userID, username, email, orgID, ip, userAgent, sessionID string, success bool, errorMsg, failureCode, method, provider string) {
+	entry := &AuthAuditEntry{
+		Timestamp:    time.Now(),
+		EventType:    eventType,
+		UserID:       userID,
+		Username:     username,
+		Email:        email,
+		OrgID:        orgID,
+		IPAddress:    ip,
+		UserAgent:    userAgent,
+		SessionID:    sessionID,
+		Success:      success,
+		ErrorMessage: errorMsg,
+		FailureCode:  failureCode,
+		Method:       method,
+		Provider:     provider,
+	}
+
+	if logger != nil {
+		logger.LogAuth(entry)
+	} else if store != nil {
+		if err := store.LogAuthAudit(entry); err != nil {
+			log.Printf("[audit] Failed to log auth event: %v", err)
+		}
+	}
+}
+
+// LogAdminAction logs an administrative action
+func LogAdminAction(ctx context.Context, store *Store, logger *Logger, actionType, resourceType, resourceID, resourceName string, prevValue, newValue interface{}, success bool, errorMsg string) {
+	entry := &AdminAuditEntry{
+		Timestamp:     time.Now(),
+		ActionType:    actionType,
+		ResourceType:  resourceType,
+		ResourceID:    resourceID,
+		ResourceName:  resourceName,
+		PreviousValue: prevValue,
+		NewValue:      newValue,
+		Success:       success,
+		ErrorMessage:  errorMsg,
+	}
+
+	// Extract user context
+	if ac := GetAuditContext(ctx); ac != nil {
+		entry.UserID = ac.UserID
+		entry.Username = ac.UserEmail
+		entry.OrgID = ac.OrgID
+		entry.IPAddress = ac.UserIP
+		entry.RequestID = ac.RequestID
+	}
+
+	if logger != nil {
+		logger.LogAdmin(entry)
+	} else if store != nil {
+		if err := store.LogAdminAudit(entry); err != nil {
+			log.Printf("[audit] Failed to log admin action: %v", err)
+		}
+	}
+}
+
+// LogDataExport logs a data export operation
+func LogDataExport(ctx context.Context, store *Store, logger *Logger, exportType, dataType, query string, timeRange TimeRange, recordCount, fileSizeBytes int64, containsPII bool, piiTypes []string, success bool, errorMsg, downloadURL string) {
+	entry := &DataExportEntry{
+		Timestamp:        time.Now(),
+		ExportType:       exportType,
+		DataType:         dataType,
+		Query:            query,
+		TimeRange:        timeRange,
+		RecordCount:      recordCount,
+		FileSizeBytes:    fileSizeBytes,
+		ContainsPII:      containsPII,
+		PIITypesExported: piiTypes,
+		Success:          success,
+		ErrorMessage:     errorMsg,
+		DownloadURL:      downloadURL,
+	}
+
+	// Extract user context
+	if ac := GetAuditContext(ctx); ac != nil {
+		entry.UserID = ac.UserID
+		entry.Username = ac.UserEmail
+		entry.OrgID = ac.OrgID
+		entry.IPAddress = ac.UserIP
+		entry.RequestID = ac.RequestID
+	}
+
+	if logger != nil {
+		logger.LogExport(entry)
+	} else if store != nil {
+		if err := store.LogExportAudit(entry); err != nil {
+			log.Printf("[audit] Failed to log data export: %v", err)
+		}
+	}
+}
+
+// APIAuditMiddleware creates an audit middleware specifically for API requests
+type APIAuditMiddleware struct {
+	store  *Store
+	logger *Logger
+}
+
+// NewAPIAuditMiddleware creates a new API audit middleware
+func NewAPIAuditMiddleware(store *Store, logger *Logger) *APIAuditMiddleware {
+	return &APIAuditMiddleware{
+		store:  store,
+		logger: logger,
+	}
+}
+
+// Wrap wraps an http.Handler with detailed API audit logging
+func (m *APIAuditMiddleware) Wrap(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		startTime := time.Now()
+
+		// Generate request ID
+		requestID := r.Header.Get("X-Request-ID")
+		if requestID == "" {
+			requestID = uuid.New().String()[:8]
+		}
+
+		// Create audit context
+		ac := &AuditContext{
+			RequestID: requestID,
+			UserIP:    getClientIP(r),
+			UserAgent: r.UserAgent(),
+			Method:    r.Method,
+			Path:      r.URL.Path,
+		}
+
+		// Extract user info from RBAC context
+		if user := rbac.GetUserFromContext(r.Context()); user != nil {
+			ac.UserID = user.ID
+			ac.UserEmail = user.Email
+			ac.OrgID = user.OrgID
+		}
+
+		// Determine resource type and action from path and method
+		ac.ResourceType, ac.ResourceID = parseResourceFromPath(r.URL.Path)
+		ac.Action = methodToAction(r.Method)
+
+		// Add to context
+		ctx := WithAuditContext(r.Context(), ac)
+		ctx = context.WithValue(ctx, requestIDKey, requestID)
+
+		// Wrap response writer to capture status
+		rw := &responseRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+
+		// Add request ID to response
+		w.Header().Set("X-Request-ID", requestID)
+
+		// Call next handler
+		next.ServeHTTP(rw, r.WithContext(ctx))
+
+		// Calculate duration
+		duration := time.Since(startTime)
+
+		// Log based on endpoint sensitivity
+		if shouldAudit(r.URL.Path, r.Method) {
+			go m.logAPIRequest(ac, rw.statusCode, duration, rw.body.Bytes())
+		}
+	})
+}
+
+// logAPIRequest creates a detailed API audit log entry
+func (m *APIAuditMiddleware) logAPIRequest(ac *AuditContext, statusCode int, duration time.Duration, body []byte) {
+	outcome := OutcomeSuccess
+	var errorMsg string
+
+	if statusCode >= 400 {
+		if statusCode == 401 || statusCode == 403 {
+			outcome = OutcomeDenied
+		} else {
+			outcome = OutcomeFailure
+		}
+
+		// Try to extract error message from response body
+		var errResp struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(body, &errResp) == nil && errResp.Error != "" {
+			errorMsg = errResp.Error
+		}
+	}
+
+	entry := &AuditLog{
+		Timestamp:    time.Now(),
+		OrgID:        ac.OrgID,
+		UserID:       ac.UserID,
+		UserEmail:    ac.UserEmail,
+		UserIP:       ac.UserIP,
+		UserAgent:    ac.UserAgent,
+		Action:       ac.Action,
+		ResourceType: ac.ResourceType,
+		ResourceID:   ac.ResourceID,
+		Outcome:      outcome,
+		ErrorMessage: errorMsg,
+		RequestID:    ac.RequestID,
+		SessionID:    ac.SessionID,
+		Details: map[string]interface{}{
+			"method":      ac.Method,
+			"path":        ac.Path,
+			"status_code": statusCode,
+			"duration_ms": float64(duration.Nanoseconds()) / 1e6,
+		},
+	}
+
+	if m.store != nil {
+		if err := m.store.Log(entry); err != nil {
+			log.Printf("[audit] Failed to log API request: %v", err)
+		}
+	}
+}

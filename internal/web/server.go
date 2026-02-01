@@ -329,10 +329,8 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	mux.HandleFunc("/api/notify/channels/", s.handleNotifyChannel)
 	mux.HandleFunc("/api/notify/history", s.handleNotifyHistory)
 
-	// Audit log endpoints
-	mux.HandleFunc("/api/audit/logs", s.handleAuditLogs)
-	mux.HandleFunc("/api/audit/stats", s.handleAuditStats)
-	mux.HandleFunc("/api/audit/export", s.handleAuditExport)
+	// Audit log endpoints - enhanced for compliance
+	RegisterAuditRoutes(mux, s)
 
 	// Status page endpoints
 	s.initStatusPages()
