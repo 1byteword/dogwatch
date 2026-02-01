@@ -362,6 +362,9 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	// Backup/restore endpoints
 	RegisterBackupRoutes(mux)
 
+	// Storage architecture endpoints (WAL, tiering, backends)
+	RegisterStorageRoutes(mux)
+
 	// Cost intelligence endpoints
 	RegisterCostIntelRoutes(mux)
 

@@ -36,6 +36,7 @@ import (
 	"dogwatch/internal/logreduce"
 	"dogwatch/internal/logs"
 	"dogwatch/internal/lookout"
+	"dogwatch/internal/migration"
 	"dogwatch/internal/notify"
 	"dogwatch/internal/oncall"
 	"dogwatch/internal/otlp"
@@ -47,6 +48,7 @@ import (
 	"dogwatch/internal/recording"
 	"dogwatch/internal/security"
 	"dogwatch/internal/siem"
+	"dogwatch/internal/sampling"
 	"dogwatch/internal/slo"
 	"dogwatch/internal/compliance"
 	"dogwatch/internal/storage"
@@ -188,6 +190,93 @@ func main() {
 		fmt.Printf("Metrics storage: %s\n", dbPath)
 	}
 
+	// Initialize Write-Ahead Log for data durability
+	walConfig := storage.WALConfig{
+		Dir:                filepath.Join(*dataDir, "wal"),
+		MaxSegmentSize:     64 * 1024 * 1024, // 64MB
+		SyncInterval:       100 * time.Millisecond,
+		MaxSegments:        10,
+		CheckpointInterval: time.Minute,
+	}
+	wal, err := storage.NewWAL(walConfig)
+	if err != nil {
+		log.Printf("Warning: Could not create WAL: %v", err)
+		wal = nil
+	} else {
+		wal.Start()
+		defer wal.Stop()
+		web.SetWAL(wal)
+		fmt.Printf("Write-ahead log: %s\n", walConfig.Dir)
+	}
+
+	// Initialize storage backend manager
+	backendManager := storage.NewBackendManager()
+
+	// Register default local backend for cold storage
+	coldPath := filepath.Join(*dataDir, "cold")
+	localBackend, err := storage.NewLocalBackend(coldPath, "")
+	if err != nil {
+		log.Printf("Warning: Could not create local storage backend: %v", err)
+	} else {
+		backendManager.Register("local", localBackend)
+	}
+
+	// Check for S3 configuration via environment
+	if s3Bucket := os.Getenv("DOGWATCH_S3_BUCKET"); s3Bucket != "" {
+		s3Backend, err := storage.NewS3Backend(storage.BackendConfig{
+			Type:      "s3",
+			Bucket:    s3Bucket,
+			Region:    os.Getenv("DOGWATCH_S3_REGION"),
+			AccessKey: os.Getenv("DOGWATCH_S3_ACCESS_KEY"),
+			SecretKey: os.Getenv("DOGWATCH_S3_SECRET_KEY"),
+			Endpoint:  os.Getenv("DOGWATCH_S3_ENDPOINT"),
+		})
+		if err != nil {
+			log.Printf("Warning: Could not create S3 backend: %v", err)
+		} else {
+			backendManager.Register("s3", s3Backend)
+			fmt.Printf("S3 storage backend: %s\n", s3Bucket)
+		}
+	}
+
+	web.SetBackendManager(backendManager)
+	fmt.Printf("Storage backends: http://localhost:%d/api/storage/backends\n", *webPort)
+
+	// Initialize storage tiering manager (hot/warm/cold tiers)
+	var tieringManager *storage.TieringManager
+	if store != nil {
+		// Get underlying database connection
+		tieringConfig := storage.TieringConfig{
+			DataDir:            *dataDir,
+			HotRetention:       24 * time.Hour,
+			WarmRetention:      7 * 24 * time.Hour,
+			ColdRetention:      90 * 24 * time.Hour,
+			CompactionInterval: time.Hour,
+			TieringInterval:    6 * time.Hour,
+			CompressWarm:       true,
+		}
+
+		// Use S3 backend for cold storage if available, otherwise local
+		if s3Backend, ok := backendManager.Get("s3"); ok {
+			tieringConfig.ColdBackend = s3Backend
+		} else if localB, ok := backendManager.Get("local"); ok {
+			tieringConfig.ColdBackend = localB
+		}
+
+		tieringManager, err = storage.NewTieringManager(tieringConfig, store.DB())
+		if err != nil {
+			log.Printf("Warning: Could not create tiering manager: %v", err)
+			tieringManager = nil
+		} else {
+			tieringManager.Start()
+			defer tieringManager.Stop()
+			web.SetTieringManager(tieringManager)
+			fmt.Printf("Storage tiering: hot=%s, warm=%s, cold=%s\n",
+				tieringConfig.HotRetention, tieringConfig.WarmRetention, tieringConfig.ColdRetention)
+			fmt.Printf("Tiering API: http://localhost:%d/api/storage/tiering/stats\n", *webPort)
+		}
+	}
+
 	// Create trace storage
 	traceDbPath := filepath.Join(*dataDir, "traces.db")
 	traceStore, err := trace.NewStore(traceDbPath)
@@ -198,6 +287,23 @@ func main() {
 		defer traceStore.Close()
 		fmt.Printf("Trace storage: %s\n", traceDbPath)
 		fmt.Println("OTLP trace receiver: http://localhost:9999/v1/traces")
+	}
+
+	// Create sampling manager for trace sampling
+	samplingDbPath := filepath.Join(*dataDir, "sampling.db")
+	samplingManager, err := sampling.NewManager(samplingDbPath, traceStore)
+	if err != nil {
+		log.Printf("Warning: Could not create sampling manager: %v", err)
+		samplingManager = nil
+	} else {
+		defer samplingManager.Close()
+		if err := samplingManager.Start(); err != nil {
+			log.Printf("Warning: Could not start sampling manager: %v", err)
+		} else {
+			web.SetSamplingManager(samplingManager)
+			fmt.Printf("Sampling storage: %s\n", samplingDbPath)
+			fmt.Printf("Trace sampling: http://localhost:%d/api/sampling/config\n", *webPort)
+		}
 	}
 
 	// Create watch storage
@@ -395,6 +501,12 @@ func main() {
 			HTTPPort: *otlpHTTPPort,
 		}
 		otlpServer = otlp.NewServer(otlpConfig, traceStore, customMetricsStore, logStore)
+
+		// Wire sampling to the OTLP trace receiver
+		if samplingManager != nil {
+			samplerAdapter := sampling.NewOTLPSamplerAdapter(samplingManager)
+			otlpServer.SetSpanSampler(samplerAdapter)
+		}
 
 		// Wire entity synthesis to receive spans from OTLP traces
 		otlpServer.SetSpanCallback(func(span trace.Span) {
@@ -806,6 +918,12 @@ func main() {
 			fmt.Printf("Recording rules: http://localhost:%d/api/recording-rules\n", *webPort)
 		}
 
+		// Register sampling routes
+		if samplingManager != nil {
+			web.RegisterSamplingRoutes(webServer.Mux())
+			fmt.Printf("Sampling API: http://localhost:%d/api/sampling/config\n", *webPort)
+		}
+
 		if syntheticsStore != nil {
 			// Create notifier for synthetics alerts (reuses watch infrastructure)
 			notifier := watch.NewNotifier()
@@ -1052,6 +1170,21 @@ func main() {
 
 		// Register compliance reporting routes
 		web.RegisterComplianceRoutes(webServer.Mux())
+
+		// Set up Migration Assistant for importing dashboards/alerts from other platforms
+		migrationDbPath := filepath.Join(*dataDir, "migration.db")
+		migrationStore, err := migration.NewStore(migrationDbPath)
+		if err != nil {
+			log.Printf("Warning: Could not create migration storage: %v", err)
+		} else {
+			defer migrationStore.Close()
+			web.SetMigrationStore(migrationStore)
+			web.SetMigrationDashboardStore(dashboardStore)
+			web.SetMigrationAlertManager(alertManager)
+			web.RegisterMigrationRoutes(webServer.Mux())
+			fmt.Printf("Migration storage: %s\n", migrationDbPath)
+			fmt.Printf("Migration Assistant: http://localhost:%d/api/migration/formats\n", *webPort)
+		}
 
 		// Start SIEM manager if configured
 		if siemManager != nil {

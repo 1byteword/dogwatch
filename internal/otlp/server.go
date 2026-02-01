@@ -33,6 +33,12 @@ func DefaultConfig() Config {
 // SpanCallback is called for each span processed
 type SpanCallback func(span trace.Span)
 
+// SpanSampler decides whether to keep or drop a span
+type SpanSampler interface {
+	// ShouldSample returns true if the span should be kept
+	ShouldSample(span *trace.Span) bool
+}
+
 // Server is the unified OTLP receiver server
 type Server struct {
 	config       Config
@@ -41,6 +47,7 @@ type Server struct {
 	logStore     *logs.Store
 
 	spanCallback SpanCallback
+	spanSampler  SpanSampler
 
 	grpcServer *grpc.Server
 	httpServer *http.Server
@@ -63,6 +70,13 @@ func NewServer(cfg Config, traceStore *trace.Store, metricsStore *custommetrics.
 func (s *Server) SetSpanCallback(cb SpanCallback) {
 	s.mu.Lock()
 	s.spanCallback = cb
+	s.mu.Unlock()
+}
+
+// SetSpanSampler sets a sampler to filter spans before storage
+func (s *Server) SetSpanSampler(sampler SpanSampler) {
+	s.mu.Lock()
+	s.spanSampler = sampler
 	s.mu.Unlock()
 }
 
@@ -127,7 +141,7 @@ func (s *Server) startGRPC() error {
 	s.grpcServer = grpc.NewServer()
 
 	// Register OTLP services
-	registerTraceService(s.grpcServer, s.traceStore, s.spanCallback)
+	registerTraceServiceWithSampler(s.grpcServer, s.traceStore, s.spanCallback, s.spanSampler)
 	registerMetricsService(s.grpcServer, s.metricsStore)
 	registerLogsService(s.grpcServer, s.logStore)
 

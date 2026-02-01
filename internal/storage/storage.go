@@ -340,3 +340,8 @@ func (s *Store) GetSystemMetricsByTimeRange(start, end time.Time) ([]SystemMetri
 func (s *Store) Close() error {
 	return s.db.Close()
 }
+
+// DB returns the underlying database connection for tiering operations
+func (s *Store) DB() *sql.DB {
+	return s.db
+}

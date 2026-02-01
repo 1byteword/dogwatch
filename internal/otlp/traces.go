@@ -14,12 +14,24 @@ import (
 
 // processTraces converts OTLP resource spans and stores them
 func processTraces(traceStore *trace.Store, resourceSpans []*tracepb.ResourceSpans, spanCallback SpanCallback) error {
+	return processTracesWithSampler(traceStore, resourceSpans, spanCallback, nil)
+}
+
+// processTracesWithSampler converts OTLP resource spans and stores them, applying sampling
+func processTracesWithSampler(traceStore *trace.Store, resourceSpans []*tracepb.ResourceSpans, spanCallback SpanCallback, sampler SpanSampler) error {
 	for _, rs := range resourceSpans {
 		serviceName := extractServiceName(rs.Resource)
 
 		for _, scopeSpans := range rs.ScopeSpans {
 			for _, span := range scopeSpans.Spans {
 				internalSpan := convertProtoSpan(span, serviceName)
+
+				// Apply sampling if configured
+				if sampler != nil {
+					if !sampler.ShouldSample(&internalSpan) {
+						continue // Drop this span
+					}
+				}
 
 				// Store the span if we have a trace store
 				if traceStore != nil {

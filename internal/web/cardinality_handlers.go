@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"dogwatch/internal/cardinality"
 )
@@ -203,4 +204,16 @@ func parseQueryInt(r *http.Request, name string, defaultVal int) int {
 		return defaultVal
 	}
 	return i
+}
+
+func parseQueryDuration(r *http.Request, name string, defaultVal time.Duration) time.Duration {
+	val := r.URL.Query().Get(name)
+	if val == "" {
+		return defaultVal
+	}
+	d, err := time.ParseDuration(val)
+	if err != nil {
+		return defaultVal
+	}
+	return d
 }

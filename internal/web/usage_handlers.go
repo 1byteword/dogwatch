@@ -3,7 +3,6 @@ package web
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"time"
 
 	"dogwatch/internal/usage"
@@ -40,7 +39,12 @@ func handleUsageReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	period := parseDuration(r, "period", 30*24*time.Hour)
+	period := 30 * 24 * time.Hour
+	if periodStr := r.URL.Query().Get("period"); periodStr != "" {
+		if d, err := time.ParseDuration(periodStr); err == nil {
+			period = d
+		}
+	}
 	report := usageTracker.GetReport(period)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -61,7 +65,7 @@ func handleUsageTop(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dataType := usage.DataType(r.URL.Query().Get("type"))
-	limit := parseInt(r, "limit", 20)
+	limit := parseQueryInt(r, "limit", 20)
 
 	top := usageTracker.GetTopQueried(dataType, limit)
 
@@ -86,7 +90,12 @@ func handleUsageWasted(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	period := parseDuration(r, "period", 30*24*time.Hour)
+	period := 30 * 24 * time.Hour
+	if periodStr := r.URL.Query().Get("period"); periodStr != "" {
+		if d, err := time.ParseDuration(periodStr); err == nil {
+			period = d
+		}
+	}
 	wasted := usageTracker.GetWastedData(period)
 
 	// Calculate total potential savings
@@ -167,7 +176,7 @@ func handleUsageEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := parseInt(r, "limit", 100)
+	limit := parseQueryInt(r, "limit", 100)
 	events := usageTracker.GetRecentEvents(limit)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -253,26 +262,5 @@ func TrackTraceQuery(service string, source string, resultSize int) {
 	TrackQuery(usage.DataTypeTrace, service, source, resultSize, 0)
 }
 
-func parseDuration(r *http.Request, name string, defaultVal time.Duration) time.Duration {
-	val := r.URL.Query().Get(name)
-	if val == "" {
-		return defaultVal
-	}
-	d, err := time.ParseDuration(val)
-	if err != nil {
-		return defaultVal
-	}
-	return d
-}
-
-func parseInt(r *http.Request, name string, defaultVal int) int {
-	val := r.URL.Query().Get(name)
-	if val == "" {
-		return defaultVal
-	}
-	i, err := strconv.Atoi(val)
-	if err != nil {
-		return defaultVal
-	}
-	return i
-}
+// parseQueryDuration already defined in cardinality_handlers.go but with different signature
+// using local inline parsing instead
