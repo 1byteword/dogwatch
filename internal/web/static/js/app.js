@@ -4664,9 +4664,12 @@ function setupWebSocketUpdates() {
         if (msg.type === 'stats' && msg.payload) {
             // Update system metrics display
             const data = msg.payload;
-            document.getElementById('cpu-value')?.innerText = (data.cpu_percent || 0).toFixed(1) + '%';
-            document.getElementById('mem-value')?.innerText = (data.memory_percent || 0).toFixed(1) + '%';
-            document.getElementById('last-update')?.innerText = 'Live';
+            const cpuEl = document.getElementById('cpu-value');
+            const memEl = document.getElementById('mem-value');
+            const updateEl = document.getElementById('last-update');
+            if (cpuEl) cpuEl.innerText = (data.cpu_percent || 0).toFixed(1) + '%';
+            if (memEl) memEl.innerText = (data.memory_percent || 0).toFixed(1) + '%';
+            if (updateEl) updateEl.innerText = 'Live';
 
             // Update charts if available
             if (cpuChart && memChart && data.cpu_percent !== undefined) {
