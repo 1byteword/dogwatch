@@ -132,6 +132,11 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// DB returns the underlying database connection for query builder
+func (s *Store) DB() *sql.DB {
+	return s.db
+}
+
 // Insert adds a log entry
 func (s *Store) Insert(entry *LogEntry) error {
 	if entry.ID == "" {
@@ -152,7 +157,7 @@ func (s *Store) Insert(entry *LogEntry) error {
 	_, err := s.db.Exec(`
 		INSERT INTO logs (id, timestamp, level, message, service, host, trace_id, span_id, attrs)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		entry.ID, entry.Timestamp, entry.Level, entry.Message,
+		entry.ID, entry.Timestamp.UTC().Format(time.RFC3339Nano), entry.Level, entry.Message,
 		entry.Service, entry.Host, entry.TraceID, entry.SpanID, string(attrsJSON),
 	)
 	if err == nil && s.patternDetector != nil {
@@ -195,7 +200,7 @@ func (s *Store) InsertBatch(entries []LogEntry) error {
 		}
 
 		_, err = stmt.Exec(
-			entry.ID, entry.Timestamp, entry.Level, entry.Message,
+			entry.ID, entry.Timestamp.UTC().Format(time.RFC3339Nano), entry.Level, entry.Message,
 			entry.Service, entry.Host, entry.TraceID, entry.SpanID, string(attrsJSON),
 		)
 		if err != nil {
@@ -295,14 +300,14 @@ func (s *Store) Search(q SearchQuery) (*SearchResult, error) {
 		args = append(args, q.TraceID)
 	}
 
-	// Time range
+	// Time range - use RFC3339 formatted timestamps for SQLite comparison
 	if !q.StartTime.IsZero() {
 		conditions = append(conditions, "l.timestamp >= ?")
-		args = append(args, q.StartTime)
+		args = append(args, q.StartTime.UTC().Format(time.RFC3339Nano))
 	}
 	if !q.EndTime.IsZero() {
 		conditions = append(conditions, "l.timestamp <= ?")
-		args = append(args, q.EndTime)
+		args = append(args, q.EndTime.UTC().Format(time.RFC3339Nano))
 	}
 
 	whereClause := ""

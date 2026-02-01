@@ -2195,8 +2195,12 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		q.Level = logs.LogLevel(level)
 	}
 
-	// Time range - default to last hour
-	if since := r.URL.Query().Get("since"); since != "" {
+	// Time range - support both 'since'/'until' (duration) and 'start'/'end' (ISO timestamps)
+	if start := r.URL.Query().Get("start"); start != "" {
+		if t, err := time.Parse(time.RFC3339, start); err == nil {
+			q.StartTime = t
+		}
+	} else if since := r.URL.Query().Get("since"); since != "" {
 		if d, err := time.ParseDuration(since); err == nil {
 			q.StartTime = time.Now().Add(-d)
 		}
@@ -2204,7 +2208,11 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		q.StartTime = time.Now().Add(-time.Hour)
 	}
 
-	if until := r.URL.Query().Get("until"); until != "" {
+	if end := r.URL.Query().Get("end"); end != "" {
+		if t, err := time.Parse(time.RFC3339, end); err == nil {
+			q.EndTime = t
+		}
+	} else if until := r.URL.Query().Get("until"); until != "" {
 		if t, err := time.Parse(time.RFC3339, until); err == nil {
 			q.EndTime = t
 		}
