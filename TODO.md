@@ -236,23 +236,23 @@ These are the deep technical capabilities that create defensible competitive adv
 | Intelligent tail sampling (adaptive, retroactive for errors) | 3-4 weeks | ❌ Not started | [Tail Sampling](VISION.md#moat-8-intelligent-tail-sampling) |
 | Automatic log field extraction (pattern learning) | 3-4 weeks | ❌ Not started | [Field Extraction](VISION.md#moat-9-automatic-log-field-extraction) |
 
-### Moat 10-12: Scale & Efficiency (Partially Done)
+### Moat 10-12: Scale & Efficiency (Done)
 
 | Task | Complexity | Status | VISION.md Reference |
 |------|------------|--------|---------------------|
-| Multi-signal correlation engine (exemplars, fuzzy matching) | 2-3 weeks | ⏳ Partial | [Multi-Signal Correlation](VISION.md#moat-10-multi-signal-correlation-engine) |
-| SQLite time-series optimization | 2-3 weeks | ❌ Not started | [SQLite Optimization](VISION.md#moat-11-sqlite-time-series-optimization) |
-| Cardinality bomb prevention (auto-detection, circuit breaker) | 2 weeks | ❌ Not started | [Cardinality Prevention](VISION.md#moat-12-cardinality-bomb-prevention) |
+| Multi-signal correlation engine (exemplars, fuzzy matching) | 2-3 weeks | ✅ Done | [Multi-Signal Correlation](VISION.md#moat-10-multi-signal-correlation-engine) |
+| SQLite time-series optimization | 2-3 weeks | ✅ Done | [SQLite Optimization](VISION.md#moat-11-sqlite-time-series-optimization) |
+| Cardinality bomb prevention (auto-detection, circuit breaker) | 2 weeks | ✅ Done | [Cardinality Prevention](VISION.md#moat-12-cardinality-bomb-prevention) |
 
-*Note: Basic correlation done. Need exemplars, fuzzy matching, and cardinality protection.*
+*Features: Exemplars linking metrics to traces, fuzzy matching via time/service/operation, log-to-trace correlation, metric-to-trace correlation, cross-signal timeline, time-based partitioning, downsampling rules, batch insert buffering, circuit breaker, quarantine system, cardinality alerts.*
 
-### Moat 13-15: Operational Excellence (Not Started)
+### Moat 13-15: Operational Excellence (Done)
 
 | Task | Complexity | Status | VISION.md Reference |
 |------|------------|--------|---------------------|
-| Hot probe reload (update eBPF without restart) | 2 weeks | ❌ Not started | [Hot Reload](VISION.md#moat-13-hot-probe-reload) |
-| Clock skew tolerance (distributed clock handling) | 1-2 weeks | ❌ Not started | [Clock Skew](VISION.md#moat-14-clock-skew-tolerance) |
-| Memory-efficient operation (<500MB for 10K eps) | 2-3 weeks | ❌ Not started | [Memory Efficiency](VISION.md#moat-15-memory-efficient-operation) |
+| Hot probe reload (update eBPF without restart) | 2 weeks | ✅ Done | [Hot Reload](VISION.md#moat-13-hot-probe-reload) |
+| Clock skew tolerance (distributed clock handling) | 1-2 weeks | ✅ Done | [Clock Skew](VISION.md#moat-14-clock-skew-tolerance) |
+| Memory-efficient operation (<500MB for 10K eps) | 2-3 weeks | ✅ Done | [Memory Efficiency](VISION.md#moat-15-memory-efficient-operation) |
 
 ### Technical Moats Summary
 
@@ -261,9 +261,9 @@ These are the deep technical capabilities that create defensible competitive adv
 | eBPF Compatibility (1-3) | ⏳ 40% | ~14 weeks |
 | Intelligent Analysis (4-6) | ⏳ 30% | ~10 weeks |
 | Data Intelligence (7-9) | ❌ 0% | ~11 weeks |
-| Scale & Efficiency (10-12) | ⏳ 20% | ~7 weeks |
-| Operational Excellence (13-15) | ❌ 0% | ~6 weeks |
-| **Total** | **~25%** | **~48 weeks** |
+| Scale & Efficiency (10-12) | ✅ 100% | ~7 weeks |
+| Operational Excellence (13-15) | ✅ 100% | ~6 weeks |
+| **Total** | **~50%** | **~48 weeks** |
 
 ---
 
@@ -282,17 +282,18 @@ These are the deep technical capabilities that create defensible competitive adv
 | **Infrastructure** | Federation (gossip), K8s collector, Container monitoring, Rate limiting, Pagination, Health checks |
 | **APM SDK** | HTTP middleware, SQL/Redis/gRPC instrumentation |
 | **UI** | Web server, Service map, History graphs, Demo data, Lookout homepage, Entity synthesis/mapping, My On-Call dashboard, My Services developer view |
-| **Cost Intel** | Datadog/New Relic/Splunk calculators, Cost trending, Recommendations, Cardinality explorer, Usage analytics, Data shaping, Team quotas |
-| **Correlation** | Change correlation engine, Alert auto-enrichment, Deploy-incident correlation, Dependency graph |
+| **Cost Intel** | Datadog/New Relic/Splunk calculators, Cost trending, Recommendations, Cardinality explorer, Usage analytics, Data shaping, Team quotas, Cardinality bomb prevention (circuit breaker, quarantine, alerts, auto-aggregation) |
+| **Correlation** | Change correlation engine, Alert auto-enrichment, Deploy-incident correlation, Dependency graph, Multi-signal correlation (exemplars, fuzzy matching, log-to-trace, metric-to-trace, cross-signal timeline) |
 | **Root Cause** | BubbleUp (chi-squared analysis, lift calculation, dimension ranking) |
 | **Logs** | LogCompare (time period comparison), LogReduce (pattern detection), BM25 relevance search |
 | **Production** | Prometheus remote write receiver, Health check endpoints (/healthz, /readyz, /livez) |
 | **Query** | DQL (pipe + SQL syntax), Cross-signal JOINs, BM25 full-text search, Recording rules, Knowledge objects (macros, field extractions, lookups) |
 | **Security** | Threat detection (13 rules), Security dashboard, MITRE ATT&CK mapping, Alert investigation |
 | **Compliance** | PII detection (email, phone, SSN, credit cards, API keys, JWT), Redaction strategies (mask, hash, tokenize) |
-| **Data Arch** | WAL (write-ahead log), Hot/warm/cold tiering, Pluggable backends (LocalFS, S3, GCS) |
+| **Data Arch** | WAL (write-ahead log), Hot/warm/cold tiering, Pluggable backends (LocalFS, S3, GCS), SQLite time-series optimization (partitioning, downsampling, batch inserts, covering indexes) |
 | **Sampling** | Head sampling (priority rules), Tail sampling (error/latency detection), Adaptive sampling (per-service rates) |
 | **Migration** | Datadog import (dashboards, monitors), Grafana import (dashboards, alerts), Prometheus rules, Auto-format detection |
+| **Operational** | Hot probe reload (versioning, graceful swap, rollback), Clock skew tolerance (detection, correction, NTP drift), Memory efficiency (object pools, buffer recycling, backpressure) |
 
 ---
 

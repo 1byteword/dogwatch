@@ -20,6 +20,7 @@ import (
 	"dogwatch/internal/audit"
 	"dogwatch/internal/backup"
 	"dogwatch/internal/cardinality"
+	"dogwatch/internal/correlation"
 	"dogwatch/internal/containers"
 	"dogwatch/internal/costintel"
 	"dogwatch/internal/datashaping"
@@ -36,6 +37,7 @@ import (
 	"dogwatch/internal/logreduce"
 	"dogwatch/internal/logs"
 	"dogwatch/internal/lookout"
+	"dogwatch/internal/metrics"
 	"dogwatch/internal/migration"
 	"dogwatch/internal/notify"
 	"dogwatch/internal/oncall"
@@ -190,6 +192,16 @@ func main() {
 		fmt.Printf("Metrics storage: %s\n", dbPath)
 	}
 
+	// Create time-series optimizer (Moat 11: SQLite Time-Series Optimization)
+	var timeSeriesOptimizer *storage.TimeSeriesOptimizer
+	if store != nil {
+		timeSeriesOptimizer = storage.NewTimeSeriesOptimizer(store.DB(), storage.DefaultTimeSeriesConfig())
+		timeSeriesOptimizer.Start()
+		defer timeSeriesOptimizer.Stop()
+		web.SetTimeSeriesOptimizer(timeSeriesOptimizer)
+		fmt.Printf("Time-series optimizer: http://localhost:%d/api/timeseries/stats\n", *webPort)
+	}
+
 	// Initialize Write-Ahead Log for data durability
 	walConfig := storage.WALConfig{
 		Dir:                filepath.Join(*dataDir, "wal"),
@@ -289,6 +301,12 @@ func main() {
 		fmt.Println("OTLP trace receiver: http://localhost:9999/v1/traces")
 	}
 
+	// Create multi-signal correlator (Moat 10: Multi-Signal Correlation)
+	// Note: This is initialized with nil stores for now, will be updated after all stores are ready
+	multiSignalCorrelator := correlation.NewMultiSignalCorrelator(correlation.DefaultMultiSignalConfig())
+	web.SetMultiSignalCorrelator(multiSignalCorrelator)
+	fmt.Printf("Multi-signal correlation: http://localhost:%d/api/multisignal/timeline\n", *webPort)
+
 	// Create sampling manager for trace sampling
 	samplingDbPath := filepath.Join(*dataDir, "sampling.db")
 	samplingManager, err := sampling.NewManager(samplingDbPath, traceStore)
@@ -382,6 +400,9 @@ func main() {
 		fmt.Printf("Prometheus remote write: http://localhost:%d/api/v1/write\n", *webPort)
 	}
 
+	// Wire stores to multi-signal correlator (Moat 10)
+	multiSignalCorrelator.SetStores(traceStore, logStore, customMetricsStore)
+
 	// Create cardinality explorer
 	cardinalityExplorer := cardinality.NewExplorer()
 	if customMetricsStore != nil {
@@ -389,6 +410,11 @@ func main() {
 	}
 	web.SetCardinalityExplorer(cardinalityExplorer)
 	fmt.Printf("Cardinality explorer: http://localhost:%d/api/cardinality/report\n", *webPort)
+
+	// Create cardinality controller (Moat 12: Cardinality Bomb Prevention)
+	cardinalityController := metrics.NewCardinalityController(metrics.DefaultCardinalityConfig())
+	web.SetCardinalityController(cardinalityController)
+	fmt.Printf("Cardinality controller: http://localhost:%d/api/cardinality/dashboard\n", *webPort)
 
 	// Create usage tracker for analytics
 	usageTracker := usage.NewTracker(10000)
@@ -1195,6 +1221,19 @@ func main() {
 				fmt.Printf("SIEM export: enabled (%d active workers)\n", siemManager.GetWorkerCount())
 			}
 		}
+
+		// Register Multi-Signal Correlation routes (Moat 10)
+		multiSignalHandlers := web.NewMultiSignalHandlers(multiSignalCorrelator)
+		multiSignalHandlers.RegisterRoutes(webServer.Mux())
+		fmt.Printf("Multi-signal correlation routes: http://localhost:%d/api/multisignal/timeline\n", *webPort)
+
+		// Register Time-Series Optimizer routes (Moat 11)
+		web.RegisterTimeSeriesRoutes(webServer.Mux())
+		fmt.Printf("Time-series optimizer routes: http://localhost:%d/api/timeseries/stats\n", *webPort)
+
+		// Register Cardinality Controller routes (Moat 12)
+		web.RegisterCardinalityControllerRoutes(webServer.Mux())
+		fmt.Printf("Cardinality controller routes: http://localhost:%d/api/cardinality/dashboard\n", *webPort)
 
 		go func() {
 			fmt.Printf("Web UI available at http://localhost:%d\n", *webPort)
