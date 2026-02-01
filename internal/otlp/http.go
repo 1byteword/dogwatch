@@ -37,7 +37,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := processTraces(s.traceStore, req.ResourceSpans); err != nil {
+	if err := processTraces(s.traceStore, req.ResourceSpans, s.spanCallback); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

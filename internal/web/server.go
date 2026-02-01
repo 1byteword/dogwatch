@@ -2191,6 +2191,16 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		Offset:  params.Offset,
 	}
 
+	// Parse sort order (relevance or time)
+	if sortBy := r.URL.Query().Get("sort_by"); sortBy != "" {
+		switch sortBy {
+		case "relevance":
+			q.SortBy = logs.SortByRelevance
+		case "time":
+			q.SortBy = logs.SortByTime
+		}
+	}
+
 	if level := r.URL.Query().Get("level"); level != "" {
 		q.Level = logs.LogLevel(level)
 	}

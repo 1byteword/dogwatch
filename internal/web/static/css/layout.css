@@ -111,6 +111,11 @@
     left: 0;
     width: 100%;
     height: calc(100% - 40px);
+    cursor: grab;
+}
+
+.svcmap-container svg:active {
+    cursor: grabbing;
 }
 
 .svcmap-toolbar {

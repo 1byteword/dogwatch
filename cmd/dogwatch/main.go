@@ -39,6 +39,7 @@ import (
 	"dogwatch/internal/oncall"
 	"dogwatch/internal/otlp"
 	"dogwatch/internal/probe"
+	"dogwatch/internal/query"
 	"dogwatch/internal/quotas"
 	"dogwatch/internal/rbac"
 	"dogwatch/internal/slo"
@@ -362,6 +363,10 @@ func main() {
 	web.SetRecommendationEngine(recommendationEngine, recommendationProvider)
 	fmt.Printf("Cost recommendations: http://localhost:%d/api/cost/recommendations\n", *webPort)
 
+	// Set up Entity Synthesis early (auto-discover services, hosts, databases from traces)
+	entitySynthesizer := entity.NewSynthesizer(entity.DefaultConfig())
+	entitySynthesizer.Start()
+
 	// Start OTLP receivers
 	var otlpServer *otlp.Server
 	if *otlpEnabled && (traceStore != nil || customMetricsStore != nil || logStore != nil) {
@@ -370,6 +375,23 @@ func main() {
 			HTTPPort: *otlpHTTPPort,
 		}
 		otlpServer = otlp.NewServer(otlpConfig, traceStore, customMetricsStore, logStore)
+
+		// Wire entity synthesis to receive spans from OTLP traces
+		otlpServer.SetSpanCallback(func(span trace.Span) {
+			entitySynthesizer.ProcessSpan(entity.TraceSpan{
+				TraceID:       span.TraceID,
+				SpanID:        span.SpanID,
+				ParentSpanID:  span.ParentSpanID,
+				ServiceName:   span.ServiceName,
+				OperationName: span.Name,
+				SpanKind:      span.Kind,
+				Duration:      time.Duration(span.DurationMs) * time.Millisecond,
+				StatusCode:    spanStatusToCode(span.Status),
+				Timestamp:     span.StartTime,
+				Attributes:    span.Attributes,
+			})
+		})
+
 		if err := otlpServer.Start(); err != nil {
 			log.Printf("Warning: Could not start OTLP server: %v", err)
 			otlpServer = nil
@@ -617,6 +639,22 @@ func main() {
 		}
 		if traceStore != nil {
 			webServer.SetTraceStore(traceStore)
+
+			// Wire entity synthesis to the web server's OTLP receiver
+			webServer.SetSpanCallback(func(span trace.Span) {
+				entitySynthesizer.ProcessSpan(entity.TraceSpan{
+					TraceID:       span.TraceID,
+					SpanID:        span.SpanID,
+					ParentSpanID:  span.ParentSpanID,
+					ServiceName:   span.ServiceName,
+					OperationName: span.Name,
+					SpanKind:      span.Kind,
+					Duration:      time.Duration(span.DurationMs) * time.Millisecond,
+					StatusCode:    spanStatusToCode(span.Status),
+					Timestamp:     span.StartTime,
+					Attributes:    span.Attributes,
+				})
+			})
 		}
 		if watchStore != nil {
 			webServer.SetWatchStore(watchStore)
@@ -630,6 +668,21 @@ func main() {
 		if customMetricsStore != nil {
 			webServer.SetCustomMetricsStore(customMetricsStore)
 		}
+
+		// Create query executor for visual query builder
+		queryExecutor := query.NewExecutor()
+		if customMetricsStore != nil {
+			queryExecutor.SetMetricsSource(query.NewMetricsDataSource(customMetricsStore.DB()))
+		}
+		if logStore != nil {
+			queryExecutor.SetLogsSource(query.NewLogsDataSource(logStore.DB()))
+		}
+		if traceStore != nil {
+			queryExecutor.SetTracesSource(query.NewTracesDataSource(traceStore.DB()))
+		}
+		webServer.SetQueryExecutor(queryExecutor)
+		fmt.Printf("Query builder: http://localhost:%d/query-builder.html\n", *webPort)
+
 		if syntheticsStore != nil {
 			// Create notifier for synthetics alerts (reuses watch infrastructure)
 			notifier := watch.NewNotifier()
@@ -827,12 +880,17 @@ func main() {
 		lookoutHandlers.RegisterRoutes(webServer.Mux())
 		fmt.Printf("Lookout homepage: http://localhost:%d/lookout\n", *webPort)
 
-		// Set up Entity Synthesis (auto-discover services, hosts, databases)
-		entitySynthesizer := entity.NewSynthesizer(entity.DefaultConfig())
-		entitySynthesizer.Start()
+		// Register Entity Explorer routes (synthesizer is created earlier for OTLP integration)
 		entityHandlers := web.NewEntityHandlers(entitySynthesizer)
 		entityHandlers.RegisterRoutes(webServer.Mux())
 		fmt.Printf("Entity Explorer: http://localhost:%d/entities\n", *webPort)
+
+		// Set up My Services developer dashboard
+		if catalogStore != nil && rbacStore != nil {
+			myServicesHandlers := web.NewMyServicesHandlers(catalogStore, rbacStore)
+			webServer.SetMyServicesHandlers(myServicesHandlers)
+			fmt.Printf("My Services: http://localhost:%d/my-services\n", *webPort)
+		}
 
 		go func() {
 			fmt.Printf("Web UI available at http://localhost:%d\n", *webPort)
@@ -1237,5 +1295,17 @@ func (a *metricsShapingAdapter) EvaluateMetric(name string, tags map[string]stri
 		return true, newTags
 	default:
 		return true, tags
+	}
+}
+
+// spanStatusToCode converts a span status string to a numeric code
+func spanStatusToCode(status string) int {
+	switch status {
+	case "ERROR":
+		return 500
+	case "OK":
+		return 200
+	default:
+		return 0
 	}
 }

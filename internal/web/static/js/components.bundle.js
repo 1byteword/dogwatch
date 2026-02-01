@@ -168,9275 +168,12544 @@ class BaseComponent extends HTMLElement {
 
 // Export for use
 window.BaseComponent = BaseComponent;
-'use strict';
 
 /**
- * dogwatch - eBPF Observability Dashboard
- * Main application script
+ * Alerts Dashboard Widget
+ * Unified view of active alerts, history, and silences
+ *
+ * Optimizations:
+ * - CSS via adoptedStyleSheets (parsed once)
+ * - Selective DOM updates
+ * - Request deduplication
  */
 
-// App state - all globals declared upfront to avoid hoisting issues
-let grid = null;
-let cpuChart = null;
-let memChart = null;
-let currentUser = null;
-let currentOrg = null;
-let currentDashboardId = null;
-let dashboards = [];
-let svcMapData = { nodes: [], links: [] };
-let svcMapLayout = 'hierarchical';
-let svcMapFilter = '';
-let svcMapSim = null;
-let svcMapZoomBehavior = null;
-let svcMapTransform = null; // Will be set to d3.zoomIdentity when D3 loads
-let svcMapSelectedNode = null;
-let svcMapMainGroup = null;
-let selectedTraceId = null;
-let traceServices = [];
-let currentTraceData = null;
-let selectedSpanId = null;
-let traceServiceFilter = null;
-let flameData = null;
-let flameBaselineData = null;
-let flameSearchTerm = '';
-let flameZoomStack = [];
-let flameMode = 'flame';
-let flameDiffMode = false;
-let flameTotalSamples = 0;
-let watchMetrics = [];
-let channels = [];
-let logTailInterval = null;
-let logTailEnabled = false;
-let customLogTimeStart = null;
-let customLogTimeEnd = null;
-let syntheticChecks = [];
-let statusPages = [];
-let statusComponents = [];
-let catalogServices = [];
-let catalogTeams = [];
-let correlationData = { correlations: [], timeline: null };
-let currentK8sTab = 'pods';
-let dbwatchCurrentTab = 'queries';
-
-// DemoData placeholder - full definition is below, using var for hoisting
-var DemoData = { enabled: false };
-
-// Chart configuration
-const chartOpts = {
-    responsive: true,
-    maintainAspectRatio: false,
-    animation: false,
-    plugins: { legend: { display: false } },
-    scales: {
-        x: {
-            type: 'time',
-            grid: { color: '#2f3336' },
-            ticks: { color: '#71767b', font: { size: 9 }, maxTicksLimit: 6 }
-        },
-        y: {
-            grid: { color: '#2f3336' },
-            ticks: { color: '#71767b', font: { size: 9 } },
-            beginAtZero: true,
-            max: 100
-        }
+const alertsDashboardStyles = new CSSStyleSheet();
+alertsDashboardStyles.replaceSync(`
+    :host { display: block; height: 100%; }
+    .alerts-dashboard {
+        background: var(--bg-card, #16181c);
+        border-radius: 8px;
+        overflow: hidden;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
     }
-};
-
-// Smoothly hide the loading skeleton
-function hideSkeleton() {
-    const skeleton = document.getElementById('loading-skeleton');
-    if (skeleton) {
-        skeleton.classList.add('hidden');
-        setTimeout(() => skeleton.style.display = 'none', 200);
+    .alerts-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.75rem 1rem;
+        background: var(--bg-elevated, #1e2128);
+        border-bottom: 1px solid var(--border, #2f3336);
     }
-}
-
-// Initialize app when DOM is ready
-document.addEventListener('DOMContentLoaded', async () => {
-    try {
-        // Check auth first
-        const isAuthenticated = await checkAuth();
-
-        if (isAuthenticated) {
-            // Load dashboard dependencies (GridStack, Charts)
-            await window.initDashboard();
-
-            // Hide skeleton with animation
-            hideSkeleton();
-
-            // Initialize grid and show app
-            initGrid();
-            loadLayout();
-
-            // Wait for GridStack to finish rendering before loading data
-            requestAnimationFrame(() => {
-                startDataRefresh();
-            });
-
-            // Reveal app with smooth fade-in
-            const app = document.getElementById('app');
-            if (app) {
-                requestAnimationFrame(() => {
-                    app.classList.add('loaded');
-                });
-            }
-        }
-    } catch (err) {
-        console.error('App initialization failed:', err);
-        const skeleton = document.getElementById('loading-skeleton');
-        if (skeleton) {
-            skeleton.innerHTML = `
-                <div class="skeleton-logo">&#128021;</div>
-                <div class="skeleton-text" style="color: var(--error)">Failed to load</div>
-                <button class="btn btn-primary" onclick="location.reload()">Retry</button>
-            `;
-        }
+    .alerts-tabs { display: flex; gap: 0.25rem; }
+    .tab-btn {
+        background: transparent;
+        border: none;
+        color: var(--text-muted, #71767b);
+        padding: 0.5rem 0.75rem;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.85rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
     }
-});
+    .tab-btn:hover { background: var(--bg-card, #16181c); }
+    .tab-btn.active { background: var(--bg-card, #16181c); color: var(--text, #e7e9ea); }
+    .tab-count {
+        background: var(--bg-elevated, #1e2128);
+        padding: 0.1rem 0.4rem;
+        border-radius: 10px;
+        font-size: 0.7rem;
+    }
+    .tab-btn.active .tab-count { background: var(--accent, #1d9bf0); color: white; }
+    .alerts-actions { display: flex; gap: 0.5rem; }
+    .btn-icon {
+        width: 32px; height: 32px;
+        display: flex; align-items: center; justify-content: center;
+        background: var(--bg-card, #16181c);
+        border: 1px solid var(--border, #2f3336);
+        border-radius: 6px;
+        color: var(--text, #e7e9ea);
+        cursor: pointer;
+    }
+    .btn-icon:hover { border-color: var(--accent, #1d9bf0); }
+    .btn-sm {
+        background: var(--accent, #1d9bf0);
+        border: none;
+        color: white;
+        padding: 0.5rem 0.75rem;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.8rem;
+    }
+    .alerts-content {
+        flex: 1;
+        overflow-y: auto;
+        padding: 1rem;
+    }
+    .loading, .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 3rem;
+        color: var(--text-muted, #71767b);
+        text-align: center;
+    }
+    .empty-state .icon { font-size: 2.5rem; margin-bottom: 1rem; }
+    .alerts-list, .events-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+    .alert-card {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 1rem;
+        background: var(--bg-elevated, #1e2128);
+        border-radius: 8px;
+        border-left: 4px solid var(--border, #2f3336);
+    }
+    .alert-card.critical { border-left-color: var(--error, #f4212e); }
+    .alert-card.warning { border-left-color: var(--warning, #ffd400); }
+    .alert-card.silenced { border-left-color: var(--text-muted, #71767b); opacity: 0.7; }
+    .alert-status { font-size: 1.5rem; }
+    .alert-info { flex: 1; }
+    .alert-name { font-weight: 600; font-size: 0.95rem; margin-bottom: 0.25rem; }
+    .alert-condition {
+        font-family: monospace;
+        font-size: 0.8rem;
+        color: var(--text-muted, #71767b);
+        margin-bottom: 0.25rem;
+    }
+    .alert-meta {
+        display: flex;
+        gap: 1rem;
+        font-size: 0.75rem;
+        color: var(--text-muted, #71767b);
+    }
+    .alert-actions { display: flex; gap: 0.25rem; }
+    .btn-action {
+        width: 32px; height: 32px;
+        display: flex; align-items: center; justify-content: center;
+        background: transparent;
+        border: 1px solid var(--border, #2f3336);
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.9rem;
+    }
+    .btn-action:hover { background: var(--bg-card, #16181c); }
+    .event-item {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.75rem;
+        background: var(--bg-elevated, #1e2128);
+        border-radius: 6px;
+        border-left: 3px solid var(--border, #2f3336);
+    }
+    .event-item.critical { border-left-color: var(--error, #f4212e); }
+    .event-item.warning { border-left-color: var(--warning, #ffd400); }
+    .event-item.recovered { border-left-color: var(--success, #00ba7c); }
+    .event-icon { font-size: 1rem; }
+    .event-info { flex: 1; }
+    .event-name { font-weight: 500; font-size: 0.85rem; margin-bottom: 0.2rem; }
+    .event-message { font-size: 0.75rem; color: var(--text-muted, #71767b); }
+    .event-time { font-size: 0.75rem; color: var(--text-muted, #71767b); }
+`);
 
-// =====================================
-// Authentication & User Management
-// =====================================
-// moved to top
-// moved to top
+class AlertsDashboard extends HTMLElement {
+    constructor() {
+        super();
+        this.alerts = [];
+        this.events = [];
+        this.channels = [];
+        this.view = 'active';
+        this._loading = false;
+        this._pendingRequest = null;
 
-// Check authentication on page load
-async function checkAuth() {
-    try {
-        const resp = await fetch('/api/auth/me');
-        if (resp.ok) {
-            const data = await resp.json();
-            currentUser = data.user;
-            currentOrg = data.org;
-            showAuthenticatedUI();
-            return true;
-        }
-    } catch (e) {}
-    showLoginScreen();
-    return false;
-}
-
-
-function showLoginScreen() {
-    // Hide skeleton with animation
-    hideSkeleton();
-
-    // Show login screen
-    const loginScreen = document.getElementById('login-screen');
-    if (loginScreen) loginScreen.classList.add('show');
-    
-    // Load OAuth providers
-    loadOAuthProviders();
-}
-
-// OAuth/SSO functions
-async function loadOAuthProviders() {
-    const oauthButtons = document.getElementById('oauth-buttons');
-    const oauthLoading = document.getElementById('oauth-loading');
-    const loginDivider = document.getElementById('login-divider');
-
-    oauthLoading.classList.add('show');
-
-    try {
-        const resp = await fetch('/api/auth/providers');
-        if (resp.ok) {
-            const data = await resp.json();
-            const providers = data.providers || [];
-            const oauthProviders = providers.filter(p => p.type === 'oauth2');
-
-            if (oauthProviders.length > 0) {
-                // Show/hide buttons based on available providers
-                document.querySelector('.oauth-btn.google').style.display =
-                    oauthProviders.some(p => p.id === 'google') ? 'flex' : 'none';
-                document.querySelector('.oauth-btn.github').style.display =
-                    oauthProviders.some(p => p.id === 'github') ? 'flex' : 'none';
-                document.querySelector('.oauth-btn.microsoft').style.display =
-                    oauthProviders.some(p => p.id === 'microsoft') ? 'flex' : 'none';
-
-                oauthButtons.style.display = 'flex';
-                loginDivider.style.display = 'flex';
-            }
-        }
-    } catch (e) {
-        console.log('No OAuth providers available');
+        this.attachShadow({ mode: 'open' });
+        this.shadowRoot.adoptedStyleSheets = [alertsDashboardStyles];
     }
 
-    oauthLoading.classList.remove('show');
-}
-
-function startOAuth(provider) {
-    // Redirect to OAuth start endpoint
-    window.location.href = '/api/auth/oauth/' + provider;
-}
-
-// Check for OAuth callback success (token in URL or cookie)
-function checkOAuthCallback() {
-    const urlParams = new URLSearchParams(window.location.search);
-    const error = urlParams.get('error');
-
-    if (error) {
-        const errorEl = document.getElementById('login-error');
-        errorEl.textContent = 'OAuth failed: ' + (urlParams.get('error_description') || error);
-        errorEl.classList.add('show');
-        // Clear URL params
-        window.history.replaceState({}, document.title, window.location.pathname);
-        return false;
+    connectedCallback() {
+        this._initDOM();
+        this.loadData();
+        this._refreshInterval = setInterval(() => this.loadData(), 30000);
     }
 
-    return false;
-}
-
-// Token refresh functionality
-async function refreshAccessToken() {
-    try {
-        const resp = await fetch('/api/auth/token/refresh', {
-            method: 'POST',
-            credentials: 'include'
-        });
-
-        if (resp.ok) {
-            const data = await resp.json();
-            // Token refreshed via cookie
-            return true;
-        }
-    } catch (e) {
-        console.log('Token refresh failed');
+    disconnectedCallback() {
+        if (this._refreshInterval) clearInterval(this._refreshInterval);
+        if (this._pendingRequest) this._pendingRequest.abort();
     }
-    return false;
-}
 
-// Set up token refresh interval (every 10 minutes)
-setInterval(async () => {
-    if (currentUser) {
-        await refreshAccessToken();
-    }
-}, 10 * 60 * 1000);
-
-
-function showAuthenticatedUI() {
-    // Hide login screen
-    const loginScreen = document.getElementById('login-screen');
-    if (loginScreen) loginScreen.classList.remove('show');
-    
-    // Show user menu
-    document.getElementById('user-menu').style.display = 'block';
-    
-    // Update user info in header
-    if (currentUser) {
-        const initials = (currentUser.name || currentUser.email || '?').substring(0, 2).toUpperCase();
-        document.getElementById('user-avatar').textContent = initials;
-        document.getElementById('user-name-display').textContent = currentUser.name || currentUser.email;
-        document.getElementById('user-full-name').textContent = currentUser.name || 'User';
-        document.getElementById('user-email').textContent = currentUser.email || '';
-        document.getElementById('user-role-badge').textContent = currentUser.role || 'viewer';
-        document.getElementById('user-role-badge').className = 'user-menu-role ' + (currentUser.role || '');
-        
-        // Show admin menu items
-        if (currentUser.role === 'owner' || currentUser.role === 'admin') {
-            const usersItem = document.getElementById('users-menu-item');
-            const teamsItem = document.getElementById('teams-menu-item');
-            if (usersItem) usersItem.style.display = 'flex';
-            if (teamsItem) teamsItem.style.display = 'flex';
-        }
-    }
-}
-
-function toggleUserMenu() {
-    const dropdown = document.getElementById('user-menu-dropdown');
-    dropdown.classList.toggle('show');
-}
-
-// Close menu when clicking outside
-document.addEventListener('click', function(e) {
-    const userMenu = document.getElementById('user-menu');
-    if (userMenu && !userMenu.contains(e.target)) {
-        document.getElementById('user-menu-dropdown')?.classList.remove('show');
-    }
-});
-
-async function handleLogin(event) {
-    event.preventDefault();
-    const email = document.getElementById('login-email').value;
-    const password = document.getElementById('login-password').value;
-    const errorEl = document.getElementById('login-error');
-    errorEl.classList.remove('show');
-
-    try {
-        const resp = await fetch('/api/auth/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password })
-        });
-
-        if (resp.ok) {
-            const data = await resp.json();
-            currentUser = data.user;
-            showAuthenticatedUI();
-            // Re-initialize the dashboard
-            loadLayout();
-            loadDashboards();
-            setTimeout(initCharts, 100);
-        } else {
-            errorEl.textContent = 'Invalid email or password';
-            errorEl.classList.add('show');
-        }
-    } catch (e) {
-        errorEl.textContent = 'Connection error. Please try again.';
-        errorEl.classList.add('show');
-    }
-}
-
-async function handleLogout() {
-    try {
-        await fetch('/api/auth/logout', { method: 'POST' });
-    } catch (e) {}
-    currentUser = null;
-    currentOrg = null;
-    showLoginScreen();
-}
-
-function showUserSettings() {
-    document.getElementById('user-menu-dropdown').classList.remove('show');
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-    modal.innerHTML = `
-        <div class="modal">
-            <div class="modal-header">
-                <span class="modal-title">User Settings</span>
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">Name</label>
-                    <input type="text" id="settings-name" class="form-input" value="${escapeHtml(currentUser?.name || '')}">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Email</label>
-                    <input type="email" id="settings-email" class="form-input" value="${escapeHtml(currentUser?.email || '')}" readonly>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Timezone</label>
-                    <select id="settings-timezone" class="form-select">
-                        <option value="">Auto-detect</option>
-                        <option value="UTC">UTC</option>
-                        <option value="America/New_York">Eastern Time</option>
-                        <option value="America/Chicago">Central Time</option>
-                        <option value="America/Denver">Mountain Time</option>
-                        <option value="America/Los_Angeles">Pacific Time</option>
-                        <option value="Europe/London">London</option>
-                        <option value="Europe/Paris">Paris</option>
-                        <option value="Asia/Tokyo">Tokyo</option>
-                    </select>
-                </div>
-                <hr style="border-color: #2f3336; margin: 1rem 0;">
-                <h4 style="font-size: 0.85rem; margin-bottom: 0.8rem;">Change Password</h4>
-                <div class="form-group">
-                    <label class="form-label">Current Password</label>
-                    <input type="password" id="settings-old-password" class="form-input">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">New Password</label>
-                    <input type="password" id="settings-new-password" class="form-input">
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                <button class="btn btn-primary" onclick="saveUserSettings()">Save Changes</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-    // Set current timezone
-    if (currentUser?.timezone) {
-        document.getElementById('settings-timezone').value = currentUser.timezone;
-    }
-}
-
-async function saveUserSettings() {
-    const name = document.getElementById('settings-name').value;
-    const timezone = document.getElementById('settings-timezone').value;
-    const oldPassword = document.getElementById('settings-old-password').value;
-    const newPassword = document.getElementById('settings-new-password').value;
-
-    try {
-        // Update user info
-        const resp = await fetch(`/api/users/${currentUser.id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, timezone })
-        });
-        if (resp.ok) {
-            const updatedUser = await resp.json();
-            currentUser = updatedUser;
-            showAuthenticatedUI();
-        }
-
-        // Change password if provided
-        if (oldPassword && newPassword) {
-            const pwResp = await fetch('/api/auth/password', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ old_password: oldPassword, new_password: newPassword })
-            });
-            if (!pwResp.ok) {
-                alert('Failed to change password. Check your current password.');
-                return;
-            }
-        }
-
-        document.querySelector('.modal-overlay')?.remove();
-    } catch (e) {
-        alert('Failed to save settings');
-    }
-}
-
-// =====================================
-// User Management (Admin)
-// =====================================
-async function showUserManagement() {
-    document.getElementById('user-menu-dropdown').classList.remove('show');
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-    modal.innerHTML = `
-        <div class="modal" style="max-width: 600px;">
-            <div class="modal-header">
-                <span class="modal-title">User Management</span>
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-            </div>
-            <div class="modal-body" style="padding: 0;">
-                <div style="padding: 0.8rem; border-bottom: 1px solid #2f3336; display: flex; justify-content: space-between; align-items: center;">
-                    <span style="color: #71767b; font-size: 0.8rem;" id="users-org-name">${escapeHtml(currentOrg?.name || 'Organization')}</span>
-                    <button class="btn btn-primary" onclick="showInviteUserModal()">+ Invite User</button>
-                </div>
-                <div class="users-list" id="users-list">
-                    <div class="empty-state">Loading users...</div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="showPendingInvites()">Pending Invites</button>
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Close</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-    loadUsersList();
-}
-
-async function loadUsersList() {
-    try {
-        const resp = await fetch('/api/users');
-        const users = await resp.json();
-        const list = document.getElementById('users-list');
-        if (!users?.length) {
-            list.innerHTML = '<div class="empty-state">No users found</div>';
-            return;
-        }
-        list.innerHTML = users.map(u => `
-            <div class="user-item ${u.is_active ? '' : 'user-inactive'}">
-                <div class="user-item-avatar">${(u.name || u.email).substring(0, 2).toUpperCase()}</div>
-                <div class="user-item-info">
-                    <div class="user-item-name">
-                        ${escapeHtml(u.name || 'Unnamed')}
-                        ${u.id === currentUser?.id ? '<span style="color: #1d9bf0; font-size: 0.7rem;">(you)</span>' : ''}
-                        ${!u.is_active ? '<span style="color: #f4212e; font-size: 0.7rem;">(inactive)</span>' : ''}
+    _initDOM() {
+        this.shadowRoot.innerHTML = `
+            <div class="alerts-dashboard">
+                <div class="alerts-header">
+                    <div class="alerts-tabs">
+                        <button class="tab-btn active" data-view="active">
+                            Active <span class="tab-count" id="active-count">0</span>
+                        </button>
+                        <button class="tab-btn" data-view="history">History</button>
+                        <button class="tab-btn" data-view="silenced">
+                            Silenced <span class="tab-count" id="silenced-count">0</span>
+                        </button>
                     </div>
-                    <div class="user-item-email">${escapeHtml(u.email)}</div>
+                    <div class="alerts-actions">
+                        <button class="btn-icon" id="refresh-btn" title="Refresh">⟲</button>
+                        <button class="btn-sm" id="new-alert-btn">+ New Alert</button>
+                    </div>
                 </div>
-                <span class="user-item-role ${u.role}">${u.role}</span>
-                <div class="user-item-actions">
-                    ${u.id !== currentUser?.id ? `
-                        <button class="btn" onclick="editUser('${u.id}')" style="padding: 0.2rem 0.4rem; font-size: 0.65rem;">Edit</button>
-                        <button class="btn" onclick="toggleUserActive('${u.id}', ${u.is_active})" style="padding: 0.2rem 0.4rem; font-size: 0.65rem;">${u.is_active ? 'Disable' : 'Enable'}</button>
-                    ` : ''}
-                </div>
-            </div>
-        `).join('');
-    } catch (e) {
-        document.getElementById('users-list').innerHTML = '<div class="empty-state">Failed to load users</div>';
-    }
-}
-
-function showInviteUserModal() {
-    const inviteModal = document.createElement('div');
-    inviteModal.className = 'modal-overlay';
-    inviteModal.style.zIndex = '1001';
-    inviteModal.onclick = (e) => { if (e.target === inviteModal) inviteModal.remove(); };
-    inviteModal.innerHTML = `
-        <div class="modal" style="max-width: 400px;">
-            <div class="modal-header">
-                <span class="modal-title">Invite User</span>
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">Email Address</label>
-                    <input type="email" id="invite-email" class="form-input" placeholder="user@example.com">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Role</label>
-                    <select id="invite-role" class="form-select">
-                        <option value="viewer">Viewer</option>
-                        <option value="editor">Editor</option>
-                        ${currentUser?.role === 'owner' ? '<option value="admin">Admin</option>' : ''}
-                    </select>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                <button class="btn btn-primary" onclick="sendInvite()">Send Invite</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(inviteModal);
-}
-
-async function sendInvite() {
-    const email = document.getElementById('invite-email').value;
-    const role = document.getElementById('invite-role').value;
-    if (!email) { alert('Email is required'); return; }
-
-    try {
-        const resp = await fetch('/api/auth/invites', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, role })
-        });
-        if (resp.ok) {
-            const data = await resp.json();
-            // Show the invite token (in a real app, this would be sent via email)
-            alert('Invitation created! Token: ' + data.token + '\\n\\nShare this with the user to accept the invite.');
-            document.querySelector('.modal-overlay[style*="z-index: 1001"]')?.remove();
-            loadUsersList();
-        } else {
-            alert('Failed to create invitation');
-        }
-    } catch (e) {
-        alert('Failed to create invitation');
-    }
-}
-
-async function showPendingInvites() {
-    try {
-        const resp = await fetch('/api/auth/invites');
-        const invites = await resp.json();
-
-        const inviteModal = document.createElement('div');
-        inviteModal.className = 'modal-overlay';
-        inviteModal.style.zIndex = '1001';
-        inviteModal.onclick = (e) => { if (e.target === inviteModal) inviteModal.remove(); };
-        inviteModal.innerHTML = `
-            <div class="modal" style="max-width: 500px;">
-                <div class="modal-header">
-                    <span class="modal-title">Pending Invitations</span>
-                    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-                </div>
-                <div class="modal-body" style="max-height: 300px; overflow-y: auto;">
-                    ${!invites?.length ? '<div class="empty-state">No pending invitations</div>' : invites.map(inv => `
-                        <div style="padding: 0.6rem 0; border-bottom: 1px solid #2f3336; display: flex; justify-content: space-between; align-items: center;">
-                            <div>
-                                <div style="font-weight: 500;">${escapeHtml(inv.email)}</div>
-                                <div style="font-size: 0.7rem; color: #71767b;">Role: ${inv.role} | Expires: ${new Date(inv.expires_at).toLocaleDateString()}</div>
-                            </div>
-                            <button class="btn" style="background: #4a1919; color: #f4212e; padding: 0.2rem 0.4rem; font-size: 0.65rem;" onclick="deleteInvite('${inv.id}')">Revoke</button>
-                        </div>
-                    `).join('')}
-                </div>
-                <div class="modal-footer">
-                    <button class="btn" onclick="this.closest('.modal-overlay').remove()">Close</button>
+                <div class="alerts-content" id="alerts-content">
+                    <div class="loading">Loading alerts...</div>
                 </div>
             </div>
         `;
-        document.body.appendChild(inviteModal);
-    } catch (e) {
-        alert('Failed to load invitations');
+
+        // Event delegation for better performance
+        this.shadowRoot.addEventListener('click', e => this._handleClick(e));
     }
-}
 
-async function deleteInvite(id) {
-    try {
-        await fetch(`/api/auth/invites/${id}`, { method: 'DELETE' });
-        document.querySelector('.modal-overlay[style*="z-index: 1001"]')?.remove();
-        showPendingInvites();
-    } catch (e) {}
-}
+    _handleClick(e) {
+        const btn = e.target.closest('button');
+        if (!btn) return;
 
-async function editUser(userId) {
-    try {
-        const resp = await fetch(`/api/users/${userId}`);
-        const user = await resp.json();
+        if (btn.dataset.view) {
+            this.setView(btn.dataset.view);
+        } else if (btn.id === 'refresh-btn') {
+            this.loadData();
+        } else if (btn.id === 'new-alert-btn') {
+            window.location.href = '/#alerts';
+        } else if (btn.dataset.action) {
+            const id = btn.dataset.id;
+            switch (btn.dataset.action) {
+                case 'silence': this.silenceAlert(id); break;
+                case 'ack': this.acknowledgeAlert(id); break;
+                case 'details': this.showAlertDetails(id); break;
+                case 'unsilence': this.unsilenceAlert(id); break;
+            }
+        }
+    }
 
-        const editModal = document.createElement('div');
-        editModal.className = 'modal-overlay';
-        editModal.style.zIndex = '1001';
-        editModal.onclick = (e) => { if (e.target === editModal) editModal.remove(); };
-        editModal.innerHTML = `
-            <div class="modal" style="max-width: 400px;">
-                <div class="modal-header">
-                    <span class="modal-title">Edit User</span>
-                    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-                </div>
-                <div class="modal-body">
-                    <div class="form-group">
-                        <label class="form-label">Name</label>
-                        <input type="text" id="edit-user-name" class="form-input" value="${escapeHtml(user.name || '')}">
+    setView(view) {
+        this.view = view;
+        this.shadowRoot.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.view === view);
+        });
+        this._renderContent();
+    }
+
+    async loadData() {
+        if (this._loading) return;
+        this._loading = true;
+
+        try {
+            const controller = new AbortController();
+            this._pendingRequest = controller;
+
+            const [alertsResp, eventsResp, channelsResp] = await Promise.all([
+                fetch('/api/watches', { signal: controller.signal }),
+                fetch('/api/watch/events?limit=100', { signal: controller.signal }),
+                fetch('/api/watch/channels', { signal: controller.signal })
+            ]);
+
+            if (alertsResp.ok) this.alerts = await alertsResp.json() || [];
+            if (eventsResp.ok) this.events = await eventsResp.json() || [];
+            if (channelsResp.ok) this.channels = await channelsResp.json() || [];
+
+            this._renderContent();
+        } catch (e) {
+            if (e.name !== 'AbortError') console.error('Failed to load alerts:', e);
+        } finally {
+            this._loading = false;
+            this._pendingRequest = null;
+        }
+    }
+
+    _renderContent() {
+        const content = this.shadowRoot.getElementById('alerts-content');
+        const activeCount = this.shadowRoot.getElementById('active-count');
+        const silencedCount = this.shadowRoot.getElementById('silenced-count');
+
+        const alertingAlerts = this.alerts.filter(a => a.state === 'alerting' || a.state === 'pending');
+        const silencedAlerts = this.alerts.filter(a => a.muted_until && new Date(a.muted_until) > new Date());
+
+        if (activeCount) activeCount.textContent = alertingAlerts.length;
+        if (silencedCount) silencedCount.textContent = silencedAlerts.length;
+
+        switch (this.view) {
+            case 'active':
+                content.innerHTML = this._renderActiveAlerts(alertingAlerts);
+                break;
+            case 'history':
+                content.innerHTML = this._renderHistory();
+                break;
+            case 'silenced':
+                content.innerHTML = this._renderSilenced(silencedAlerts);
+                break;
+        }
+    }
+
+    _renderActiveAlerts(alerts) {
+        if (alerts.length === 0) {
+            return `<div class="empty-state"><span class="icon">✓</span><p>All clear! No active alerts.</p></div>`;
+        }
+        return `<div class="alerts-list">${alerts.map(a => this._renderAlertCard(a)).join('')}</div>`;
+    }
+
+    _renderAlertCard(alert) {
+        const stateClass = alert.state === 'alerting' ? 'critical' : 'warning';
+        const duration = this._formatDuration(Date.now() - new Date(alert.state_at).getTime());
+        return `
+            <div class="alert-card ${stateClass}">
+                <div class="alert-status">${alert.state === 'alerting' ? '🔴' : '🟡'}</div>
+                <div class="alert-info">
+                    <div class="alert-name">${this._esc(alert.name)}</div>
+                    <div class="alert-condition">${this._esc(alert.metric)} ${alert.operator} ${alert.threshold}</div>
+                    <div class="alert-meta">
+                        <span>Current: ${alert.last_value?.toFixed(2) || '—'}</span>
+                        <span>for ${duration}</span>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">Role</label>
-                        <select id="edit-user-role" class="form-select">
-                            <option value="viewer" ${user.role === 'viewer' ? 'selected' : ''}>Viewer</option>
-                            <option value="editor" ${user.role === 'editor' ? 'selected' : ''}>Editor</option>
-                            ${currentUser?.role === 'owner' ? `<option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Admin</option>` : ''}
-                        </select>
-                    </div>
                 </div>
-                <div class="modal-footer">
-                    <button class="btn" style="background: #4a1919; color: #f4212e;" onclick="deleteUser('${userId}')">Delete User</button>
-                    <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                    <button class="btn btn-primary" onclick="saveUserEdit('${userId}')">Save</button>
+                <div class="alert-actions">
+                    <button class="btn-action" data-action="silence" data-id="${alert.id}" title="Silence">🔕</button>
+                    <button class="btn-action" data-action="ack" data-id="${alert.id}" title="Acknowledge">✓</button>
+                    <button class="btn-action" data-action="details" data-id="${alert.id}" title="Details">⋯</button>
                 </div>
             </div>
         `;
-        document.body.appendChild(editModal);
-    } catch (e) {
-        alert('Failed to load user');
     }
-}
 
-async function saveUserEdit(userId) {
-    const name = document.getElementById('edit-user-name').value;
-    const role = document.getElementById('edit-user-role').value;
-
-    try {
-        await fetch(`/api/users/${userId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, role })
-        });
-        document.querySelector('.modal-overlay[style*="z-index: 1001"]')?.remove();
-        loadUsersList();
-    } catch (e) {
-        alert('Failed to update user');
-    }
-}
-
-async function toggleUserActive(userId, isActive) {
-    try {
-        await fetch(`/api/users/${userId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ is_active: !isActive })
-        });
-        loadUsersList();
-    } catch (e) {
-        alert('Failed to update user');
-    }
-}
-
-async function deleteUser(userId) {
-    if (!confirm('Are you sure you want to delete this user?')) return;
-    try {
-        await fetch(`/api/users/${userId}`, { method: 'DELETE' });
-        document.querySelector('.modal-overlay[style*="z-index: 1001"]')?.remove();
-        loadUsersList();
-    } catch (e) {
-        alert('Failed to delete user');
-    }
-}
-
-// =====================================
-// Team Management
-// =====================================
-async function showTeamManagement() {
-    document.getElementById('user-menu-dropdown').classList.remove('show');
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-    modal.innerHTML = `
-        <div class="modal" style="max-width: 600px;">
-            <div class="modal-header">
-                <span class="modal-title">Teams</span>
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-            </div>
-            <div class="modal-body" style="padding: 0;">
-                <div style="padding: 0.8rem; border-bottom: 1px solid #2f3336; display: flex; justify-content: flex-end;">
-                    <button class="btn btn-primary" onclick="showCreateTeamModal()">+ Create Team</button>
-                </div>
-                <div class="users-list" id="teams-list">
-                    <div class="empty-state">Loading teams...</div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Close</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-    loadTeamsList();
-}
-
-async function loadTeamsList() {
-    try {
-        const resp = await fetch('/api/teams');
-        const teams = await resp.json();
-        const list = document.getElementById('teams-list');
-        if (!teams?.length) {
-            list.innerHTML = '<div class="empty-state">No teams found</div>';
-            return;
+    _renderHistory() {
+        if (this.events.length === 0) {
+            return `<div class="empty-state"><span class="icon">📋</span><p>No alert history yet</p></div>`;
         }
-        list.innerHTML = teams.map(t => `
-            <div class="user-item">
-                <div class="user-item-avatar" style="background: #7c3aed;">${(t.name || '?').substring(0, 2).toUpperCase()}</div>
-                <div class="user-item-info">
-                    <div class="user-item-name">${escapeHtml(t.name)}</div>
-                    <div class="user-item-email">${t.member_ids?.length || 0} members</div>
-                </div>
-                <div class="user-item-actions">
-                    <button class="btn" onclick="editTeam('${t.id}')" style="padding: 0.2rem 0.4rem; font-size: 0.65rem;">Edit</button>
-                    <button class="btn" onclick="deleteTeam('${t.id}')" style="padding: 0.2rem 0.4rem; font-size: 0.65rem; background: #4a1919; color: #f4212e;">Delete</button>
-                </div>
-            </div>
-        `).join('');
-    } catch (e) {
-        document.getElementById('teams-list').innerHTML = '<div class="empty-state">Failed to load teams</div>';
-    }
-}
-
-function showCreateTeamModal() {
-    const createModal = document.createElement('div');
-    createModal.className = 'modal-overlay';
-    createModal.style.zIndex = '1001';
-    createModal.onclick = (e) => { if (e.target === createModal) createModal.remove(); };
-    createModal.innerHTML = `
-        <div class="modal" style="max-width: 400px;">
-            <div class="modal-header">
-                <span class="modal-title">Create Team</span>
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">Team Name</label>
-                    <input type="text" id="team-name" class="form-input" placeholder="Platform Team">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Description</label>
-                    <input type="text" id="team-description" class="form-input" placeholder="Team description">
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                <button class="btn btn-primary" onclick="createTeam()">Create Team</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(createModal);
-}
-
-async function createTeam() {
-    const name = document.getElementById('team-name').value;
-    const description = document.getElementById('team-description').value;
-    if (!name) { alert('Team name is required'); return; }
-
-    try {
-        await fetch('/api/teams', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, description, member_ids: [] })
-        });
-        document.querySelector('.modal-overlay[style*="z-index: 1001"]')?.remove();
-        loadTeamsList();
-    } catch (e) {
-        alert('Failed to create team');
-    }
-}
-
-async function editTeam(teamId) {
-    // For simplicity, just show team name edit. Full member management could be added.
-    try {
-        const resp = await fetch(`/api/teams/${teamId}`);
-        const team = await resp.json();
-
-        const editModal = document.createElement('div');
-        editModal.className = 'modal-overlay';
-        editModal.style.zIndex = '1001';
-        editModal.onclick = (e) => { if (e.target === editModal) editModal.remove(); };
-        editModal.innerHTML = `
-            <div class="modal" style="max-width: 400px;">
-                <div class="modal-header">
-                    <span class="modal-title">Edit Team</span>
-                    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-                </div>
-                <div class="modal-body">
-                    <div class="form-group">
-                        <label class="form-label">Team Name</label>
-                        <input type="text" id="edit-team-name" class="form-input" value="${escapeHtml(team.name || '')}">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Description</label>
-                        <input type="text" id="edit-team-description" class="form-input" value="${escapeHtml(team.description || '')}">
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                    <button class="btn btn-primary" onclick="saveTeamEdit('${teamId}')">Save</button>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(editModal);
-    } catch (e) {
-        alert('Failed to load team');
-    }
-}
-
-async function saveTeamEdit(teamId) {
-    const name = document.getElementById('edit-team-name').value;
-    const description = document.getElementById('edit-team-description').value;
-
-    try {
-        await fetch(`/api/teams/${teamId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, description })
-        });
-        document.querySelector('.modal-overlay[style*="z-index: 1001"]')?.remove();
-        loadTeamsList();
-    } catch (e) {
-        alert('Failed to update team');
-    }
-}
-
-async function deleteTeam(teamId) {
-    if (!confirm('Are you sure you want to delete this team?')) return;
-    try {
-        await fetch(`/api/teams/${teamId}`, { method: 'DELETE' });
-        loadTeamsList();
-    } catch (e) {
-        alert('Failed to delete team');
-    }
-}
-
-// =====================================
-// API Key Management
-// =====================================
-async function showAPIKeyManagement() {
-    document.getElementById('user-menu-dropdown').classList.remove('show');
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-    modal.innerHTML = `
-        <div class="modal" style="max-width: 600px;">
-            <div class="modal-header">
-                <span class="modal-title">API Keys</span>
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-            </div>
-            <div class="modal-body" style="padding: 0;">
-                <div style="padding: 0.8rem; border-bottom: 1px solid #2f3336; display: flex; justify-content: flex-end;">
-                    <button class="btn btn-primary" onclick="showCreateAPIKeyModal()">+ Create API Key</button>
-                </div>
-                <div id="apikeys-list" style="max-height: 400px; overflow-y: auto;">
-                    <div class="empty-state">Loading API keys...</div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Close</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-    loadAPIKeysList();
-}
-
-async function loadAPIKeysList() {
-    try {
-        const resp = await fetch('/api/apikeys');
-        const keys = await resp.json();
-        const list = document.getElementById('apikeys-list');
-        if (!keys?.length) {
-            list.innerHTML = '<div class="empty-state">No API keys</div>';
-            return;
-        }
-        list.innerHTML = keys.map(k => `
-            <div class="apikey-item">
-                <div class="apikey-header">
-                    <div>
-                        <span class="apikey-name">${escapeHtml(k.name)}</span>
-                        <span class="apikey-prefix">${escapeHtml(k.key_prefix)}...</span>
-                    </div>
-                    <button class="btn" onclick="deleteAPIKey('${k.id}')" style="padding: 0.2rem 0.4rem; font-size: 0.65rem; background: #4a1919; color: #f4212e;">Delete</button>
-                </div>
-                <div class="apikey-meta">
-                    <span>Created: ${new Date(k.created_at).toLocaleDateString()}</span>
-                    ${k.last_used_at ? `<span>Last used: ${new Date(k.last_used_at).toLocaleDateString()}</span>` : '<span>Never used</span>'}
-                    ${k.expires_at ? `<span>Expires: ${new Date(k.expires_at).toLocaleDateString()}</span>` : '<span>No expiry</span>'}
-                </div>
-            </div>
-        `).join('');
-    } catch (e) {
-        document.getElementById('apikeys-list').innerHTML = '<div class="empty-state">Failed to load API keys</div>';
-    }
-}
-
-function showCreateAPIKeyModal() {
-    const createModal = document.createElement('div');
-    createModal.className = 'modal-overlay';
-    createModal.style.zIndex = '1001';
-    createModal.onclick = (e) => { if (e.target === createModal) createModal.remove(); };
-    createModal.innerHTML = `
-        <div class="modal" style="max-width: 400px;">
-            <div class="modal-header">
-                <span class="modal-title">Create API Key</span>
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">Name</label>
-                    <input type="text" id="apikey-name" class="form-input" placeholder="CI/CD Pipeline">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Expires In</label>
-                    <select id="apikey-expires" class="form-select">
-                        <option value="30d">30 days</option>
-                        <option value="90d">90 days</option>
-                        <option value="1y">1 year</option>
-                        <option value="never">Never</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Permissions</label>
-                    <div style="font-size: 0.75rem; color: #71767b; margin-bottom: 0.5rem;">Select resources this key can access:</div>
-                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem;">
-                        <label style="display: flex; align-items: center; gap: 0.3rem; font-size: 0.75rem;">
-                            <input type="checkbox" id="perm-all" onchange="toggleAllPerms(this.checked)"> All access
-                        </label>
-                        <label style="display: flex; align-items: center; gap: 0.3rem; font-size: 0.75rem;">
-                            <input type="checkbox" class="perm-check" value="metrics"> Metrics
-                        </label>
-                        <label style="display: flex; align-items: center; gap: 0.3rem; font-size: 0.75rem;">
-                            <input type="checkbox" class="perm-check" value="logs"> Logs
-                        </label>
-                        <label style="display: flex; align-items: center; gap: 0.3rem; font-size: 0.75rem;">
-                            <input type="checkbox" class="perm-check" value="traces"> Traces
-                        </label>
-                        <label style="display: flex; align-items: center; gap: 0.3rem; font-size: 0.75rem;">
-                            <input type="checkbox" class="perm-check" value="alerts"> Alerts
-                        </label>
-                        <label style="display: flex; align-items: center; gap: 0.3rem; font-size: 0.75rem;">
-                            <input type="checkbox" class="perm-check" value="dashboards"> Dashboards
-                        </label>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                <button class="btn btn-primary" onclick="createAPIKey()">Create Key</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(createModal);
-}
-
-function toggleAllPerms(checked) {
-    document.querySelectorAll('.perm-check').forEach(cb => {
-        cb.checked = checked;
-        cb.disabled = checked;
-    });
-}
-
-async function createAPIKey() {
-    const name = document.getElementById('apikey-name').value;
-    const expiresIn = document.getElementById('apikey-expires').value;
-    if (!name) { alert('Name is required'); return; }
-
-    const allAccess = document.getElementById('perm-all').checked;
-    const permissions = [];
-    if (allAccess) {
-        permissions.push({ resource: '*', action: '*' });
-    } else {
-        document.querySelectorAll('.perm-check:checked').forEach(cb => {
-            permissions.push({ resource: cb.value, action: '*' });
-        });
-    }
-
-    if (!permissions.length) {
-        alert('Select at least one permission');
-        return;
-    }
-
-    try {
-        const resp = await fetch('/api/apikeys', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, permissions, expires_in: expiresIn })
-        });
-        if (resp.ok) {
-            const data = await resp.json();
-            // Show the created key (only shown once!)
-            document.querySelector('.modal-overlay[style*="z-index: 1001"]')?.remove();
-            showCreatedAPIKey(data);
-        } else {
-            alert('Failed to create API key');
-        }
-    } catch (e) {
-        alert('Failed to create API key');
-    }
-}
-
-function showCreatedAPIKey(data) {
-    const keyModal = document.createElement('div');
-    keyModal.className = 'modal-overlay';
-    keyModal.style.zIndex = '1001';
-    keyModal.innerHTML = `
-        <div class="modal" style="max-width: 500px;">
-            <div class="modal-header">
-                <span class="modal-title">API Key Created</span>
-            </div>
-            <div class="modal-body">
-                <p style="color: #ffd400; font-size: 0.85rem; margin-bottom: 1rem;">Copy this key now. You won't be able to see it again!</p>
-                <div class="apikey-created">${escapeHtml(data.key)}</div>
-                <button class="btn" style="margin-top: 0.5rem;" onclick="navigator.clipboard.writeText('${escapeHtml(data.key)}'); this.textContent='Copied!'">Copy to Clipboard</button>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove(); loadAPIKeysList();">Done</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(keyModal);
-}
-
-async function deleteAPIKey(keyId) {
-    if (!confirm('Are you sure you want to delete this API key?')) return;
-    try {
-        await fetch(`/api/apikeys/${keyId}`, { method: 'DELETE' });
-        loadAPIKeysList();
-    } catch (e) {
-        alert('Failed to delete API key');
-    }
-}
-
-// =====================================
-// Notification Channel Management
-// =====================================
-const channelTypes = {
-    webhook: { name: 'Webhook', icon: '&#128279;', color: '#6b7280' },
-    slack: { name: 'Slack', icon: '&#128172;', color: '#4A154B' },
-    email: { name: 'Email', icon: '&#128231;', color: '#ea580c' },
-    pagerduty: { name: 'PagerDuty', icon: '&#128276;', color: '#06ac38' },
-    opsgenie: { name: 'OpsGenie', icon: '&#128680;', color: '#2684ff' },
-    msteams: { name: 'MS Teams', icon: '&#128101;', color: '#5558af' },
-    discord: { name: 'Discord', icon: '&#127918;', color: '#5865f2' }
-};
-
-async function showNotificationChannels() {
-    document.getElementById('user-menu-dropdown').classList.remove('show');
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-    modal.innerHTML = `
-        <div class="modal" style="max-width: 700px;">
-            <div class="modal-header">
-                <span class="modal-title">Notification Channels</span>
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-            </div>
-            <div class="modal-body" style="padding: 0;">
-                <div style="padding: 0.8rem; border-bottom: 1px solid #2f3336; display: flex; justify-content: space-between; align-items: center;">
-                    <span style="color: #71767b; font-size: 0.8rem;">Configure where notifications are sent</span>
-                    <button class="btn btn-primary" onclick="showCreateChannelModal()">+ Add Channel</button>
-                </div>
-                <div id="notify-channels-list" style="max-height: 400px; overflow-y: auto;">
-                    <div class="empty-state">Loading channels...</div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="showNotificationHistory()">History</button>
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Close</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-    loadNotifyChannelsList();
-}
-
-async function loadNotifyChannelsList() {
-    try {
-        const resp = await fetch('/api/notify/channels');
-        const channels = await resp.json();
-        const list = document.getElementById('notify-channels-list');
-        if (!channels?.length) {
-            list.innerHTML = '<div class="empty-state">No notification channels configured</div>';
-            return;
-        }
-        list.innerHTML = channels.map(ch => {
-            const typeInfo = channelTypes[ch.type] || { name: ch.type, icon: '&#128276;', color: '#6b7280' };
+        return `<div class="events-list">${this.events.slice(0, 50).map(e => {
+            const isRecovery = e.to_state === 'ok';
+            const icon = isRecovery ? '✓' : e.to_state === 'alerting' ? '🔴' : '🟡';
+            const stateClass = isRecovery ? 'recovered' : e.to_state === 'alerting' ? 'critical' : 'warning';
             return `
-            <div class="apikey-item" style="display: flex; align-items: center; gap: 0.8rem;">
-                <div style="width: 36px; height: 36px; background: ${typeInfo.color}; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; flex-shrink: 0;">
-                    ${typeInfo.icon}
-                </div>
-                <div style="flex: 1; min-width: 0;">
-                    <div class="apikey-header" style="justify-content: flex-start; gap: 0.5rem;">
-                        <span class="apikey-name">${escapeHtml(ch.name)}</span>
-                        <span style="font-size: 0.65rem; padding: 0.1rem 0.4rem; background: ${ch.enabled ? '#1a3d2e' : '#4a1919'}; color: ${ch.enabled ? '#00ba7c' : '#f4212e'}; border-radius: 3px;">${ch.enabled ? 'Active' : 'Disabled'}</span>
+                <div class="event-item ${stateClass}">
+                    <span class="event-icon">${icon}</span>
+                    <div class="event-info">
+                        <div class="event-name">${this._esc(e.watch_name)}</div>
+                        <div class="event-message">${this._esc(e.message)}</div>
                     </div>
-                    <div class="apikey-meta">
-                        <span>${typeInfo.name}</span>
-                        ${ch.last_used_at ? `<span>Last used: ${new Date(ch.last_used_at).toLocaleDateString()}</span>` : '<span>Never used</span>'}
-                        ${ch.success_rate !== undefined ? `<span>Success: ${ch.success_rate.toFixed(0)}%</span>` : ''}
-                    </div>
+                    <div class="event-time">${this._formatTime(e.timestamp)}</div>
                 </div>
-                <div style="display: flex; gap: 0.3rem;">
-                    <button class="btn" onclick="testNotifyChannel('${ch.id}')" style="padding: 0.2rem 0.4rem; font-size: 0.65rem;">Test</button>
-                    <button class="btn" onclick="editNotifyChannel('${ch.id}')" style="padding: 0.2rem 0.4rem; font-size: 0.65rem;">Edit</button>
-                    <button class="btn" onclick="deleteNotifyChannel('${ch.id}')" style="padding: 0.2rem 0.4rem; font-size: 0.65rem; background: #4a1919; color: #f4212e;">Delete</button>
-                </div>
-            </div>
-        `;}).join('');
-    } catch (e) {
-        document.getElementById('notify-channels-list').innerHTML = '<div class="empty-state">Failed to load channels</div>';
+            `;
+        }).join('')}</div>`;
     }
-}
 
-function showCreateChannelModal() {
-    const createModal = document.createElement('div');
-    createModal.className = 'modal-overlay';
-    createModal.style.zIndex = '1001';
-    createModal.onclick = (e) => { if (e.target === createModal) createModal.remove(); };
-    createModal.innerHTML = `
-        <div class="modal" style="max-width: 500px;">
-            <div class="modal-header">
-                <span class="modal-title">Add Notification Channel</span>
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">Channel Type</label>
-                    <select id="channel-type" class="form-select" onchange="updateChannelConfigForm()">
-                        <option value="webhook">Webhook</option>
-                        <option value="slack">Slack</option>
-                        <option value="email">Email (SMTP)</option>
-                        <option value="pagerduty">PagerDuty</option>
-                        <option value="opsgenie">OpsGenie</option>
-                        <option value="msteams">Microsoft Teams</option>
-                        <option value="discord">Discord</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Name</label>
-                    <input type="text" id="channel-name" class="form-input" placeholder="Production Alerts">
-                </div>
-                <div id="channel-config-form">
-                    <!-- Dynamic config form -->
-                </div>
-                <div class="form-group">
-                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-                        <input type="checkbox" id="channel-enabled" checked>
-                        <span class="form-label" style="margin: 0;">Enabled</span>
-                    </label>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                <button class="btn btn-primary" onclick="createNotifyChannel()">Create Channel</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(createModal);
-    updateChannelConfigForm();
-}
-
-function updateChannelConfigForm() {
-    const type = document.getElementById('channel-type').value;
-    const container = document.getElementById('channel-config-form');
-
-    const forms = {
-        webhook: `
-            <div class="form-group">
-                <label class="form-label">Webhook URL</label>
-                <input type="url" id="config-url" class="form-input" placeholder="https://example.com/webhook">
-            </div>
-            <div class="form-group">
-                <label class="form-label">Method</label>
-                <select id="config-method" class="form-select">
-                    <option value="POST">POST</option>
-                    <option value="PUT">PUT</option>
-                </select>
-            </div>
-        `,
-        slack: `
-            <div class="form-group">
-                <label class="form-label">Webhook URL</label>
-                <input type="url" id="config-webhook_url" class="form-input" placeholder="https://hooks.slack.com/services/...">
-            </div>
-            <div class="form-group">
-                <label class="form-label">Channel (optional)</label>
-                <input type="text" id="config-channel" class="form-input" placeholder="#alerts">
-            </div>
-        `,
-        email: `
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">SMTP Host</label>
-                    <input type="text" id="config-smtp_host" class="form-input" placeholder="smtp.gmail.com">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Port</label>
-                    <input type="number" id="config-smtp_port" class="form-input" placeholder="587" value="587">
-                </div>
-            </div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">Username</label>
-                    <input type="text" id="config-username" class="form-input">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Password</label>
-                    <input type="password" id="config-password" class="form-input">
-                </div>
-            </div>
-            <div class="form-group">
-                <label class="form-label">From Address</label>
-                <input type="email" id="config-from" class="form-input" placeholder="alerts@example.com">
-            </div>
-            <div class="form-group">
-                <label class="form-label">To Addresses (comma separated)</label>
-                <input type="text" id="config-to" class="form-input" placeholder="team@example.com, oncall@example.com">
-            </div>
-            <div class="form-group">
-                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-                    <input type="checkbox" id="config-tls" checked>
-                    <span class="form-label" style="margin: 0;">Use TLS</span>
-                </label>
-            </div>
-        `,
-        pagerduty: `
-            <div class="form-group">
-                <label class="form-label">Integration Key (Events API v2)</label>
-                <input type="text" id="config-integration_key" class="form-input" placeholder="32 character key">
-            </div>
-            <div class="form-group">
-                <label class="form-label">Default Severity</label>
-                <select id="config-default_severity" class="form-select">
-                    <option value="">Auto (based on alert severity)</option>
-                    <option value="critical">Critical</option>
-                    <option value="error">Error</option>
-                    <option value="warning">Warning</option>
-                    <option value="info">Info</option>
-                </select>
-            </div>
-        `,
-        opsgenie: `
-            <div class="form-group">
-                <label class="form-label">API Key</label>
-                <input type="text" id="config-api_key" class="form-input">
-            </div>
-            <div class="form-group">
-                <label class="form-label">Region</label>
-                <select id="config-region" class="form-select">
-                    <option value="us">US</option>
-                    <option value="eu">EU</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label class="form-label">Default Priority</label>
-                <select id="config-priority" class="form-select">
-                    <option value="">Auto</option>
-                    <option value="P1">P1 - Critical</option>
-                    <option value="P2">P2 - High</option>
-                    <option value="P3">P3 - Medium</option>
-                    <option value="P4">P4 - Low</option>
-                    <option value="P5">P5 - Informational</option>
-                </select>
-            </div>
-        `,
-        msteams: `
-            <div class="form-group">
-                <label class="form-label">Webhook URL</label>
-                <input type="url" id="config-webhook_url" class="form-input" placeholder="https://outlook.office.com/webhook/...">
-            </div>
-        `,
-        discord: `
-            <div class="form-group">
-                <label class="form-label">Webhook URL</label>
-                <input type="url" id="config-webhook_url" class="form-input" placeholder="https://discord.com/api/webhooks/...">
-            </div>
-            <div class="form-group">
-                <label class="form-label">Bot Username (optional)</label>
-                <input type="text" id="config-username" class="form-input" placeholder="dogwatch">
-            </div>
-        `
-    };
-
-    container.innerHTML = forms[type] || '';
-}
-
-function getChannelConfig() {
-    const type = document.getElementById('channel-type').value;
-    const config = {};
-
-    const getVal = (id) => document.getElementById(id)?.value || '';
-    const getChecked = (id) => document.getElementById(id)?.checked || false;
-
-    switch (type) {
-        case 'webhook':
-            config.url = getVal('config-url');
-            config.method = getVal('config-method');
-            break;
-        case 'slack':
-            config.webhook_url = getVal('config-webhook_url');
-            if (getVal('config-channel')) config.channel = getVal('config-channel');
-            break;
-        case 'email':
-            config.smtp_host = getVal('config-smtp_host');
-            config.smtp_port = parseInt(getVal('config-smtp_port')) || 587;
-            config.username = getVal('config-username');
-            config.password = getVal('config-password');
-            config.from = getVal('config-from');
-            config.to = getVal('config-to').split(',').map(s => s.trim()).filter(s => s);
-            config.tls = getChecked('config-tls');
-            break;
-        case 'pagerduty':
-            config.integration_key = getVal('config-integration_key');
-            if (getVal('config-default_severity')) config.default_severity = getVal('config-default_severity');
-            break;
-        case 'opsgenie':
-            config.api_key = getVal('config-api_key');
-            config.region = getVal('config-region');
-            if (getVal('config-priority')) config.priority = getVal('config-priority');
-            break;
-        case 'msteams':
-            config.webhook_url = getVal('config-webhook_url');
-            break;
-        case 'discord':
-            config.webhook_url = getVal('config-webhook_url');
-            if (getVal('config-username')) config.username = getVal('config-username');
-            break;
-    }
-    return config;
-}
-
-async function createNotifyChannel() {
-    const name = document.getElementById('channel-name').value;
-    const type = document.getElementById('channel-type').value;
-    const enabled = document.getElementById('channel-enabled').checked;
-    const config = getChannelConfig();
-
-    if (!name) { alert('Name is required'); return; }
-
-    try {
-        const resp = await fetch('/api/notify/channels', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, type, config, enabled })
-        });
-        if (resp.ok) {
-            document.querySelector('.modal-overlay[style*="z-index: 1001"]')?.remove();
-            loadNotifyChannelsList();
-        } else {
-            const err = await resp.json();
-            alert('Failed to create channel: ' + (err.error || 'Unknown error'));
+    _renderSilenced(alerts) {
+        if (alerts.length === 0) {
+            return `<div class="empty-state"><span class="icon">🔔</span><p>No silenced alerts</p></div>`;
         }
-    } catch (e) {
-        alert('Failed to create channel');
+        return `<div class="alerts-list">${alerts.map(a => `
+            <div class="alert-card silenced">
+                <div class="alert-status">🔕</div>
+                <div class="alert-info">
+                    <div class="alert-name">${this._esc(a.name)}</div>
+                    <div class="alert-meta">Silenced until ${this._formatTime(a.muted_until)}</div>
+                </div>
+                <div class="alert-actions">
+                    <button class="btn-action" data-action="unsilence" data-id="${a.id}" title="Unsilence">🔔</button>
+                </div>
+            </div>
+        `).join('')}</div>`;
     }
-}
 
-async function testNotifyChannel(id) {
-    try {
-        const resp = await fetch(`/api/notify/channels/${id}/test`, { method: 'POST' });
-        if (resp.ok) {
-            alert('Test notification sent!');
-        } else {
-            const err = await resp.json();
-            alert('Test failed: ' + (err.error || 'Unknown error'));
-        }
-    } catch (e) {
-        alert('Test failed');
-    }
-}
-
-async function editNotifyChannel(id) {
-    try {
-        const resp = await fetch(`/api/notify/channels/${id}`);
-        const channel = await resp.json();
-
-        const editModal = document.createElement('div');
-        editModal.className = 'modal-overlay';
-        editModal.style.zIndex = '1001';
-        editModal.onclick = (e) => { if (e.target === editModal) editModal.remove(); };
-
-        const typeInfo = channelTypes[channel.type] || { name: channel.type };
-        editModal.innerHTML = `
-            <div class="modal" style="max-width: 500px;">
-                <div class="modal-header">
-                    <span class="modal-title">Edit ${typeInfo.name} Channel</span>
-                    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-                </div>
-                <div class="modal-body">
-                    <div class="form-group">
-                        <label class="form-label">Name</label>
-                        <input type="text" id="edit-channel-name" class="form-input" value="${escapeHtml(channel.name)}">
-                    </div>
-                    <div class="form-group">
-                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-                            <input type="checkbox" id="edit-channel-enabled" ${channel.enabled ? 'checked' : ''}>
-                            <span class="form-label" style="margin: 0;">Enabled</span>
-                        </label>
-                    </div>
-                    <p style="color: #71767b; font-size: 0.75rem; margin-top: 1rem;">To change channel configuration, delete and recreate the channel.</p>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                    <button class="btn btn-primary" onclick="saveNotifyChannel('${id}', '${channel.type}')">Save</button>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(editModal);
-    } catch (e) {
-        alert('Failed to load channel');
-    }
-}
-
-async function saveNotifyChannel(id, type) {
-    const name = document.getElementById('edit-channel-name').value;
-    const enabled = document.getElementById('edit-channel-enabled').checked;
-
-    try {
-        const resp = await fetch(`/api/notify/channels/${id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, type, enabled, config: {} })
-        });
-        if (resp.ok) {
-            document.querySelector('.modal-overlay[style*="z-index: 1001"]')?.remove();
-            loadNotifyChannelsList();
-        } else {
-            alert('Failed to save channel');
-        }
-    } catch (e) {
-        alert('Failed to save channel');
-    }
-}
-
-async function deleteNotifyChannel(id) {
-    if (!confirm('Are you sure you want to delete this notification channel?')) return;
-    try {
-        await fetch(`/api/notify/channels/${id}`, { method: 'DELETE' });
-        loadNotifyChannelsList();
-    } catch (e) {
-        alert('Failed to delete channel');
-    }
-}
-
-async function showNotificationHistory() {
-    try {
-        const resp = await fetch('/api/notify/history');
-        const logs = await resp.json();
-
-        const historyModal = document.createElement('div');
-        historyModal.className = 'modal-overlay';
-        historyModal.style.zIndex = '1001';
-        historyModal.onclick = (e) => { if (e.target === historyModal) historyModal.remove(); };
-        historyModal.innerHTML = `
-            <div class="modal" style="max-width: 700px;">
-                <div class="modal-header">
-                    <span class="modal-title">Notification History</span>
-                    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-                </div>
-                <div class="modal-body" style="max-height: 400px; overflow-y: auto; padding: 0;">
-                    ${!logs?.length ? '<div class="empty-state">No notifications sent yet</div>' : logs.map(log => `
-                        <div style="padding: 0.6rem 1rem; border-bottom: 1px solid #2f3336; display: flex; align-items: center; gap: 0.8rem;">
-                            <div style="width: 10px; height: 10px; border-radius: 50%; background: ${log.status === 'sent' ? '#00ba7c' : '#f4212e'}; flex-shrink: 0;"></div>
-                            <div style="flex: 1; min-width: 0;">
-                                <div style="font-weight: 500; font-size: 0.85rem;">${escapeHtml(log.notification?.title || 'Notification')}</div>
-                                <div style="font-size: 0.7rem; color: #71767b;">
-                                    ${escapeHtml(log.channel_name)} (${log.channel_type}) - ${new Date(log.sent_at).toLocaleString()}
-                                    ${log.response_time ? ` - ${log.response_time}ms` : ''}
-                                </div>
-                                ${log.error ? `<div style="font-size: 0.7rem; color: #f4212e; margin-top: 0.2rem;">${escapeHtml(log.error)}</div>` : ''}
-                            </div>
-                        </div>
-                    `).join('')}
-                </div>
-                <div class="modal-footer">
-                    <button class="btn" onclick="this.closest('.modal-overlay').remove()">Close</button>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(historyModal);
-    } catch (e) {
-        alert('Failed to load notification history');
-    }
-}
-
-// Check auth on page load
-checkAuth();
-
-// =====================================
-// Widget definitions
-// =====================================
-const defaultLayout = [
-    // =============================================
-    // HERO SECTION: System health at a glance
-    // =============================================
-    // Row 0-1: System metrics (4 equal cards)
-    { id: 'cpu', x: 0, y: 0, w: 3, h: 2, minW: 2, minH: 2 },
-    { id: 'mem', x: 3, y: 0, w: 3, h: 2, minW: 2, minH: 2 },
-    { id: 'disk', x: 6, y: 0, w: 3, h: 2, minW: 2, minH: 2 },
-    { id: 'net', x: 9, y: 0, w: 3, h: 2, minW: 2, minH: 2 },
-
-    // =============================================
-    // PRIMARY SECTION: Service topology + Alerts
-    // =============================================
-    // Row 2-6: Service map (left 8) + Alerts (right 4) - critical ops view
-    { id: 'svcmap', x: 0, y: 2, w: 8, h: 5, minW: 6, minH: 4 },
-    { id: 'alerting', x: 8, y: 2, w: 4, h: 5, minW: 3, minH: 4 },
-
-    // =============================================
-    // SECONDARY SECTION: SLOs + Request flow
-    // =============================================
-    // Row 7-10: SLOs (left 4) + Traces (center 4) + Endpoints (right 4)
-    { id: 'slos', x: 0, y: 7, w: 4, h: 4, minW: 3, minH: 3 },
-    { id: 'traces', x: 4, y: 7, w: 4, h: 4, minW: 3, minH: 3 },
-    { id: 'endpoints', x: 8, y: 7, w: 4, h: 4, minW: 3, minH: 3 },
-
-    // =============================================
-    // CHARTS SECTION: Time-series trends
-    // =============================================
-    // Row 11-13: CPU + Memory charts side by side
-    { id: 'cpuchart', x: 0, y: 11, w: 6, h: 3, minW: 4, minH: 3 },
-    { id: 'memchart', x: 6, y: 11, w: 6, h: 3, minW: 4, minH: 3 },
-
-    // =============================================
-    // OPERATIONAL SECTION: Logs + Recent activity
-    // =============================================
-    // Row 14-17: Logs (left 6) + Deployments/Incidents stacked (right 6)
-    { id: 'logs', x: 0, y: 14, w: 6, h: 4, minW: 5, minH: 3 },
-    { id: 'deployments', x: 6, y: 14, w: 6, h: 4, minW: 4, minH: 3 },
-
-    // Row 18-21: Watches/Incidents + Synthetics
-    { id: 'incidents', x: 0, y: 18, w: 6, h: 4, minW: 4, minH: 3 },
-    { id: 'synthetics', x: 6, y: 18, w: 6, h: 4, minW: 4, minH: 3 },
-
-    // =============================================
-    // INFRASTRUCTURE SECTION: Containers + K8s
-    // =============================================
-    // Row 22-25: Containers + Cluster side by side
-    { id: 'containers', x: 0, y: 22, w: 6, h: 4, minW: 4, minH: 3 },
-    { id: 'cluster', x: 6, y: 22, w: 6, h: 4, minW: 4, minH: 3 },
-
-    // Row 26-30: Kubernetes (full width - complex widget)
-    { id: 'kubernetes', x: 0, y: 26, w: 12, h: 5, minW: 8, minH: 4 },
-
-    // =============================================
-    // ANALYTICS SECTION: Patterns + Anomalies
-    // =============================================
-    // Row 31-34: Log patterns + Anomaly detection
-    { id: 'patterns', x: 0, y: 31, w: 6, h: 4, minW: 4, minH: 3 },
-    { id: 'anomaly', x: 6, y: 31, w: 6, h: 4, minW: 4, minH: 3 },
-
-    // =============================================
-    // CATALOG SECTION: Service registry + Status
-    // =============================================
-    // Row 35-39: Service catalog (left 7) + Status page (right 5)
-    { id: 'catalog', x: 0, y: 35, w: 7, h: 5, minW: 5, minH: 4 },
-    { id: 'statuspage', x: 7, y: 35, w: 5, h: 5, minW: 4, minH: 4 },
-
-    // =============================================
-    // DEEP DIVE SECTION: Profiling + Correlation
-    // =============================================
-    // Row 40-43: Flamegraph + Correlation
-    { id: 'flamegraph', x: 0, y: 40, w: 6, h: 4, minW: 4, minH: 3 },
-    { id: 'correlation', x: 6, y: 40, w: 6, h: 4, minW: 4, minH: 3 },
-
-    // =============================================
-    // DATA SECTION: DB + Cardinality + Stats
-    // =============================================
-    // Row 44-48: DB Watch (left 8) + Stats (right 4)
-    { id: 'dbwatch', x: 0, y: 44, w: 8, h: 5, minW: 6, minH: 4 },
-    { id: 'cardinality', x: 8, y: 44, w: 4, h: 5, minW: 3, minH: 4 },
-
-    // =============================================
-    // COST SECTION: Value proposition (marketing)
-    // =============================================
-    // Row 49-52: Cost Intelligence (full width - key differentiator)
-    { id: 'costintel', x: 0, y: 49, w: 12, h: 4, minW: 8, minH: 3 },
-
-    // =============================================
-    // DETAIL SECTION: Processes + Connections
-    // =============================================
-    // Row 53-56: Lower-priority detailed views
-    { id: 'procs', x: 0, y: 53, w: 6, h: 4, minW: 3, minH: 3 },
-    { id: 'connlist', x: 6, y: 53, w: 6, h: 4, minW: 3, minH: 3 },
-
-    // Quick stats (small cards - can be placed in gaps or at bottom)
-    { id: 'conns', x: 0, y: 57, w: 2, h: 2, minW: 2, minH: 2 },
-    { id: 'reqs', x: 2, y: 57, w: 2, h: 2, minW: 2, minH: 2 },
-    { id: 'errs', x: 4, y: 57, w: 2, h: 2, minW: 2, minH: 2 },
-    { id: 'watches', x: 6, y: 57, w: 6, h: 2, minW: 4, minH: 2 },
-];
-
-function widgetCPU() {
-    return `<div class="widget-header"><span class="widget-title">CPU</span></div>
-        <div class="widget-body">
-            <div class="metric-big" id="cpu-percent">--%</div>
-            <div class="metric-bar"><div class="metric-bar-fill cpu" id="cpu-bar" style="width:0%"></div></div>
-            <div class="metric-detail"><span>Load: <span id="load-avg">--</span></span><span>IO: <span id="cpu-iowait">--%</span></span></div>
-        </div>`;
-}
-function widgetMem() {
-    return `<div class="widget-header"><span class="widget-title">Memory</span></div>
-        <div class="widget-body">
-            <div class="metric-big" id="mem-percent">--%</div>
-            <div class="metric-bar"><div class="metric-bar-fill mem" id="mem-bar" style="width:0%"></div></div>
-            <div class="metric-detail"><span id="mem-used">--</span><span id="mem-total">--</span></div>
-        </div>`;
-}
-function widgetDisk() {
-    return `<div class="widget-header"><span class="widget-title">Disk I/O</span></div>
-        <div class="widget-body">
-            <div class="metric-big" id="disk-io">--</div>
-            <div class="metric-bar"><div class="metric-bar-fill disk" id="disk-bar" style="width:0%"></div></div>
-            <div class="metric-detail"><span>R: <span id="disk-read">--</span></span><span>W: <span id="disk-write">--</span></span></div>
-        </div>`;
-}
-function widgetNet() {
-    return `<div class="widget-header"><span class="widget-title">Network</span></div>
-        <div class="widget-body">
-            <div class="metric-big" id="net-io">--</div>
-            <div class="metric-bar"><div class="metric-bar-fill net" id="net-bar" style="width:0%"></div></div>
-            <div class="metric-detail"><span>RX: <span id="net-rx">--</span></span><span>TX: <span id="net-tx">--</span></span></div>
-        </div>`;
-}
-function widgetStat(title, id, isError) {
-    return `<div class="widget-header"><span class="widget-title">${title}</span></div>
-        <div class="widget-body" style="display:flex;align-items:center;justify-content:center;">
-            <div class="stat-big ${isError ? 'error' : ''}" id="${id}">-</div>
-        </div>`;
-}
-function widgetServiceMap() {
-    return `<div class="widget-header">
-            <span class="widget-title">Service Map</span>
-            <div style="display:flex;gap:0.3rem;align-items:center;">
-                <select id="svcmap-filter" class="trace-select" style="height:26px;font-size:0.7rem;" onchange="filterServiceMap()">
-                    <option value="">All Nodes</option>
-                    <option value="services">Services</option>
-                    <option value="external">External</option>
-                    <option value="processes">Processes</option>
-                </select>
-                <button class="btn" onclick="toggleSvcMapLayout()" title="Toggle Layout">⟲</button>
-                <button class="btn" onclick="updateServiceMap()" title="Refresh">↻</button>
-            </div>
-        </div>
-        <div class="widget-body no-pad svcmap-container" id="svcmap-container">
-            <div class="svcmap-stats" id="svcmap-stats"></div>
-            <svg id="service-map"></svg>
-            <div class="svcmap-zoom-controls">
-                <button onclick="svcMapZoom(1.2)" title="Zoom In">+</button>
-                <button onclick="svcMapZoom(0.8)" title="Zoom Out">−</button>
-                <button onclick="svcMapReset()" title="Reset View">⌂</button>
-            </div>
-            <div class="svcmap-legend">
-                <div class="svcmap-legend-item"><div class="svcmap-legend-dot" style="background:#00ba7c"></div>Healthy</div>
-                <div class="svcmap-legend-item"><div class="svcmap-legend-dot" style="background:#ffd400"></div>Degraded</div>
-                <div class="svcmap-legend-item"><div class="svcmap-legend-dot" style="background:#f4212e"></div>Error</div>
-                <div class="svcmap-legend-item"><div class="svcmap-legend-dot" style="background:#536471"></div>External</div>
-            </div>
-            <div class="svcmap-tooltip" id="svcmap-tooltip"></div>
-            <div class="svcmap-detail" id="svcmap-detail">
-                <div class="svcmap-detail-header">
-                    <span class="svcmap-detail-title" id="svcmap-detail-title">Node Details</span>
-                    <button class="svcmap-detail-close" onclick="closeSvcMapDetail()">×</button>
-                </div>
-                <div class="svcmap-detail-body" id="svcmap-detail-body"></div>
-                <div class="svcmap-detail-actions">
-                    <button class="btn" onclick="viewServiceLogs()">View Logs</button>
-                    <button class="btn" onclick="viewServiceTraces()">View Traces</button>
-                </div>
-            </div>
-        </div>`;
-}
-function widgetChart(title, id) {
-    return `<div class="widget-header">
-            <span class="widget-title">${title}</span>
-            <div class="time-btns">
-                <button class="time-btn active" data-dur="15m">15m</button>
-                <button class="time-btn" data-dur="1h">1h</button>
-                <button class="time-btn" data-dur="6h">6h</button>
-            </div>
-        </div>
-        <div class="widget-body" style="position:relative;"><div class="chart-wrap"><canvas id="${id}"></canvas></div></div>`;
-}
-function widgetEndpoints() {
-    return `<div class="widget-header"><span class="widget-title">HTTP Endpoints</span></div>
-        <div class="widget-body no-pad" style="overflow:auto;">
-            <table><thead><tr><th>Method</th><th>Path</th><th>Count</th><th>Err%</th><th>P50</th><th>P99</th></tr></thead>
-            <tbody id="endpoints-body"><tr><td colspan="6" class="empty-state">No data</td></tr></tbody></table>
-        </div>`;
-}
-function widgetConnections() {
-    return `<div class="widget-header"><span class="widget-title">Connections</span></div>
-        <div class="widget-body no-pad" style="overflow:auto;">
-            <table><thead><tr><th>Process</th><th>Remote</th><th>Count</th></tr></thead>
-            <tbody id="connections-body"><tr><td colspan="3" class="empty-state">No data</td></tr></tbody></table>
-        </div>`;
-}
-function widgetProcesses() {
-    return `<div class="widget-header"><span class="widget-title">Top Processes</span></div>
-        <div class="widget-body no-pad" style="overflow:auto;">
-            <table><thead><tr><th>PID</th><th>Name</th><th>CPU%</th><th>Mem</th></tr></thead>
-            <tbody id="processes-body"><tr><td colspan="4" class="empty-state">Loading...</td></tr></tbody></table>
-        </div>`;
-}
-function widgetFlameGraph() {
-    return `<div class="widget-header">
-            <span class="widget-title">CPU Flame Graph</span>
-            <div style="display:flex;gap:0.3rem;">
-                <button class="btn" onclick="clearFlameGraph()">Clear</button>
-                <button class="btn" onclick="updateFlameGraph()">Refresh</button>
-            </div>
-        </div>
-        <div class="widget-body no-pad flamegraph-container">
-            <div class="flamegraph-toolbar">
-                <input type="text" class="flamegraph-search" id="flamegraph-search" placeholder="Search functions..." oninput="searchFlameGraph(this.value)">
-                <div class="flamegraph-divider"></div>
-                <div class="flamegraph-btn-group">
-                    <button class="flamegraph-btn active" id="flamegraph-flame-btn" onclick="setFlameMode('flame')" title="Flame Graph">▲</button>
-                    <button class="flamegraph-btn" id="flamegraph-icicle-btn" onclick="setFlameMode('icicle')" title="Icicle Graph">▼</button>
-                </div>
-                <div class="flamegraph-divider"></div>
-                <button class="flamegraph-btn" id="flamegraph-diff-btn" onclick="toggleDiffMode()" title="Compare Profiles">Diff</button>
-                <div class="flamegraph-stats" id="flamegraph-stats"></div>
-            </div>
-            <div class="flamegraph-breadcrumbs" id="flamegraph-breadcrumbs" style="display:none;"></div>
-            <div class="flamegraph-view" id="flamegraph-view">
-                <div class="flamegraph-canvas" id="flamegraph"></div>
-            </div>
-            <div class="flamegraph-legend" id="flamegraph-legend">
-                <div class="flamegraph-legend-item"><div class="flamegraph-legend-color" style="background:linear-gradient(135deg,#f97316,#ea580c)"></div>Hot (>10%)</div>
-                <div class="flamegraph-legend-item"><div class="flamegraph-legend-color" style="background:linear-gradient(135deg,#fbbf24,#f59e0b)"></div>Warm (5-10%)</div>
-                <div class="flamegraph-legend-item"><div class="flamegraph-legend-color" style="background:linear-gradient(135deg,#3b82f6,#2563eb)"></div>Normal</div>
-                <div class="flamegraph-legend-item"><div class="flamegraph-legend-color" style="background:linear-gradient(135deg,#ef4444,#dc2626)"></div>Kernel/Unknown</div>
-            </div>
-            <div class="flamegraph-tooltip" id="flamegraph-tooltip"></div>
-        </div>`;
-}
-function widgetTraces() {
-    return `<div class="widget-header">
-            <span class="widget-title">Distributed Traces</span>
-            <div class="trace-controls">
-                <select id="trace-service-filter" class="trace-select" onchange="loadTraces()">
-                    <option value="">All Services</option>
-                </select>
-                <button class="btn" onclick="loadTraces()">Refresh</button>
-            </div>
-        </div>
-        <div class="widget-body no-pad" style="display:flex;flex-direction:column;height:100%;">
-            <div class="trace-list" id="trace-list">
-                <div class="empty-state">No traces yet. Configure OTLP export to http://localhost:9999/v1/traces</div>
-            </div>
-            <div id="trace-detail" style="flex:1;overflow:auto;">
-                <div class="no-trace-selected">Select a trace to view details</div>
-            </div>
-        </div>`;
-}
-function widgetWatches() {
-    return `<div class="widget-header">
-            <span class="widget-title">Watches</span>
-            <div style="display:flex;gap:0.3rem;">
-                <button class="btn" onclick="showChannels()">Channels</button>
-                <button class="btn btn-primary" onclick="showCreateWatch()">+ New</button>
-            </div>
-        </div>
-        <div class="widget-body no-pad" id="watches-list" style="overflow:auto;">
-            <div class="empty-state">No watches configured</div>
-        </div>`;
-}
-function widgetLogs() {
-    return `<div class="widget-header">
-            <span class="widget-title">Logs</span>
-            <div style="display:flex;gap:0.3rem;align-items:center;">
-                <button class="btn" id="log-tail-btn" onclick="toggleLogTail()" title="Live tail">
-                    <span id="log-tail-icon">▶</span> Live
-                </button>
-                <button class="btn" onclick="refreshLogs()">Refresh</button>
-            </div>
-        </div>
-        <div class="log-controls">
-            <div style="display:flex;gap:0.3rem;flex:1;min-width:200px;">
-                <input type="text" id="log-search" placeholder="Search logs..." onkeyup="if(event.key==='Enter')searchLogs()" style="flex:1;">
-                <button class="btn btn-primary" onclick="searchLogs()" style="padding:0.3rem 0.6rem;">Search</button>
-            </div>
-            <select id="log-level" onchange="updateLogFilters()">
-                <option value="">All Levels</option>
-                <option value="debug">Debug</option>
-                <option value="info">Info</option>
-                <option value="warn">Warn</option>
-                <option value="error">Error</option>
-                <option value="fatal">Fatal</option>
-            </select>
-            <select id="log-service" onchange="updateLogFilters()">
-                <option value="">All Services</option>
-            </select>
-            <select id="log-time" onchange="updateLogFilters()">
-                <option value="15m">Last 15m</option>
-                <option value="1h" selected>Last 1h</option>
-                <option value="6h">Last 6h</option>
-                <option value="24h">Last 24h</option>
-                <option value="7d">Last 7d</option>
-                <option value="custom">Custom range...</option>
-            </select>
-        </div>
-        <div id="log-filter-pills" style="display:none;padding:0.3rem 0.8rem;background:#1a1d21;border-bottom:1px solid #2f3336;"></div>
-        <div class="widget-body no-pad" id="logs-list" style="overflow:auto;">
-            <div class="empty-state">No logs yet</div>
-        </div>`;
-}
-function widgetSynthetics() {
-    return `<div class="widget-header">
-            <span class="widget-title">Synthetic Checks</span>
-            <div style="display:flex;gap:0.3rem;">
-                <button class="btn btn-primary" onclick="showCreateSynthetic()">+ New</button>
-            </div>
-        </div>
-        <div class="widget-body no-pad" id="synthetics-list" style="overflow:auto;">
-            <div class="empty-state">No synthetic checks configured</div>
-        </div>`;
-}
-function widgetSLOs() {
-    return `<div class="widget-header">
-            <span class="widget-title">Service Level Objectives</span>
-            <div style="display:flex;gap:0.3rem;">
-                <button class="btn btn-primary" onclick="showCreateSLO()">+ New</button>
-            </div>
-        </div>
-        <div class="widget-body no-pad" id="slos-list" style="overflow:auto;">
-            <div class="empty-state">No SLOs configured</div>
-        </div>`;
-}
-function widgetPatterns() {
-    return `<div class="widget-header">
-            <span class="widget-title">Log Patterns</span>
-            <div style="display:flex;gap:0.3rem;">
-                <select id="pattern-filter" onchange="loadPatterns()">
-                    <option value="all">All Patterns</option>
-                    <option value="new">New (24h)</option>
-                    <option value="increasing">Increasing</option>
-                </select>
-                <button class="btn" onclick="loadPatterns()">Refresh</button>
-            </div>
-        </div>
-        <div class="pattern-stats" id="pattern-stats"></div>
-        <div class="widget-body no-pad" id="patterns-list" style="overflow:auto;">
-            <div class="empty-state">No patterns detected yet</div>
-        </div>`;
-}
-function widgetContainers() {
-    return `<div class="widget-header">
-            <span class="widget-title">Containers</span>
-            <div style="display:flex;gap:0.3rem;">
-                <button class="btn" onclick="loadContainers()">Refresh</button>
-            </div>
-        </div>
-        <div class="container-summary" id="container-summary"></div>
-        <div class="widget-body no-pad" id="containers-list" style="overflow:auto;">
-            <div class="empty-state">No containers found</div>
-        </div>`;
-}
-function widgetDeployments() {
-    return `<div class="widget-header">
-            <span class="widget-title">Deployments</span>
-            <div style="display:flex;gap:0.3rem;">
-                <button class="btn" onclick="showNewDeployModal()">+ Deploy</button>
-                <button class="btn" onclick="loadDeployments()">Refresh</button>
-            </div>
-        </div>
-        <div class="deploy-summary" id="deploy-summary"></div>
-        <div class="widget-body no-pad" id="deployments-list" style="overflow:auto;">
-            <div class="empty-state">No deployments recorded</div>
-        </div>`;
-}
-
-function widgetIncidents() {
-    return `<div class="widget-header">
-            <span class="widget-title">Incidents</span>
-            <div style="display:flex;gap:0.3rem;">
-                <button class="btn" onclick="showNewIncidentModal()">+ Incident</button>
-                <button class="btn" onclick="loadIncidents()">Refresh</button>
-            </div>
-        </div>
-        <div class="incident-summary" id="incident-summary">
-            <div class="incident-stat">
-                <span class="incident-stat-value" id="inc-active">0</span>
-                <span class="incident-stat-label">Active</span>
-            </div>
-            <div class="incident-stat">
-                <span class="incident-stat-value" id="inc-triggered" style="color:#f4212e">0</span>
-                <span class="incident-stat-label">Triggered</span>
-            </div>
-            <div class="incident-stat">
-                <span class="incident-stat-value" id="inc-acked" style="color:#ffd400">0</span>
-                <span class="incident-stat-label">Acked</span>
-            </div>
-            <div id="oncall-display" style="margin-left:auto;"></div>
-        </div>
-        <div class="widget-body no-pad" id="incidents-list" style="overflow:auto;">
-            <div class="empty-state">No active incidents</div>
-        </div>`;
-}
-
-function widgetCluster() {
-    return `<div class="widget-header">
-            <span class="widget-title">Federation Cluster</span>
-            <div style="display:flex;gap:0.3rem;">
-                <button class="btn" onclick="showJoinClusterModal()">Join Node</button>
-                <button class="btn" onclick="loadCluster()">Refresh</button>
-            </div>
-        </div>
-        <div class="cluster-summary" id="cluster-summary">
-            <div class="cluster-stat">
-                <span class="cluster-stat-value" id="cluster-enabled">-</span>
-                <span class="cluster-stat-label">Status</span>
-            </div>
-            <div class="cluster-stat">
-                <span class="cluster-stat-value" id="cluster-nodes">0</span>
-                <span class="cluster-stat-label">Nodes</span>
-            </div>
-            <div class="cluster-stat">
-                <span class="cluster-stat-value" id="cluster-incidents">0</span>
-                <span class="cluster-stat-label">Active Incidents</span>
-            </div>
-            <div id="cluster-local" style="margin-left:auto;font-size:0.75rem;color:#888;"></div>
-        </div>
-        <div class="widget-body no-pad" id="cluster-nodes-list" style="overflow:auto;">
-            <div class="empty-state">Federation not enabled. Start with --cluster flag.</div>
-        </div>`;
-}
-
-function widgetStatusPage() {
-    return `<div class="widget-header">
-            <span class="widget-title">Status Pages</span>
-            <div style="display:flex;gap:0.3rem;">
-                <button class="btn" onclick="showCreateStatusPage()">+ New Page</button>
-                <button class="btn" onclick="showCreateComponent()">+ Component</button>
-                <button class="btn" onclick="loadStatusPages()">Refresh</button>
-            </div>
-        </div>
-        <div class="statuspage-summary" id="statuspage-summary">
-            <div class="statuspage-overall operational" id="statuspage-overall">All Systems Operational</div>
-            <div class="statuspage-stat">
-                <span class="statuspage-stat-value" id="sp-pages">0</span>
-                <span class="statuspage-stat-label">Pages</span>
-            </div>
-            <div class="statuspage-stat">
-                <span class="statuspage-stat-value" id="sp-components">0</span>
-                <span class="statuspage-stat-label">Components</span>
-            </div>
-            <div class="statuspage-stat">
-                <span class="statuspage-stat-value" id="sp-incidents">0</span>
-                <span class="statuspage-stat-label">Active Incidents</span>
-            </div>
-        </div>
-        <div class="widget-body no-pad" id="statuspage-list" style="overflow:auto;">
-            <div class="empty-state">No status pages configured. Click "+ New Page" to create one.</div>
-        </div>`;
-}
-
-function widgetCatalog() {
-    return `<div class="widget-header">
-            <span class="widget-title">Service Catalog</span>
-            <div style="display:flex;gap:0.3rem;">
-                <button class="btn" onclick="showCreateService()">+ Service</button>
-                <button class="btn" onclick="showCreateTeam()">+ Team</button>
-                <button class="btn" onclick="loadCatalog()">Refresh</button>
-            </div>
-        </div>
-        <div class="catalog-summary" id="catalog-summary">
-            <div class="catalog-stat">
-                <span class="catalog-stat-value" id="cat-total">0</span>
-                <span class="catalog-stat-label">Services</span>
-            </div>
-            <div class="catalog-stat">
-                <span class="catalog-stat-value" id="cat-critical" style="color:#f4212e">0</span>
-                <span class="catalog-stat-label">Critical</span>
-            </div>
-            <div class="catalog-stat">
-                <span class="catalog-stat-value" id="cat-healthy" style="color:#00ba7c">0</span>
-                <span class="catalog-stat-label">Healthy</span>
-            </div>
-            <div class="catalog-stat">
-                <span class="catalog-stat-value" id="cat-unhealthy" style="color:#f4212e">0</span>
-                <span class="catalog-stat-label">Unhealthy</span>
-            </div>
-            <div class="catalog-filters">
-                <select id="cat-tier-filter" onchange="loadCatalog()">
-                    <option value="">All Tiers</option>
-                    <option value="critical">Critical</option>
-                    <option value="high">High</option>
-                    <option value="medium">Medium</option>
-                    <option value="low">Low</option>
-                </select>
-                <select id="cat-health-filter" onchange="loadCatalog()">
-                    <option value="">All Health</option>
-                    <option value="healthy">Healthy</option>
-                    <option value="degraded">Degraded</option>
-                    <option value="unhealthy">Unhealthy</option>
-                </select>
-            </div>
-        </div>
-        <div class="widget-body no-pad" id="catalog-list" style="overflow:auto;">
-            <div class="empty-state">No services in catalog. Click "+ Service" to add one.</div>
-        </div>`;
-}
-
-function widgetCorrelation() {
-    return `<div class="widget-header">
-            <span class="widget-title">Correlation Engine</span>
-            <div style="display:flex;gap:0.3rem;">
-                <select class="trace-select" id="corr-service-select" onchange="loadServiceTimeline()">
-                    <option value="">Select Service</option>
-                </select>
-                <select class="trace-select" id="corr-timerange" onchange="loadServiceTimeline()">
-                    <option value="1h">Last 1h</option>
-                    <option value="6h">Last 6h</option>
-                    <option value="24h">Last 24h</option>
-                </select>
-                <button class="btn" onclick="loadCorrelations()">Refresh</button>
-            </div>
-        </div>
-        <div class="correlation-summary" id="corr-summary" style="display:flex;gap:1rem;padding:0.5rem;background:#1a1a1a;border-bottom:1px solid #333;">
-            <div class="corr-stat" style="text-align:center;">
-                <span id="corr-deploy-incidents" style="font-size:1.5rem;font-weight:bold;color:#f4212e;">0</span>
-                <div style="font-size:0.75rem;color:#888;">Deploy→Incident</div>
-            </div>
-            <div class="corr-stat" style="text-align:center;">
-                <span id="corr-total-events" style="font-size:1.5rem;font-weight:bold;color:#1d9bf0;">0</span>
-                <div style="font-size:0.75rem;color:#888;">Timeline Events</div>
-            </div>
-            <div class="corr-stat" style="text-align:center;">
-                <span id="corr-error-traces" style="font-size:1.5rem;font-weight:bold;color:#ff6b35;">0</span>
-                <div style="font-size:0.75rem;color:#888;">Error Traces</div>
-            </div>
-        </div>
-        <div style="display:flex;height:calc(100% - 90px);">
-            <div id="corr-correlations" style="width:40%;border-right:1px solid #333;overflow:auto;padding:0.5rem;">
-                <div style="font-weight:bold;margin-bottom:0.5rem;color:#888;">Deploy → Incident Correlations</div>
-                <div id="corr-deploy-list">
-                    <div class="empty-state" style="padding:1rem;text-align:center;color:#666;">No correlations detected</div>
-                </div>
-            </div>
-            <div id="corr-timeline" style="width:60%;overflow:auto;padding:0.5rem;">
-                <div style="font-weight:bold;margin-bottom:0.5rem;color:#888;">Service Timeline</div>
-                <div id="corr-timeline-list">
-                    <div class="empty-state" style="padding:1rem;text-align:center;color:#666;">Select a service to view timeline</div>
-                </div>
-            </div>
-        </div>`;
-}
-
-function widgetKubernetes() {
-    return `<div class="widget-header">
-            <span class="widget-title">Kubernetes</span>
-            <div style="display:flex;gap:0.3rem;">
-                <select class="trace-select" id="k8s-namespace-select" onchange="loadKubernetes()">
-                    <option value="">All Namespaces</option>
-                </select>
-                <button class="btn" onclick="loadKubernetes()">Refresh</button>
-            </div>
-        </div>
-        <div class="k8s-summary" id="k8s-summary">
-            <div class="k8s-stat">
-                <span class="k8s-stat-value" id="k8s-pods">-</span>
-                <span class="k8s-stat-label">Pods</span>
-            </div>
-            <div class="k8s-stat">
-                <span class="k8s-stat-value" id="k8s-deployments">-</span>
-                <span class="k8s-stat-label">Deployments</span>
-            </div>
-            <div class="k8s-stat">
-                <span class="k8s-stat-value" id="k8s-services">-</span>
-                <span class="k8s-stat-label">Services</span>
-            </div>
-            <div class="k8s-stat">
-                <span class="k8s-stat-value" id="k8s-nodes">-</span>
-                <span class="k8s-stat-label">Nodes</span>
-            </div>
-            <div id="k8s-cluster-name" style="margin-left:auto;font-size:0.75rem;color:#888;"></div>
-        </div>
-        <div class="k8s-tabs" id="k8s-tabs">
-            <button class="k8s-tab active" data-tab="pods" onclick="switchK8sTab('pods')">Pods</button>
-            <button class="k8s-tab" data-tab="deploys" onclick="switchK8sTab('deploys')">Deployments</button>
-            <button class="k8s-tab" data-tab="services" onclick="switchK8sTab('services')">Services</button>
-            <button class="k8s-tab" data-tab="nodes" onclick="switchK8sTab('nodes')">Nodes</button>
-            <button class="k8s-tab" data-tab="events" onclick="switchK8sTab('events')">Events</button>
-        </div>
-        <div class="widget-body no-pad" style="display:flex;flex-direction:column;flex:1;">
-            <div class="k8s-content active" id="k8s-pods-content">
-                <div class="empty-state">No pods found</div>
-            </div>
-            <div class="k8s-content" id="k8s-deploys-content">
-                <div class="empty-state">No deployments found</div>
-            </div>
-            <div class="k8s-content" id="k8s-services-content">
-                <div class="empty-state">No services found</div>
-            </div>
-            <div class="k8s-content" id="k8s-nodes-content">
-                <div class="empty-state">No nodes found</div>
-            </div>
-            <div class="k8s-content" id="k8s-events-content">
-                <div class="empty-state">No events found</div>
-            </div>
-        </div>`;
-}
-
-function widgetAnomaly() {
-    return `<div class="widget-header">
-            <span class="widget-title">Anomaly Detection</span>
-            <div style="display:flex;gap:0.3rem;">
-                <button class="btn" onclick="loadAnomalies()">Refresh</button>
-            </div>
-        </div>
-        <div class="anomaly-summary" id="anomaly-summary">
-            <div class="anomaly-stat">
-                <span class="anomaly-stat-value critical" id="anomaly-critical">0</span>
-                <span class="anomaly-stat-label">Critical</span>
-            </div>
-            <div class="anomaly-stat">
-                <span class="anomaly-stat-value warning" id="anomaly-warning">0</span>
-                <span class="anomaly-stat-label">Warning</span>
-            </div>
-            <div class="anomaly-stat">
-                <span class="anomaly-stat-value" id="anomaly-total">0</span>
-                <span class="anomaly-stat-label">Total (24h)</span>
-            </div>
-            <div class="anomaly-stat">
-                <span class="anomaly-stat-value" id="anomaly-metrics">0</span>
-                <span class="anomaly-stat-label">Metrics</span>
-            </div>
-        </div>
-        <div class="widget-body no-pad" id="anomaly-list" style="overflow:auto;">
-            <div class="empty-state">No anomalies detected</div>
-        </div>`;
-}
-
-function widgetAlerting() {
-    return `<div class="widget-header">
-            <span class="widget-title">Alerts</span>
-            <div style="display:flex;gap:0.3rem;">
-                <button class="btn" onclick="showNewAlertRuleModal()">+ Rule</button>
-                <button class="btn" onclick="showNewSilenceModal()">Silence</button>
-                <button class="btn" onclick="loadAlerts()">Refresh</button>
-            </div>
-        </div>
-        <div class="alerting-summary" id="alerting-summary">
-            <div class="alerting-stat">
-                <span class="alerting-stat-value firing" id="alerts-firing">0</span>
-                <span class="alerting-stat-label">Firing</span>
-            </div>
-            <div class="alerting-stat">
-                <span class="alerting-stat-value pending" id="alerts-pending">0</span>
-                <span class="alerting-stat-label">Pending</span>
-            </div>
-            <div class="alerting-stat">
-                <span class="alerting-stat-value silenced" id="alerts-silenced">0</span>
-                <span class="alerting-stat-label">Silences</span>
-            </div>
-            <div class="alerting-stat">
-                <span class="alerting-stat-value" id="alerts-rules">0</span>
-                <span class="alerting-stat-label">Rules</span>
-            </div>
-        </div>
-        <div class="alerting-tabs" id="alerting-tabs">
-            <button class="alerting-tab active" data-tab="alerts" onclick="switchAlertingTab('alerts')">Alerts</button>
-            <button class="alerting-tab" data-tab="rules" onclick="switchAlertingTab('rules')">Rules</button>
-            <button class="alerting-tab" data-tab="silences" onclick="switchAlertingTab('silences')">Silences</button>
-        </div>
-        <div class="widget-body no-pad" style="display:flex;flex-direction:column;flex:1;">
-            <div class="alerting-content active" id="alerting-alerts-content">
-                <div class="empty-state">No firing alerts</div>
-            </div>
-            <div class="alerting-content" id="alerting-rules-content">
-                <div class="empty-state">No alert rules configured</div>
-            </div>
-            <div class="alerting-content" id="alerting-silences-content">
-                <div class="empty-state">No active silences</div>
-            </div>
-        </div>`;
-}
-
-function widgetNotifications() {
-    return `<div class="widget-header">
-            <span class="widget-title">Notifications</span>
-            <div style="display:flex;gap:0.3rem;">
-                <button class="btn" onclick="showNotificationChannels()">Manage</button>
-                <button class="btn" onclick="loadNotifyWidget()">Refresh</button>
-            </div>
-        </div>
-        <div class="notify-summary" id="notify-summary">
-            <div class="notify-stat">
-                <span class="notify-stat-value" id="notify-channels">0</span>
-                <span class="notify-stat-label">Channels</span>
-            </div>
-            <div class="notify-stat">
-                <span class="notify-stat-value" id="notify-enabled">0</span>
-                <span class="notify-stat-label">Enabled</span>
-            </div>
-            <div class="notify-stat">
-                <span class="notify-stat-value success" id="notify-sent">0</span>
-                <span class="notify-stat-label">Sent (24h)</span>
-            </div>
-            <div class="notify-stat">
-                <span class="notify-stat-value failed" id="notify-failed">0</span>
-                <span class="notify-stat-label">Failed</span>
-            </div>
-        </div>
-        <div class="notify-tabs" id="notify-tabs">
-            <button class="notify-tab active" data-tab="channels" onclick="switchNotifyTab('channels')">Channels</button>
-            <button class="notify-tab" data-tab="history" onclick="switchNotifyTab('history')">History</button>
-        </div>
-        <div class="widget-body no-pad" style="display:flex;flex-direction:column;flex:1;">
-            <div class="notify-content active" id="notify-channels-content">
-                <div class="empty-state">No notification channels configured</div>
-            </div>
-            <div class="notify-content" id="notify-history-content">
-                <div class="empty-state">No recent notifications</div>
-            </div>
-        </div>`;
-}
-
-function widgetOnCall() {
-    return `<div class="widget-header">
-            <span class="widget-title">On-Call</span>
-            <div style="display:flex;gap:0.3rem;">
-                <button class="btn" onclick="showNewScheduleModal()">+ Schedule</button>
-                <button class="btn" onclick="loadOnCallWidget()">Refresh</button>
-            </div>
-        </div>
-        <div class="oncall-summary" id="oncall-summary">
-            <div class="oncall-stat">
-                <span class="oncall-stat-value" id="oncall-schedules-count">0</span>
-                <span class="oncall-stat-label">Schedules</span>
-            </div>
-            <div class="oncall-stat">
-                <span class="oncall-stat-value" id="oncall-policies-count">0</span>
-                <span class="oncall-stat-label">Policies</span>
-            </div>
-            <div class="oncall-stat">
-                <span class="oncall-stat-value" id="oncall-active-count">0</span>
-                <span class="oncall-stat-label">On Duty</span>
-            </div>
-        </div>
-        <div class="oncall-current" id="oncall-current">
-            <div class="oncall-current-label">Currently On-Call</div>
-            <div class="oncall-current-person" id="oncall-current-person">
-                <div class="empty-state" style="padding:0.5rem 0;">No schedules configured</div>
-            </div>
-        </div>
-        <div class="widget-body no-pad" id="oncall-schedules-list" style="overflow:auto;">
-            <div class="empty-state">No on-call schedules</div>
-        </div>`;
-}
-
-function widgetAudit() {
-    return `<div class="widget-header">
-            <span class="widget-title">Audit Log</span>
-            <div style="display:flex;gap:0.3rem;">
-                <button class="btn" onclick="exportAuditLogs()">Export</button>
-                <button class="btn" onclick="loadAuditWidget()">Refresh</button>
-            </div>
-        </div>
-        <div class="audit-summary" id="audit-summary">
-            <div class="audit-stat">
-                <span class="audit-stat-value" id="audit-total">0</span>
-                <span class="audit-stat-label">Total</span>
-            </div>
-            <div class="audit-stat">
-                <span class="audit-stat-value" id="audit-today">0</span>
-                <span class="audit-stat-label">Today</span>
-            </div>
-            <div class="audit-stat">
-                <span class="audit-stat-value failures" id="audit-failures">0</span>
-                <span class="audit-stat-label">Failures (24h)</span>
-            </div>
-        </div>
-        <div class="audit-filters">
-            <select id="audit-action-filter" onchange="loadAuditWidget()">
-                <option value="">All Actions</option>
-                <option value="create">Create</option>
-                <option value="update">Update</option>
-                <option value="delete">Delete</option>
-                <option value="login">Login</option>
-                <option value="logout">Logout</option>
-            </select>
-            <select id="audit-resource-filter" onchange="loadAuditWidget()">
-                <option value="">All Resources</option>
-                <option value="user">Users</option>
-                <option value="dashboard">Dashboards</option>
-                <option value="alert_rule">Alert Rules</option>
-                <option value="notify_channel">Notifications</option>
-                <option value="incident">Incidents</option>
-                <option value="schedule">Schedules</option>
-                <option value="session">Sessions</option>
-            </select>
-        </div>
-        <div class="widget-body no-pad" id="audit-list" style="overflow:auto;">
-            <div class="empty-state">No audit logs available</div>
-        </div>`;
-}
-
-function widgetCostIntel() {
-    return `<div class="widget-header">
-            <span class="widget-title">Cost Intelligence</span>
-            <div style="display:flex;gap:0.3rem;">
-                <select id="cost-period" class="trace-select" style="height:26px;" onchange="loadCostIntel()">
-                    <option value="current">Current Usage</option>
-                    <option value="projected">Projected (30d)</option>
-                </select>
-                <button class="btn" onclick="loadCostIntel()">Refresh</button>
-            </div>
-        </div>
-        <div class="widget-body" id="cost-intel-content">
-            <div class="empty-state">Loading cost estimates...</div>
-        </div>`;
-}
-
-function widgetDBWatch() {
-    return `<div class="widget-header">
-            <span class="widget-title">Database Queries</span>
-            <div style="display:flex;gap:0.3rem;">
-                <select id="dbwatch-db-filter" class="trace-select" style="height:26px;" onchange="loadDBWatch()">
-                    <option value="">All Databases</option>
-                    <option value="redis">Redis</option>
-                    <option value="postgres">PostgreSQL</option>
-                    <option value="mysql">MySQL</option>
-                </select>
-                <button class="btn" onclick="loadDBWatch()">Refresh</button>
-            </div>
-        </div>
-        <div class="dbwatch-tabs">
-            <button class="dbwatch-tab active" data-tab="queries" onclick="switchDBWatchTab('queries')">Recent Queries</button>
-            <button class="dbwatch-tab" data-tab="slow" onclick="switchDBWatchTab('slow')">Slow Queries</button>
-            <button class="dbwatch-tab" data-tab="stats" onclick="switchDBWatchTab('stats')">Stats</button>
-        </div>
-        <div class="widget-body no-pad" id="dbwatch-content" style="overflow:auto;">
-            <div class="empty-state">Loading database queries...</div>
-        </div>`;
-}
-
-function widgetCardinality() {
-    return `<div class="widget-header">
-            <span class="widget-title">Cardinality Explorer</span>
-            <div style="display:flex;gap:0.3rem;">
-                <button class="btn" onclick="loadCardinality()">Refresh</button>
-            </div>
-        </div>
-        <div class="widget-body" id="cardinality-content" style="overflow:auto;">
-            <div class="empty-state">Loading cardinality data...</div>
-        </div>`;
-}
-
-
-// Initialize GridStack grid
-function initGrid() {
-    grid = GridStack.init({
-        column: 12,
-        cellHeight: 70,
-        margin: 8,
-        float: false,
-        animate: true,
-        draggable: { handle: '.widget-header' },
-        resizable: { handles: 'se,e,s' },
-        minRow: 1
-    });
-}
-
-function loadLayout() {
-    const saved = localStorage.getItem('dogwatch-layout');
-    let items = saved ? JSON.parse(saved) : defaultLayout;
-
-    // Merge with defaults to ensure minW/minH constraints are preserved
-    const defaultsById = {};
-    defaultLayout.forEach(d => defaultsById[d.id] = d);
-
-    items = items.map(item => {
-        const defaults = defaultsById[item.id] || {};
-        return {
-            ...defaults,
-            ...item,
-            content: `<div class="gs-item-content">${getWidgetContent(item.id)}</div>`
-        };
-    });
-
-    grid.load(items);
-}
-
-function getWidgetContent(id) {
-    const map = {
-        cpu: widgetCPU, mem: widgetMem, disk: widgetDisk, net: widgetNet,
-        conns: () => widgetStat('Connections', 'total-connections'),
-        reqs: () => widgetStat('Requests', 'total-requests'),
-        errs: () => widgetStat('Errors', 'total-errors', true),
-        svcmap: widgetServiceMap,
-        traces: widgetTraces,
-        watches: widgetWatches,
-        logs: widgetLogs,
-        synthetics: widgetSynthetics,
-        slos: widgetSLOs,
-        patterns: widgetPatterns,
-        containers: widgetContainers,
-        deployments: widgetDeployments,
-        incidents: widgetIncidents,
-        cluster: widgetCluster,
-        kubernetes: widgetKubernetes,
-        anomaly: widgetAnomaly,
-        alerting: widgetAlerting,
-        notifications: widgetNotifications,
-        oncall: widgetOnCall,
-        audit: widgetAudit,
-        statuspage: widgetStatusPage,
-        catalog: widgetCatalog,
-        correlation: widgetCorrelation,
-        cpuchart: () => widgetChart('CPU History', 'cpu-chart'),
-        memchart: () => widgetChart('Memory History', 'mem-chart'),
-        endpoints: widgetEndpoints,
-        connlist: widgetConnections,
-        procs: widgetProcesses,
-        flamegraph: widgetFlameGraph,
-        costintel: widgetCostIntel,
-        dbwatch: widgetDBWatch,
-        cardinality: widgetCardinality
-    };
-    return map[id] ? map[id]() : '';
-}
-
-function saveLayout() {
-    const items = grid.save(false);
-    localStorage.setItem('dogwatch-layout', JSON.stringify(items));
-}
-
-function resetLayout() {
-    localStorage.removeItem('dogwatch-layout');
-    currentDashboardId = null;
-    document.getElementById('dashboard-select').value = '';
-    grid.removeAll();
-    loadLayout();
-    setTimeout(initCharts, 100);
-}
-
-// Dashboard persistence
-// moved to top
-// moved to top
-
-async function loadDashboards() {
-    try {
-        const resp = await fetch('/api/dashboards');
-        dashboards = await resp.json() || [];
-        const select = document.getElementById('dashboard-select');
-        select.innerHTML = '<option value="">Default Layout</option>';
-        dashboards.forEach(d => {
-            const opt = document.createElement('option');
-            opt.value = d.id;
-            opt.textContent = d.name + (d.is_default ? ' *' : '');
-            select.appendChild(opt);
-        });
-        // Load default dashboard if exists
-        const defaultDash = dashboards.find(d => d.is_default);
-        if (defaultDash && !localStorage.getItem('dogwatch-layout')) {
-            currentDashboardId = defaultDash.id;
-            select.value = defaultDash.id;
-            applyDashboardLayout(defaultDash.layout);
-        }
-    } catch (e) { console.error('Failed to load dashboards:', e); }
-}
-
-function applyDashboardLayout(layout) {
-    if (!layout || !layout.length) return;
-    grid.removeAll();
-    layout.forEach(pos => {
-        const widgetDef = defaultLayout.find(w => w.id === pos.id);
-        if (widgetDef) {
-            const content = getWidgetContent(pos.id);
-            grid.addWidget({
-                id: pos.id,
-                x: pos.x, y: pos.y, w: pos.w, h: pos.h,
-                minW: widgetDef.minW, minH: widgetDef.minH,
-                content: content
-            });
-        }
-    });
-    setTimeout(initCharts, 100);
-}
-
-async function loadDashboard(id) {
-    if (!id) {
-        currentDashboardId = null;
-        resetLayout();
-        return;
-    }
-    try {
-        const resp = await fetch(`/api/dashboards/${id}`);
-        const dash = await resp.json();
-        currentDashboardId = id;
-        applyDashboardLayout(dash.layout);
-    } catch (e) { alert('Failed to load dashboard'); }
-}
-
-async function saveDashboard() {
-    const layout = grid.save(false).map(item => ({
-        id: item.id, x: item.x, y: item.y, w: item.w, h: item.h
-    }));
-
-    if (currentDashboardId) {
-        // Update existing dashboard
-        const dash = dashboards.find(d => d.id === currentDashboardId);
-        const name = prompt('Dashboard name:', dash?.name || 'My Dashboard');
-        if (!name) return;
+    async silenceAlert(id) {
+        const duration = prompt('Silence for how long? (e.g., 1h, 30m, 2h)', '1h');
+        if (!duration) return;
         try {
-            await fetch(`/api/dashboards/${currentDashboardId}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, layout })
-            });
-            loadDashboards();
-        } catch (e) { alert('Failed to save dashboard'); }
-    } else {
-        // Create new dashboard
-        const name = prompt('Dashboard name:', 'My Dashboard');
-        if (!name) return;
-        try {
-            const resp = await fetch('/api/dashboards', {
+            const resp = await fetch(`/api/watches/${id}/mute`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, layout, is_default: false })
+                body: JSON.stringify({ duration })
             });
-            const dash = await resp.json();
-            currentDashboardId = dash.id;
-            loadDashboards();
-            document.getElementById('dashboard-select').value = dash.id;
-        } catch (e) { alert('Failed to create dashboard'); }
+            if (resp.ok) this.loadData();
+            else alert('Failed to silence alert');
+        } catch (e) {
+            alert('Error: ' + e.message);
+        }
+    }
+
+    async unsilenceAlert(id) {
+        try {
+            const resp = await fetch(`/api/watches/${id}/unmute`, { method: 'POST' });
+            if (resp.ok) this.loadData();
+        } catch (e) {
+            console.error('Failed to unsilence:', e);
+        }
+    }
+
+    acknowledgeAlert(id) {
+        alert('Alert acknowledged');
+    }
+
+    showAlertDetails(id) {
+        const alert = this.alerts.find(a => a.id === id);
+        if (!alert) return;
+        window.alert(`Alert: ${alert.name}\nMetric: ${alert.metric}\nCondition: ${alert.operator} ${alert.threshold}\nCurrent Value: ${alert.last_value?.toFixed(2) || '—'}\nState: ${alert.state}\nSince: ${new Date(alert.state_at).toLocaleString()}`);
+    }
+
+    _formatDuration(ms) {
+        const s = Math.floor(ms / 1000);
+        if (s < 60) return `${s}s`;
+        const m = Math.floor(s / 60);
+        if (m < 60) return `${m}m`;
+        const h = Math.floor(m / 60);
+        if (h < 24) return `${h}h ${m % 60}m`;
+        return `${Math.floor(h / 24)}d ${h % 24}h`;
+    }
+
+    _formatTime(timestamp) {
+        if (!timestamp) return '—';
+        const d = new Date(timestamp);
+        const diff = Date.now() - d.getTime();
+        if (diff < 60000) return 'just now';
+        if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+        if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    }
+
+    _esc(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 }
 
-function showDashboardManager() {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.innerHTML = `
-        <div class="modal">
-            <div class="modal-header">
-                <span class="modal-title">Manage Dashboards</span>
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div id="dashboard-list" style="max-height: 300px; overflow-y: auto;"></div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Close</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-    renderDashboardList();
-}
+customElements.define('alerts-dashboard', AlertsDashboard);
 
-function renderDashboardList() {
-    const list = document.getElementById('dashboard-list');
-    if (!dashboards.length) {
-        list.innerHTML = '<p style="color: #71767b; text-align: center; padding: 1rem;">No saved dashboards</p>';
-        return;
-    }
-    list.innerHTML = dashboards.map(d => `
-        <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0; border-bottom: 1px solid #2f3336;">
-            <div>
-                <div style="font-weight: 500;">${escapeHtml(d.name)}</div>
-                <div style="font-size: 0.7rem; color: #71767b;">${d.is_default ? 'Default' : ''}</div>
-            </div>
-            <div style="display: flex; gap: 0.3rem;">
-                <button class="btn" onclick="setDefaultDashboard('${d.id}')" ${d.is_default ? 'disabled' : ''}>Set Default</button>
-                <button class="btn" style="background: #4a1919; color: #f4212e;" onclick="deleteDashboard('${d.id}')">Delete</button>
-            </div>
-        </div>
-    `).join('');
-}
-
-async function setDefaultDashboard(id) {
-    try {
-        await fetch(`/api/dashboards/${id}/default`, { method: 'POST' });
-        await loadDashboards();
-        renderDashboardList();
-    } catch (e) { alert('Failed to set default'); }
-}
-
-async function deleteDashboard(id) {
-    if (!confirm('Delete this dashboard?')) return;
-    try {
-        await fetch(`/api/dashboards/${id}`, { method: 'DELETE' });
-        if (currentDashboardId === id) {
-            currentDashboardId = null;
-            document.getElementById('dashboard-select').value = '';
-        }
-        await loadDashboards();
-        renderDashboardList();
-    } catch (e) { alert('Failed to delete dashboard'); }
-}
-
-grid.on('change', saveLayout);
-loadLayout();
-loadDashboards();
-setTimeout(initCharts, 100);
-
-// Utility functions
-function formatBytes(b) {
-    if (b === 0) return '0 B';
-    const k = 1024, s = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(b) / Math.log(k));
-    return (b / Math.pow(k, i)).toFixed(1) + ' ' + s[i];
-}
-function formatBPS(b) { return formatBytes(b) + '/s'; }
-function formatLatency(ms) {
-    if (!ms) return '-';
-    return ms < 1 ? '<1ms' : ms < 1000 ? Math.round(ms) + 'ms' : (ms/1000).toFixed(1) + 's';
-}
-function getLatencyClass(ms) { return !ms ? '' : ms < 100 ? 'good' : ms < 500 ? 'warn' : 'bad'; }
-function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
-
-// Demo/Simulated Data Generator (reassigns the placeholder from top)
-DemoData = {
-    enabled: true, // Set to true to show demo data when real data is empty
-
-    services: ['api-gateway', 'user-service', 'payment-service', 'inventory-service', 'notification-service', 'auth-service', 'search-service', 'order-service'],
-
-    generateServiceMap() {
-        const nodes = this.services.map((name, i) => ({
-            id: name,
-            name: name,
-            type: i < 6 ? 'service' : 'external',
-            status: i === 2 ? 'degraded' : (i === 5 ? 'error' : 'healthy'),
-            requests: Math.floor(Math.random() * 10000) + 1000,
-            latency: Math.floor(Math.random() * 200) + 20,
-            errors: i === 5 ? Math.floor(Math.random() * 50) + 10 : Math.floor(Math.random() * 5)
-        }));
-        const links = [
-            { source: 'api-gateway', target: 'user-service', count: 5420, latency: 45, errors: 2 },
-            { source: 'api-gateway', target: 'auth-service', count: 8900, latency: 23, errors: 45 },
-            { source: 'api-gateway', target: 'order-service', count: 3200, latency: 89, errors: 5 },
-            { source: 'user-service', target: 'notification-service', count: 1200, latency: 120, errors: 0 },
-            { source: 'order-service', target: 'payment-service', count: 2800, latency: 156, errors: 12 },
-            { source: 'order-service', target: 'inventory-service', count: 3100, latency: 67, errors: 3 },
-            { source: 'payment-service', target: 'notification-service', count: 890, latency: 89, errors: 1 },
-            { source: 'inventory-service', target: 'search-service', count: 4500, latency: 34, errors: 0 }
-        ];
-        return { nodes, links };
-    },
-
-    generateTraces() {
-        const now = Date.now();
-        return Array.from({ length: 15 }, (_, i) => ({
-            trace_id: `trace-${Date.now()}-${i}`,
-            name: ['GET /api/users', 'POST /api/orders', 'GET /api/products', 'POST /api/payments', 'GET /api/search'][i % 5],
-            service_name: this.services[i % this.services.length],
-            span_count: Math.floor(Math.random() * 8) + 2,
-            duration_ms: Math.floor(Math.random() * 500) + 20,
-            status: i === 3 ? 'error' : (i === 7 ? 'error' : 'ok'),
-            start_time: new Date(now - i * 60000).toISOString()
-        }));
-    },
-
-    generateTraceDetail(traceId) {
-        const now = Date.now();
-        const services = ['api-gateway', 'user-service', 'database'];
-        return {
-            trace_id: traceId,
-            spans: [
-                { span_id: 'span-1', parent_span_id: null, name: 'GET /api/users', service_name: 'api-gateway', kind: 'server', start_time: new Date(now - 200).toISOString(), end_time: new Date(now).toISOString(), status: 'ok', attributes: { 'http.method': 'GET', 'http.url': '/api/users', 'http.status_code': 200 } },
-                { span_id: 'span-2', parent_span_id: 'span-1', name: 'user.getAll', service_name: 'user-service', kind: 'internal', start_time: new Date(now - 180).toISOString(), end_time: new Date(now - 50).toISOString(), status: 'ok', attributes: { 'code.function': 'getAll' } },
-                { span_id: 'span-3', parent_span_id: 'span-2', name: 'SELECT * FROM users', service_name: 'database', kind: 'client', start_time: new Date(now - 160).toISOString(), end_time: new Date(now - 80).toISOString(), status: 'ok', attributes: { 'db.system': 'postgresql', 'db.statement': 'SELECT * FROM users LIMIT 100' } },
-                { span_id: 'span-4', parent_span_id: 'span-1', name: 'cache.check', service_name: 'api-gateway', kind: 'client', start_time: new Date(now - 195).toISOString(), end_time: new Date(now - 185).toISOString(), status: 'ok', attributes: { 'cache.hit': 'false' } }
-            ]
-        };
-    },
-
-    generateLogs() {
-        const now = Date.now();
-        const levels = ['info', 'info', 'info', 'warn', 'error', 'info', 'debug'];
-        const messages = [
-            'Request processed successfully',
-            'User authentication completed',
-            'Database connection established',
-            'High memory usage detected: 85%',
-            'Failed to connect to payment gateway: timeout',
-            'Cache hit ratio: 94.2%',
-            'Starting health check routine',
-            'Order #12345 created successfully',
-            'Rate limit exceeded for client 192.168.1.100',
-            'Retrying failed request (attempt 2/3)'
-        ];
-        return {
-            entries: Array.from({ length: 20 }, (_, i) => ({
-                timestamp: new Date(now - i * 30000).toISOString(),
-                level: levels[i % levels.length],
-                service: this.services[i % this.services.length],
-                message: messages[i % messages.length],
-                trace_id: i % 4 === 0 ? `trace-demo-${i}` : null
-            }))
-        };
-    },
-
-    generateIncidents() {
-        const now = Date.now();
-        return [
-            { id: 'inc-1', title: 'High error rate on payment-service', status: 'triggered', severity: 'critical', service: 'payment-service', created_at: new Date(now - 300000).toISOString(), source: 'alerting' },
-            { id: 'inc-2', title: 'Database connection pool exhausted', status: 'acknowledged', severity: 'high', service: 'user-service', created_at: new Date(now - 1800000).toISOString(), assigned_to: 'alice', source: 'anomaly' },
-            { id: 'inc-3', title: 'Elevated latency on search queries', status: 'resolved', severity: 'medium', service: 'search-service', created_at: new Date(now - 7200000).toISOString(), source: 'slo' },
-            { id: 'inc-4', title: 'SSL certificate expiring in 7 days', status: 'triggered', severity: 'low', service: 'api-gateway', created_at: new Date(now - 86400000).toISOString(), source: 'synthetics' }
-        ];
-    },
-
-    generateIncidentStats() {
-        return { active_incidents: 2, triggered_count: 2, acknowledged_count: 1 };
-    },
-
-    generateDeployments() {
-        const now = Date.now();
-        return [
-            { id: 'd1', service: 'api-gateway', version: 'v2.4.1', environment: 'prod', status: 'success', timestamp: new Date(now - 3600000).toISOString(), user: 'alice', commit_sha: 'a1b2c3d', duration_ms: 45000 },
-            { id: 'd2', service: 'user-service', version: 'v1.8.0', environment: 'prod', status: 'success', timestamp: new Date(now - 7200000).toISOString(), user: 'bob', commit_sha: 'e4f5g6h', duration_ms: 32000 },
-            { id: 'd3', service: 'payment-service', version: 'v3.1.2', environment: 'staging', status: 'failed', timestamp: new Date(now - 14400000).toISOString(), user: 'charlie', commit_sha: 'i7j8k9l', duration_ms: 120000 },
-            { id: 'd4', service: 'order-service', version: 'v2.0.0', environment: 'prod', status: 'success', timestamp: new Date(now - 86400000).toISOString(), user: 'alice', commit_sha: 'm0n1o2p', duration_ms: 55000 },
-            { id: 'd5', service: 'notification-service', version: 'v1.2.3', environment: 'prod', status: 'rolled_back', timestamp: new Date(now - 172800000).toISOString(), user: 'bob', commit_sha: 'q3r4s5t', duration_ms: 28000 }
-        ];
-    },
-
-    generateDeployStats() {
-        return { total_deployments: 47, deploys_today: 3, deploys_this_week: 12, success_rate: 94.5, recent_failures: 1 };
-    },
-
-    generateSLOs() {
-        return [
-            { slo: { id: 'slo-1', name: 'API Availability', target: 99.9, window: '30d', type: 'availability' }, state: { status: 'OK', current_value: 99.94, budget_used_pct: 42, budget_remaining: 8.2 } },
-            { slo: { id: 'slo-2', name: 'Checkout Latency P95', target: 99.0, window: '7d', type: 'latency' }, state: { status: 'WARNING', current_value: 98.7, budget_used_pct: 78, budget_remaining: 2.1 } },
-            { slo: { id: 'slo-3', name: 'Search Error Rate', target: 99.5, window: '30d', type: 'error_rate' }, state: { status: 'OK', current_value: 99.82, budget_used_pct: 23, budget_remaining: 15.4 } },
-            { slo: { id: 'slo-4', name: 'Payment Success Rate', target: 99.95, window: '24h', type: 'availability' }, state: { status: 'CRITICAL', current_value: 99.21, budget_used_pct: 156, budget_remaining: -2.8 } }
-        ];
-    },
-
-    generateSynthetics() {
-        return [
-            { id: 's1', name: 'Homepage Health', url: 'https://app.example.com/health', status: 'passing', last_latency_ms: 124 },
-            { id: 's2', name: 'API Status', url: 'https://api.example.com/status', status: 'passing', last_latency_ms: 45 },
-            { id: 's3', name: 'Login Flow', url: 'https://app.example.com/login', status: 'failing', last_latency_ms: 5230 },
-            { id: 's4', name: 'Checkout Process', url: 'https://app.example.com/checkout', status: 'passing', last_latency_ms: 890 }
-        ];
-    },
-
-    generateFlameGraph() {
-        return {
-            name: 'root',
-            value: 10000,
-            children: [
-                { name: 'main.handleRequest', value: 4500, children: [
-                    { name: 'http.ServeHTTP', value: 3800, children: [
-                        { name: 'json.Marshal', value: 1200, children: [] },
-                        { name: 'db.Query', value: 2100, children: [
-                            { name: 'sql.QueryContext', value: 1800, children: [
-                                { name: 'runtime.gcBgMarkWorker', value: 400, children: [] }
-                            ]}
-                        ]}
-                    ]},
-                    { name: 'middleware.Auth', value: 600, children: [] }
-                ]},
-                { name: 'runtime.schedule', value: 2000, children: [
-                    { name: 'runtime.findrunnable', value: 1200, children: [] },
-                    { name: 'runtime.gcDrain', value: 700, children: [] }
-                ]},
-                { name: 'net.(*netFD).Read', value: 1500, children: [
-                    { name: 'syscall.read', value: 1400, children: [
-                        { name: '[kernel]', value: 800, children: [] }
-                    ]}
-                ]},
-                { name: 'main.processQueue', value: 2000, children: [
-                    { name: 'encoding/json.Unmarshal', value: 900, children: [] },
-                    { name: 'kafka.Consume', value: 1000, children: [] }
-                ]}
-            ]
-        };
-    },
-
-    generateAnomalies() {
-        const now = Date.now();
-        return [
-            { metric_name: 'payment_service.latency_p99', value: 450.5, score: 0.92, is_critical: true, timestamp: new Date(now - 120000).toISOString(), reason: 'Value 3.2x above normal baseline' },
-            { metric_name: 'api_gateway.error_rate', value: 2.4, score: 0.78, is_critical: false, timestamp: new Date(now - 300000).toISOString(), reason: 'Unusual spike detected' },
-            { metric_name: 'user_service.memory_usage', value: 87.3, score: 0.65, is_critical: false, timestamp: new Date(now - 600000).toISOString(), reason: 'Gradual increase over 30m' },
-            { metric_name: 'search_service.query_count', value: 12500, score: 0.45, is_critical: false, timestamp: new Date(now - 1800000).toISOString(), reason: 'Higher than expected for this time' }
-        ];
-    },
-
-    generateAnomalyStats() {
-        return { critical_count: 1, warning_count: 2, total_anomalies: 4, metrics_tracked: 127 };
-    },
-
-    generateOnCallSchedules() {
-        return [
-            { id: 'oc1', name: 'Platform Team', rotation_type: 'weekly', users: [
-                { user_id: 'u1', name: 'Alice Chen', email: 'alice@example.com' },
-                { user_id: 'u2', name: 'Bob Smith', email: 'bob@example.com' },
-                { user_id: 'u3', name: 'Charlie Davis', email: 'charlie@example.com' }
-            ]},
-            { id: 'oc2', name: 'Database Team', rotation_type: 'daily', users: [
-                { user_id: 'u4', name: 'Diana Lee', email: 'diana@example.com' },
-                { user_id: 'u5', name: 'Eve Wilson', email: 'eve@example.com' }
-            ]}
-        ];
-    },
-
-    generateAlerts() {
-        const now = Date.now();
-        return [
-            { name: 'HighErrorRate', state: 'firing', severity: 'critical', starts_at: new Date(now - 600000).toISOString(), labels: { service: 'payment-service', env: 'prod' }, annotations: { summary: 'Error rate above 5%' } },
-            { name: 'HighLatency', state: 'firing', severity: 'warning', starts_at: new Date(now - 1200000).toISOString(), labels: { service: 'search-service', env: 'prod' }, annotations: { summary: 'P99 latency above 500ms' } }
-        ];
-    },
-
-    generateAlertingStatus() {
-        return { firing_alerts: 2, pending_alerts: 1, active_silences: 0, total_rules: 24 };
-    },
-
-    generateCurrentOnCall() {
-        return { 'Platform Team': 'Alice Chen', 'Database Team': 'Diana Lee' };
-    },
-
-    generatePatterns() {
-        const now = Date.now();
-        return {
-            stats: { total_patterns: 12, total_matches: 45230, matches_last_hour: 892, new_patterns_today: 3 },
-            patterns: [
-                { signature: 'Error connecting to database: connection refused', level: 'error', service: 'user-service', count: 1247, count_last_hr: 45, trend: 'increasing', last_seen: new Date(now - 60000).toISOString(), examples: ['Error connecting to database: connection refused at 10.0.0.5:5432'] },
-                { signature: 'Request completed successfully in {duration}ms', level: 'info', service: 'api-gateway', count: 28934, count_last_hr: 523, trend: 'stable', last_seen: new Date(now - 5000).toISOString(), examples: ['Request completed successfully in 45ms'] },
-                { signature: 'Rate limit exceeded for client {ip}', level: 'warn', service: 'api-gateway', count: 892, count_last_hr: 67, trend: 'increasing', last_seen: new Date(now - 120000).toISOString(), examples: ['Rate limit exceeded for client 192.168.1.100'] },
-                { signature: 'Cache miss for key {key}', level: 'debug', service: 'search-service', count: 5621, count_last_hr: 234, trend: 'stable', last_seen: new Date(now - 30000).toISOString(), examples: ['Cache miss for key user:12345'] },
-                { signature: 'Payment processed: {amount} {currency}', level: 'info', service: 'payment-service', count: 3456, count_last_hr: 89, trend: 'decreasing', last_seen: new Date(now - 180000).toISOString(), examples: ['Payment processed: 99.99 USD'] },
-                { signature: 'New user registered: {email}', level: 'info', service: 'auth-service', count: 234, count_last_hr: 12, trend: 'new', last_seen: new Date(now - 300000).toISOString(), examples: ['New user registered: user@example.com'] }
-            ]
-        };
-    },
-
-    generateCatalogServices() {
-        return [
-            { id: 'svc-1', name: 'api-gateway', display_name: 'API Gateway', description: 'Main entry point for all API requests', tier: 'critical', health: 'healthy', team_name: 'Platform', repo_url: 'https://github.com/example/api-gateway', docs_url: 'https://docs.example.com/api' },
-            { id: 'svc-2', name: 'user-service', display_name: 'User Service', description: 'User management and authentication', tier: 'critical', health: 'degraded', team_name: 'Identity', repo_url: 'https://github.com/example/user-service' },
-            { id: 'svc-3', name: 'payment-service', display_name: 'Payment Service', description: 'Payment processing and billing', tier: 'critical', health: 'unhealthy', team_name: 'Payments', runbook_url: 'https://runbooks.example.com/payments' },
-            { id: 'svc-4', name: 'notification-service', display_name: 'Notification Service', description: 'Email, SMS, and push notifications', tier: 'high', health: 'healthy', team_name: 'Platform' },
-            { id: 'svc-5', name: 'search-service', display_name: 'Search Service', description: 'Full-text search and indexing', tier: 'medium', health: 'healthy', team_name: 'Search' },
-            { id: 'svc-6', name: 'inventory-service', display_name: 'Inventory Service', description: 'Product inventory management', tier: 'high', health: 'healthy', team_name: 'Commerce' }
-        ];
-    },
-
-    generateCatalogStats() {
-        return { total: 6, critical: 3, healthy: 4, unhealthy: 1, degraded: 1 };
-    },
-
-    generateCatalogTeams() {
-        return [
-            { id: 't1', name: 'Platform', member_count: 8 },
-            { id: 't2', name: 'Identity', member_count: 5 },
-            { id: 't3', name: 'Payments', member_count: 6 },
-            { id: 't4', name: 'Search', member_count: 4 },
-            { id: 't5', name: 'Commerce', member_count: 7 }
-        ];
-    },
-
-    generateCorrelations() {
-        const now = Date.now();
-        return {
-            correlations: [
-                { deployment: { id: 'd1', service: 'payment-service', version: 'v3.1.2' }, incident: { id: 'inc-1', title: 'High error rate' }, confidence: 0.89, time_delta: 300000, reason: 'Error rate spiked 5 minutes after deploy' },
-                { deployment: { id: 'd2', service: 'user-service', version: 'v1.8.0' }, incident: { id: 'inc-2', title: 'Database connection issues' }, confidence: 0.72, time_delta: 600000, reason: 'DB connections increased 10 minutes after deploy' }
-            ]
-        };
-    },
-
-    generateServiceTimeline() {
-        const now = Date.now();
-        return {
-            events: [
-                { type: 'deploy', timestamp: new Date(now - 3600000).toISOString(), data: { version: 'v2.4.1' } },
-                { type: 'error_spike', timestamp: new Date(now - 3300000).toISOString(), data: { error_rate: 5.2 } },
-                { type: 'incident', timestamp: new Date(now - 3000000).toISOString(), data: { title: 'High error rate detected' } },
-                { type: 'metric_anomaly', timestamp: new Date(now - 2700000).toISOString(), data: { metric: 'latency_p99', value: 450 } }
-            ],
-            total_events: 4,
-            error_traces: 23
-        };
-    },
-
-    generateClusterInfo() {
-        return {
-            enabled: true,
-            node_count: 3,
-            node_id: 'node-local-001',
-            gossip_addr: '10.0.0.1:7946',
-            local_node: { id: 'node-local-001', hostname: 'dogwatch-1' }
-        };
-    },
-
-    generateClusterNodes() {
-        const now = Date.now();
-        return [
-            { id: 'node-local-001', hostname: 'dogwatch-1', address: '10.0.0.1:9999', version: '1.0.0', state: 'alive', started_at: new Date(now - 86400000).toISOString(), cpu_percent: 45.2, mem_percent: 62.1, active_incidents: 2 },
-            { id: 'node-002', hostname: 'dogwatch-2', address: '10.0.0.2:9999', version: '1.0.0', state: 'alive', started_at: new Date(now - 172800000).toISOString(), cpu_percent: 32.8, mem_percent: 58.4, active_incidents: 1 },
-            { id: 'node-003', hostname: 'dogwatch-3', address: '10.0.0.3:9999', version: '1.0.0', state: 'alive', started_at: new Date(now - 259200000).toISOString(), cpu_percent: 28.1, mem_percent: 54.9, active_incidents: 0 }
-        ];
-    },
-
-    generateHistoryData(durationMs) {
-        const now = Date.now();
-        const points = 60;
-        const interval = durationMs / points;
-        const data = [];
-        let cpuBase = 25 + Math.random() * 20;
-        let memBase = 55 + Math.random() * 15;
-        for (let i = 0; i < points; i++) {
-            cpuBase += (Math.random() - 0.5) * 8;
-            memBase += (Math.random() - 0.5) * 3;
-            cpuBase = Math.max(5, Math.min(95, cpuBase));
-            memBase = Math.max(40, Math.min(90, memBase));
-            data.push({
-                timestamp: new Date(now - durationMs + i * interval).toISOString(),
-                cpu_percent: cpuBase,
-                mem_percent: memBase
-            });
-        }
-        return data;
-    }
-};
-
-// Data fetching
-function updateSystemMetrics() {
-    fetch('/api/system').then(r => r.json()).then(d => {
-        const cpu = d.cpu_usage_percent || 0;
-        document.getElementById('cpu-percent').textContent = cpu.toFixed(1) + '%';
-        document.getElementById('cpu-bar').style.width = cpu + '%';
-        document.getElementById('cpu-iowait').textContent = (d.cpu_iowait || 0).toFixed(1) + '%';
-        document.getElementById('load-avg').textContent = (d.load_1 || 0).toFixed(2);
-
-        const mem = d.mem_usage_percent || 0;
-        document.getElementById('mem-percent').textContent = mem.toFixed(1) + '%';
-        document.getElementById('mem-bar').style.width = mem + '%';
-        document.getElementById('mem-used').textContent = formatBytes(d.mem_used_bytes || 0);
-        document.getElementById('mem-total').textContent = formatBytes(d.mem_total_bytes || 0);
-
-        const dr = d.disk_read_per_sec || 0, dw = d.disk_write_per_sec || 0;
-        document.getElementById('disk-io').textContent = formatBPS(dr + dw);
-        document.getElementById('disk-read').textContent = formatBPS(dr);
-        document.getElementById('disk-write').textContent = formatBPS(dw);
-        document.getElementById('disk-bar').style.width = Math.min((dr + dw) / 1e8 * 100, 100) + '%';
-
-        const nr = d.net_rx_per_sec || 0, nt = d.net_tx_per_sec || 0;
-        document.getElementById('net-io').textContent = formatBPS(nr + nt);
-        document.getElementById('net-rx').textContent = formatBPS(nr);
-        document.getElementById('net-tx').textContent = formatBPS(nt);
-        document.getElementById('net-bar').style.width = Math.min((nr + nt) / 1e7 * 100, 100) + '%';
-    }).catch(() => {});
-}
-
-function updateStats() {
-    fetch('/api/stats').then(r => r.json()).then(d => {
-        document.getElementById('total-connections').textContent = (d.total_connections || 0).toLocaleString();
-        document.getElementById('total-requests').textContent = (d.total_requests || 0).toLocaleString();
-        document.getElementById('total-errors').textContent = (d.total_errors || 0).toLocaleString();
-        document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
-
-        const eb = document.getElementById('endpoints-body');
-        if (d.endpoints?.length) {
-            eb.innerHTML = d.endpoints.slice(0, 10).map(e => `<tr>
-                <td><span class="method ${e.method}">${e.method}</span></td>
-                <td class="path">${escapeHtml(e.path)}</td>
-                <td>${e.request_count}</td>
-                <td>${e.error_rate.toFixed(1)}%</td>
-                <td class="latency ${getLatencyClass(e.p50_ms)}">${formatLatency(e.p50_ms)}</td>
-                <td class="latency ${getLatencyClass(e.p99_ms)}">${formatLatency(e.p99_ms)}</td>
-            </tr>`).join('');
-        }
-
-        const cb = document.getElementById('connections-body');
-        if (d.connections?.length) {
-            cb.innerHTML = d.connections.slice(0, 10).map(c => `<tr>
-                <td>${escapeHtml(c.process)}</td>
-                <td style="font-family:monospace;font-size:0.7rem">${escapeHtml(c.remote)}:${c.port}</td>
-                <td>${c.count}</td>
-            </tr>`).join('');
-        }
-    }).catch(() => {});
-}
-
-function updateProcesses() {
-    fetch('/api/processes').then(r => r.json()).then(d => {
-        const pb = document.getElementById('processes-body');
-        if (d?.length) {
-            pb.innerHTML = d.slice(0, 10).map(p => `<tr>
-                <td>${p.pid}</td>
-                <td>${escapeHtml(p.name)}</td>
-                <td>${p.cpu_pct.toFixed(1)}%</td>
-                <td>${p.mem_mb.toFixed(0)}MB</td>
-            </tr>`).join('');
-        }
-    }).catch(() => {});
-}
-
-// Service map - redesigned
-// moved to top
-// moved to top
-// moved to top
-// moved to top
-// moved to top
-// moved to top
-// moved to top
-// moved to top
-
-function updateServiceMap() {
-    fetch('/api/servicemap').then(r => r.json()).then(d => {
-        svcMapData = d || { nodes: [], links: [] };
-        // Use demo data if empty and demo mode enabled
-        if (DemoData.enabled && (!svcMapData.nodes || svcMapData.nodes.length === 0)) {
-            svcMapData = DemoData.generateServiceMap();
-        }
-        renderServiceMap();
-    }).catch(() => {
-        if (DemoData.enabled) {
-            svcMapData = DemoData.generateServiceMap();
-            renderServiceMap();
-        }
-    });
-}
-
-function filterServiceMap() {
-    svcMapFilter = document.getElementById('svcmap-filter')?.value || '';
-    renderServiceMap();
-}
-
-function toggleSvcMapLayout() {
-    svcMapLayout = svcMapLayout === 'hierarchical' ? 'radial' : 'hierarchical';
-    svcMapTransform = d3.zoomIdentity; // Reset zoom on layout change
-    renderServiceMap();
-}
-
-function renderServiceMap() {
-    const container = document.getElementById('svcmap-container');
-    const svg = d3.select('#service-map');
-    const tooltip = document.getElementById('svcmap-tooltip');
-    const statsEl = document.getElementById('svcmap-stats');
-
-    if (!container || !svg.node()) return;
-    const rect = container.getBoundingClientRect();
-    if (rect.width < 50 || rect.height < 50) return;
-
-    const w = rect.width, h = rect.height - 50;
-    svg.attr('width', w).attr('height', h);
-
-    // Filter nodes
-    let nodes = svcMapData.nodes.map(n => ({...n}));
-    if (svcMapFilter) {
-        if (svcMapFilter === 'services') nodes = nodes.filter(n => n.type === 'service');
-        else if (svcMapFilter === 'external') nodes = nodes.filter(n => n.type === 'external');
-        else if (svcMapFilter === 'processes') nodes = nodes.filter(n => n.type === 'process');
+/**
+ * Anomaly Overlay Component
+ * Automatic highlighting of anomalous regions on charts
+ */
+class AnomalyOverlay extends HTMLElement {
+    constructor() {
+        super();
+        this.data = null;
+        this.chart = null;
     }
 
-    const nodeIds = new Set(nodes.map(n => n.id));
-    let links = svcMapData.links.filter(l => nodeIds.has(l.source?.id || l.source) && nodeIds.has(l.target?.id || l.target)).map(l => ({...l}));
-
-    // Calculate aggregate stats
-    const totalRequests = links.reduce((sum, l) => sum + (l.count || 0), 0);
-    const avgLatency = links.length ? Math.round(links.reduce((sum, l) => sum + (l.latency || 0), 0) / links.length) : 0;
-    const totalErrors = links.reduce((sum, l) => sum + (l.errors || 0), 0);
-    const errorRate = totalRequests > 0 ? ((totalErrors / totalRequests) * 100).toFixed(1) : 0;
-
-    if (statsEl) {
-        statsEl.innerHTML = `<span>${nodes.length} nodes</span><span>·</span><span>${links.length} edges</span>` +
-            (totalRequests > 0 ? `<span>·</span><span>${totalRequests} req</span><span>·</span><span>${avgLatency}ms avg</span>` : '') +
-            (totalErrors > 0 ? `<span>·</span><span style="color:#f4212e">${errorRate}% err</span>` : '');
+    connectedCallback() {
+        this.render();
+        this.loadData();
     }
 
-    if (!nodes.length) {
-        svg.selectAll('*').remove();
-        svg.append('text').attr('x', w/2).attr('y', h/2).attr('text-anchor', 'middle')
-            .attr('fill', '#71767b').attr('font-size', '14px').text('No service connections yet');
-        return;
+    disconnectedCallback() {
+        if (this.chart) this.chart.destroy();
     }
 
-    svg.selectAll('*').remove();
-
-    // Defs for markers and filters (add before main group)
-    const defs = svg.append('defs');
-
-    // Arrow markers with different colors
-    ['#536471', '#1d9bf0', '#f4212e', '#00ba7c'].forEach((color, i) => {
-        defs.append('marker')
-            .attr('id', `arrow-${i}`).attr('viewBox', '0 -5 10 10')
-            .attr('refX', 32).attr('refY', 0)
-            .attr('markerWidth', 5).attr('markerHeight', 5).attr('orient', 'auto')
-            .append('path').attr('d', 'M0,-4L10,0L0,4').attr('fill', color);
-    });
-
-    // Glow filter for selected nodes
-    const glow = defs.append('filter').attr('id', 'glow').attr('x', '-50%').attr('y', '-50%').attr('width', '200%').attr('height', '200%');
-    glow.append('feGaussianBlur').attr('stdDeviation', '3').attr('result', 'blur');
-    glow.append('feMerge').html('<feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/>');
-
-    // Main group for zoom/pan
-    svcMapMainGroup = svg.append('g').attr('class', 'svcmap-main-group');
-
-    // Setup zoom behavior - instant transforms, no transitions
-    svcMapZoomBehavior = d3.zoom()
-        .scaleExtent([0.2, 4])
-        .filter((event) => {
-            // Allow wheel zoom and drag pan, but not on double-click
-            return !event.button && event.type !== 'dblclick';
-        })
-        .on('zoom', (event) => {
-            svcMapTransform = event.transform;
-            svcMapMainGroup.attr('transform', event.transform);
-        });
-
-    // Initialize transform if not set
-    if (!svcMapTransform) svcMapTransform = d3.zoomIdentity;
-
-    svg.call(svcMapZoomBehavior)
-       .call(svcMapZoomBehavior.transform, svcMapTransform); // Apply saved transform
-
-    // Use force-directed layout for organic, pleasing arrangement
-    const centerX = w / 2, centerY = h / 2;
-
-    // Find the main gateway/entry node (most connections or named 'gateway')
-    const connectionCount = {};
-    links.forEach(l => {
-        const src = l.source?.id || l.source;
-        const tgt = l.target?.id || l.target;
-        connectionCount[src] = (connectionCount[src] || 0) + 1;
-        connectionCount[tgt] = (connectionCount[tgt] || 0) + 1;
-    });
-
-    const centralNode = nodes.reduce((best, n) => {
-        const isGateway = n.id.includes('gateway') || n.id.includes('api');
-        const score = (connectionCount[n.id] || 0) + (isGateway ? 10 : 0);
-        return score > (best.score || 0) ? { node: n, score } : best;
-    }, {}).node;
-
-    // Position central node at center, others in a pleasing arrangement
-    if (centralNode) {
-        centralNode.x = centerX;
-        centralNode.y = centerY;
-        centralNode.fx = centerX; // Fixed position
-        centralNode.fy = centerY;
+    static get observedAttributes() {
+        return ['metric', 'service', 'time-range', 'sensitivity'];
     }
 
-    // Initialize other nodes in a circle around center
-    const otherNodes = nodes.filter(n => n !== centralNode);
-    const radius = Math.min(w, h) * 0.35;
-    otherNodes.forEach((n, i) => {
-        const angle = (i / otherNodes.length) * 2 * Math.PI - Math.PI / 2;
-        n.x = centerX + radius * Math.cos(angle);
-        n.y = centerY + radius * Math.sin(angle);
-    });
-
-    // Run force simulation for smooth layout
-    const simulation = d3.forceSimulation(nodes)
-        .force('link', d3.forceLink(links).id(d => d.id).distance(140).strength(0.5))
-        .force('charge', d3.forceManyBody().strength(-400))
-        .force('center', d3.forceCenter(centerX, centerY))
-        .force('collision', d3.forceCollide().radius(60))
-        .stop();
-
-    // Run simulation synchronously for instant layout
-    for (let i = 0; i < 150; i++) simulation.tick();
-
-    // Unfix central node after simulation
-    if (centralNode) {
-        delete centralNode.fx;
-        delete centralNode.fy;
-    }
-
-    // Draw edges first (under nodes)
-    const linkGroup = svcMapMainGroup.append('g').attr('class', 'svcmap-links');
-    links.forEach(l => {
-        const source = nodes.find(n => n.id === (l.source?.id || l.source));
-        const target = nodes.find(n => n.id === (l.target?.id || l.target));
-        if (!source || !target) return;
-
-        const hasErrors = l.errors > 0;
-        const isActive = l.count > 0;
-        const errorRate = l.count > 0 ? (l.errors || 0) / l.count : 0;
-
-        // Curved path with bezier
-        const dx = target.x - source.x;
-        const dy = target.y - source.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        const curve = Math.min(40, dist * 0.15);
-
-        // Perpendicular offset for curve
-        const mx = (source.x + target.x) / 2;
-        const my = (source.y + target.y) / 2;
-        const perpX = -dy / dist * curve;
-        const perpY = dx / dist * curve;
-
-        const pathData = `M${source.x},${source.y} Q${mx + perpX},${my + perpY} ${target.x},${target.y}`;
-
-        // Determine edge style
-        let edgeClass = 'svcmap-edge';
-        let markerIdx = 0;
-        if (hasErrors && errorRate > 0.1) {
-            edgeClass += ' svcmap-edge-error';
-            markerIdx = 2;
-        } else if (isActive) {
-            edgeClass += ' svcmap-edge-active';
-            markerIdx = 1;
-        }
-
-        const edgeG = linkGroup.append('g');
-
-        // Draw edge
-        edgeG.append('path')
-            .attr('d', pathData)
-            .attr('class', edgeClass)
-            .attr('marker-end', `url(#arrow-${markerIdx})`);
-
-        // Edge metrics badge (shown on hover or always for important edges)
-        if (l.count || l.latency) {
-            const badgeX = mx + perpX * 0.5;
-            const badgeY = my + perpY * 0.5;
-
-            const badge = edgeG.append('g')
-                .attr('class', 'svcmap-edge-badge')
-                .attr('transform', `translate(${badgeX},${badgeY})`);
-
-            // Badge background
-            badge.append('rect')
-                .attr('x', -30).attr('y', -10)
-                .attr('width', 60).attr('height', 20)
-                .attr('rx', 4)
-                .attr('fill', hasErrors ? 'rgba(74,25,25,0.95)' : 'rgba(47,51,54,0.95)')
-                .attr('stroke', hasErrors ? '#f4212e' : '#3f4346');
-
-            // Metrics text
-            let metricsText = '';
-            if (l.count) metricsText += `${l.count}`;
-            if (l.latency) metricsText += ` · ${l.latency}ms`;
-            if (l.errors && errorRate > 0) metricsText = `${(errorRate * 100).toFixed(0)}% err`;
-
-            badge.append('text')
-                .attr('text-anchor', 'middle')
-                .attr('dy', 4)
-                .attr('fill', hasErrors ? '#f4212e' : '#e7e9ea')
-                .attr('font-size', '9px')
-                .attr('font-weight', '500')
-                .text(metricsText);
-        }
-    });
-
-    // Draw nodes
-    const nodeGroup = svcMapMainGroup.append('g').attr('class', 'svcmap-nodes');
-    nodes.forEach(n => {
-        const g = nodeGroup.append('g')
-            .attr('class', 'svcmap-node')
-            .attr('transform', `translate(${n.x},${n.y})`)
-            .attr('data-node-id', n.id)
-            .style('cursor', 'pointer');
-
-        // Determine health status
-        const hasErrors = n.errors > 0;
-        const isDegraded = n.latency > 500;
-        const isExternal = n.type === 'external';
-        const isProcess = n.type === 'process';
-
-        let nodeColor = '#00ba7c'; // healthy
-        if (hasErrors) nodeColor = '#f4212e';
-        else if (isDegraded) nodeColor = '#ffd400';
-        else if (isExternal) nodeColor = '#536471';
-        else if (isProcess) nodeColor = '#7c3aed';
-
-        // Outer ring (health indicator)
-        g.append('circle')
-            .attr('r', 24)
-            .attr('fill', 'none')
-            .attr('stroke', nodeColor)
-            .attr('stroke-width', 2)
-            .attr('opacity', 0.5);
-
-        // Inner circle
-        g.append('circle')
-            .attr('r', 18)
-            .attr('fill', '#1a1f2e')
-            .attr('stroke', nodeColor)
-            .attr('stroke-width', 2);
-
-        // Icon (using simple text icons)
-        const icons = {
-            'external': '⬡',
-            'process': '◎',
-            'service': '◆',
-            'database': '▣',
-            'cache': '◈',
-            'queue': '▤'
-        };
-        g.append('text')
-            .attr('text-anchor', 'middle')
-            .attr('dy', 5)
-            .attr('fill', nodeColor)
-            .attr('font-size', '14px')
-            .text(icons[n.type] || icons.service);
-
-        // Label
-        const displayName = n.name.length > 18 ? n.name.slice(0, 16) + '..' : n.name;
-        g.append('text')
-            .attr('class', 'svcmap-node-label')
-            .attr('text-anchor', 'middle')
-            .attr('y', 36)
-            .attr('fill', '#e7e9ea')
-            .attr('font-size', '11px')
-            .attr('font-weight', '500')
-            .text(displayName);
-
-        // Metrics sublabel
-        if (n.count || n.latency) {
-            const metrics = [];
-            if (n.count) metrics.push(`${n.count} req`);
-            if (n.latency) metrics.push(`${n.latency}ms`);
-            g.append('text')
-                .attr('class', 'svcmap-node-sublabel')
-                .attr('text-anchor', 'middle')
-                .attr('y', 48)
-                .attr('fill', '#71767b')
-                .attr('font-size', '9px')
-                .text(metrics.join(' · '));
-        }
-
-        // Error indicator badge
-        if (hasErrors) {
-            g.append('circle')
-                .attr('cx', 14).attr('cy', -14)
-                .attr('r', 8)
-                .attr('fill', '#f4212e');
-            g.append('text')
-                .attr('x', 14).attr('y', -11)
-                .attr('text-anchor', 'middle')
-                .attr('fill', '#fff')
-                .attr('font-size', '9px')
-                .attr('font-weight', 'bold')
-                .text(n.errors > 99 ? '99+' : n.errors);
-        }
-
-        // Hover effects
-        g.on('mouseenter', function(event) {
-            d3.select(this).select('circle:nth-child(2)').attr('filter', 'url(#glow)');
-
-            tooltip.innerHTML = `
-                <div class="svcmap-tooltip-title">${escapeHtml(n.name)}</div>
-                <div class="svcmap-tooltip-row"><span>Type</span><span class="svcmap-tooltip-value">${n.type}</span></div>
-                <div class="svcmap-tooltip-row"><span>Requests</span><span class="svcmap-tooltip-value">${n.count || 0}</span></div>
-                ${n.latency ? `<div class="svcmap-tooltip-row"><span>Avg Latency</span><span class="svcmap-tooltip-value">${n.latency}ms</span></div>` : ''}
-                ${n.errors ? `<div class="svcmap-tooltip-row"><span>Errors</span><span class="svcmap-tooltip-value" style="color:#f4212e">${n.errors}</span></div>` : ''}
-            `;
-            tooltip.style.display = 'block';
-
-            const svgRect = svg.node().getBoundingClientRect();
-            tooltip.style.left = Math.min(event.clientX - svgRect.left + 15, w - 180) + 'px';
-            tooltip.style.top = Math.min(event.clientY - svgRect.top + 15, h - 100) + 'px';
-        })
-        .on('mouseleave', function() {
-            d3.select(this).select('circle:nth-child(2)').attr('filter', null);
-            tooltip.style.display = 'none';
-        })
-        .on('click', function() {
-            openSvcMapDetail(n);
-        });
-    });
-}
-
-// Zoom controls
-function svcMapZoom(factor) {
-    const svg = d3.select('#service-map');
-    if (svcMapZoomBehavior) {
-        svg.transition().duration(200).call(svcMapZoomBehavior.scaleBy, factor);
-    }
-}
-
-function svcMapReset() {
-    const svg = d3.select('#service-map');
-    if (svcMapZoomBehavior) {
-        svcMapTransform = d3.zoomIdentity;
-        svg.transition().duration(300).call(svcMapZoomBehavior.transform, d3.zoomIdentity);
-    }
-}
-
-// Node detail panel
-function openSvcMapDetail(node) {
-    svcMapSelectedNode = node;
-    const detail = document.getElementById('svcmap-detail');
-    const title = document.getElementById('svcmap-detail-title');
-    const body = document.getElementById('svcmap-detail-body');
-
-    if (!detail) return;
-
-    title.textContent = node.name;
-
-    // Find connected nodes
-    const inbound = svcMapData.links.filter(l => (l.target?.id || l.target) === node.id);
-    const outbound = svcMapData.links.filter(l => (l.source?.id || l.source) === node.id);
-
-    const inboundTotal = inbound.reduce((sum, l) => sum + (l.count || 0), 0);
-    const outboundTotal = outbound.reduce((sum, l) => sum + (l.count || 0), 0);
-    const errorTotal = node.errors || 0;
-    const errorRate = (inboundTotal + outboundTotal) > 0 ?
-        ((errorTotal / (inboundTotal + outboundTotal)) * 100).toFixed(1) : 0;
-
-    body.innerHTML = `
-        <div class="svcmap-detail-section">
-            <div class="svcmap-detail-section-title">Overview</div>
-            <div class="svcmap-detail-grid">
-                <div class="svcmap-detail-stat">
-                    <div class="svcmap-detail-stat-value">${node.count || 0}</div>
-                    <div class="svcmap-detail-stat-label">Total Requests</div>
-                </div>
-                <div class="svcmap-detail-stat">
-                    <div class="svcmap-detail-stat-value">${node.latency || 0}ms</div>
-                    <div class="svcmap-detail-stat-label">Avg Latency</div>
-                </div>
-                <div class="svcmap-detail-stat">
-                    <div class="svcmap-detail-stat-value" style="color:${errorTotal > 0 ? '#f4212e' : '#e7e9ea'}">${errorTotal}</div>
-                    <div class="svcmap-detail-stat-label">Errors</div>
-                </div>
-                <div class="svcmap-detail-stat">
-                    <div class="svcmap-detail-stat-value">${errorRate}%</div>
-                    <div class="svcmap-detail-stat-label">Error Rate</div>
-                </div>
-            </div>
-        </div>
-        ${inbound.length > 0 ? `
-        <div class="svcmap-detail-section">
-            <div class="svcmap-detail-section-title">Inbound (${inbound.length})</div>
-            <ul class="svcmap-detail-list">
-                ${inbound.slice(0, 5).map(l => {
-                    const srcNode = svcMapData.nodes.find(n => n.id === (l.source?.id || l.source));
-                    return `<li><span>${escapeHtml(srcNode?.name || 'unknown')}</span><span>${l.count || 0} req</span></li>`;
-                }).join('')}
-                ${inbound.length > 5 ? `<li style="color:#71767b"><span>+${inbound.length - 5} more</span></li>` : ''}
-            </ul>
-        </div>` : ''}
-        ${outbound.length > 0 ? `
-        <div class="svcmap-detail-section">
-            <div class="svcmap-detail-section-title">Outbound (${outbound.length})</div>
-            <ul class="svcmap-detail-list">
-                ${outbound.slice(0, 5).map(l => {
-                    const tgtNode = svcMapData.nodes.find(n => n.id === (l.target?.id || l.target));
-                    return `<li><span>${escapeHtml(tgtNode?.name || 'unknown')}</span><span>${l.count || 0} req</span></li>`;
-                }).join('')}
-                ${outbound.length > 5 ? `<li style="color:#71767b"><span>+${outbound.length - 5} more</span></li>` : ''}
-            </ul>
-        </div>` : ''}
-    `;
-
-    detail.classList.add('open');
-}
-
-function closeSvcMapDetail() {
-    svcMapSelectedNode = null;
-    const detail = document.getElementById('svcmap-detail');
-    if (detail) detail.classList.remove('open');
-}
-
-function viewServiceLogs() {
-    if (!svcMapSelectedNode) return;
-    closeSvcMapDetail();
-    showTab('logs');
-    // Set service filter if available
-    setTimeout(() => {
-        const serviceFilter = document.getElementById('log-service-filter');
-        if (serviceFilter) {
-            serviceFilter.value = svcMapSelectedNode.name;
-            loadLogs();
-        }
-    }, 100);
-}
-
-function viewServiceTraces() {
-    if (!svcMapSelectedNode) return;
-    closeSvcMapDetail();
-    showTab('traces');
-    setTimeout(() => {
-        const serviceFilter = document.getElementById('trace-service-filter');
-        if (serviceFilter) {
-            serviceFilter.value = svcMapSelectedNode.name;
-            loadTraces();
-        }
-    }, 100);
-}
-
-// Charts
-function initCharts() {
-    // Ensure Chart.js is loaded
-    if (typeof Chart === 'undefined') {
-        console.log('Chart.js not loaded yet, retrying...');
-        setTimeout(initCharts, 500);
-        return;
-    }
-
-    const cpuCanvas = document.getElementById('cpu-chart');
-    const memCanvas = document.getElementById('mem-chart');
-
-    try {
-        if (cpuCanvas && !cpuChart) {
-            cpuChart = new Chart(cpuCanvas.getContext('2d'), {
-                type: 'line',
-                data: { datasets: [{ data: [], borderColor: '#1d9bf0', backgroundColor: 'rgba(29,155,240,0.1)', fill: true, tension: 0.3 }] },
-                options: chartOpts
-            });
-        }
-        if (memCanvas && !memChart) {
-            memChart = new Chart(memCanvas.getContext('2d'), {
-                type: 'line',
-                data: { datasets: [{ data: [], borderColor: '#00ba7c', backgroundColor: 'rgba(0,186,124,0.1)', fill: true, tension: 0.3 }] },
-                options: {...chartOpts}
-            });
-        }
-    } catch (err) {
-        console.error('Chart init error:', err);
-    }
-
-    // Time button handlers
-    document.querySelectorAll('.time-btn').forEach(btn => {
-        btn.onclick = function() {
-            this.parentElement.querySelectorAll('.time-btn').forEach(b => b.classList.remove('active'));
-            this.classList.add('active');
-            loadChartData(this.dataset.dur);
-        };
-    });
-    loadChartData('15m');
-}
-
-function loadChartData(dur) {
-    const durMs = dur.includes('h') ? parseInt(dur)*3600000 : parseInt(dur)*60000;
-    fetch(`/api/history/system?duration=${dur}`).then(r => r.json()).then(data => {
-        console.log('Chart data loaded:', data?.length, 'points');
-        // Use demo data if empty and demo mode enabled
-        if ((!data?.length) && DemoData.enabled) {
-            data = DemoData.generateHistoryData(durMs);
-        }
-        if (!data?.length) {
-            console.log('No chart data available');
-            return;
-        }
-        updateCharts(data, durMs);
-    }).catch(err => {
-        console.error('Chart data fetch error:', err);
-        if (DemoData.enabled) {
-            const data = DemoData.generateHistoryData(durMs);
-            updateCharts(data, durMs);
-        }
-    });
-}
-
-function updateCharts(data, durMs) {
-    console.log('updateCharts called, cpuChart:', !!cpuChart, 'memChart:', !!memChart);
-    const now = Date.now();
-    if (cpuChart) {
-        cpuChart.data.datasets[0].data = data.map(d => ({ x: new Date(d.timestamp), y: d.cpu_percent }));
-        cpuChart.options.scales.x.min = now - durMs;
-        cpuChart.options.scales.x.max = now;
-        cpuChart.update('none');
-    } else {
-        console.log('cpuChart not initialized');
-    }
-    if (memChart) {
-        memChart.data.datasets[0].data = data.map(d => ({ x: new Date(d.timestamp), y: d.mem_percent }));
-        memChart.options.scales.x.min = now - durMs;
-        memChart.options.scales.x.max = now;
-        memChart.update('none');
-    } else {
-        console.log('memChart not initialized');
-    }
-}
-
-// Traces
-// moved to top
-// moved to top
-
-function loadTraceServices() {
-    fetch('/api/trace/services').then(r => r.json()).then(services => {
-        traceServices = services || [];
-        const select = document.getElementById('trace-service-filter');
-        if (select) {
-            const current = select.value;
-            select.innerHTML = '<option value="">All Services</option>' +
-                traceServices.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
-            select.value = current;
-        }
-    }).catch(() => {});
-}
-
-function loadTraces() {
-    const service = document.getElementById('trace-service-filter')?.value || '';
-    const url = `/api/traces?limit=50&duration=1h${service ? '&service=' + encodeURIComponent(service) : ''}`;
-
-    fetch(url).then(r => r.json()).then(result => {
-        const list = document.getElementById('trace-list');
-        if (!list) return;
-
-        // Handle both {data: [...]} and direct array responses
-        let traces = result?.data || result || [];
-
-        // Use demo data if empty and demo mode enabled
-        if ((!traces?.length) && DemoData.enabled) {
-            traces = DemoData.generateTraces();
-        }
-        if (!traces?.length) {
-            list.innerHTML = '<div class="empty-state">No traces yet. Configure OTLP export to http://localhost:9999/v1/traces</div>';
-            return;
-        }
-
-        list.innerHTML = traces.map(t => {
-            const statusClass = (t.status || '').toLowerCase();
-            const time = new Date(t.start_time).toLocaleTimeString();
-            return `<div class="trace-item ${t.trace_id === selectedTraceId ? 'selected' : ''}" data-trace-id="${t.trace_id}" onclick="selectTrace('${t.trace_id}')">
-                <div>
-                    <span class="trace-status ${statusClass}"></span>
-                    <span class="trace-name">${escapeHtml(t.name || 'unknown')}</span>
-                    <div class="trace-service">${escapeHtml(t.service_name || 'unknown')} (${t.span_count} spans)</div>
-                </div>
-                <div class="trace-meta">
-                    <div class="trace-duration">${formatTraceDuration(t.duration_ms)}</div>
-                    <div class="trace-time">${time}</div>
-                </div>
-            </div>`;
-        }).join('');
-    }).catch(() => {});
-}
-
-function selectTrace(traceId) {
-    selectedTraceId = traceId;
-    document.querySelectorAll('.trace-item').forEach(el => {
-        el.classList.toggle('selected', el.dataset.traceId === traceId);
-    });
-    loadTraceDetail(traceId);
-}
-
-// moved to top
-// moved to top
-// moved to top
-
-function loadTraceDetail(traceId) {
-    const detail = document.getElementById('trace-detail');
-    if (!detail) return;
-
-    fetch(`/api/traces/${traceId}`).then(r => r.json()).then(trace => {
-        // Use demo data if empty and demo mode enabled
-        if ((!trace?.spans?.length) && DemoData.enabled) {
-            trace = DemoData.generateTraceDetail(traceId);
-        }
-        if (!trace?.spans?.length) {
-            detail.innerHTML = '<div class="no-trace-selected"><div class="no-trace-selected-icon">🔍</div>No spans found</div>';
-            return;
-        }
-
-        currentTraceData = trace;
-        selectedSpanId = null;
-        traceServiceFilter = null;
-        renderWaterfall(detail, trace);
-    }).catch(() => {
-        if (DemoData.enabled) {
-            const trace = DemoData.generateTraceDetail(traceId);
-            currentTraceData = trace;
-            selectedSpanId = null;
-            traceServiceFilter = null;
-            renderWaterfall(detail, trace);
-        } else {
-            detail.innerHTML = '<div class="no-trace-selected"><div class="no-trace-selected-icon">⚠️</div>Failed to load trace</div>';
-        }
-    });
-}
-
-function renderWaterfall(container, trace) {
-    const spans = trace.spans;
-    const minTime = Math.min(...spans.map(s => new Date(s.start_time).getTime()));
-    const maxTime = Math.max(...spans.map(s => new Date(s.end_time).getTime()));
-    const totalDuration = maxTime - minTime;
-
-    // Build parent-child relationships
-    const spanMap = {};
-    spans.forEach(s => { spanMap[s.span_id] = s; s.children = []; s.depth = 0; });
-    spans.forEach(s => {
-        if (s.parent_span_id && spanMap[s.parent_span_id]) {
-            spanMap[s.parent_span_id].children.push(s);
-        }
-    });
-
-    // Calculate depths
-    function setDepth(span, depth) {
-        span.depth = depth;
-        span.children.forEach(c => setDepth(c, depth + 1));
-    }
-    const rootSpans = spans.filter(s => !s.parent_span_id || !spanMap[s.parent_span_id]);
-    rootSpans.forEach(s => setDepth(s, 0));
-
-    // Sort by start time within each level
-    spans.sort((a, b) => {
-        if (a.depth !== b.depth) return a.depth - b.depth;
-        return new Date(a.start_time) - new Date(b.start_time);
-    });
-
-    // Flatten tree maintaining parent-child order
-    const orderedSpans = [];
-    function addSpanAndChildren(span) {
-        orderedSpans.push(span);
-        span.children.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
-        span.children.forEach(addSpanAndChildren);
-    }
-    rootSpans.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
-    rootSpans.forEach(addSpanAndChildren);
-
-    // Assign colors to services
-    const serviceColors = {};
-    const serviceSpanCounts = {};
-    const colors = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ef4444', '#ec4899', '#06b6d4', '#84cc16'];
-    let colorIdx = 0;
-    orderedSpans.forEach(s => {
-        if (!serviceColors[s.service_name]) {
-            serviceColors[s.service_name] = colors[colorIdx++ % colors.length];
-            serviceSpanCounts[s.service_name] = 0;
-        }
-        serviceSpanCounts[s.service_name]++;
-    });
-
-    // Find critical path (longest path through the trace)
-    const criticalPathIds = new Set();
-    function findCriticalPath(span) {
-        criticalPathIds.add(span.span_id);
-        if (span.children.length === 0) return;
-        const longestChild = span.children.reduce((a, b) =>
-            (b.duration_ms || 0) > (a.duration_ms || 0) ? b : a
-        );
-        findCriticalPath(longestChild);
-    }
-    if (rootSpans.length > 0) {
-        const longestRoot = rootSpans.reduce((a, b) =>
-            (b.duration_ms || 0) > (a.duration_ms || 0) ? b : a
-        );
-        findCriticalPath(longestRoot);
-    }
-
-    // Stats
-    const errorCount = spans.filter(s => s.status === 'ERROR').length;
-    const avgDuration = spans.reduce((sum, s) => sum + (s.duration_ms || 0), 0) / spans.length;
-
-    const timeMarkers = [0, 0.25, 0.5, 0.75, 1].map(p => formatTraceDuration(totalDuration * p));
-
-    container.innerHTML = `
-        <div class="waterfall-container" style="position:relative;">
-            <div class="waterfall-toolbar">
-                <button class="waterfall-btn" onclick="toggleCriticalPath()" id="critical-path-btn" title="Highlight Critical Path">Critical Path</button>
-                <button class="waterfall-btn" onclick="expandAllSpans()" title="Expand All">Expand</button>
-                <div class="waterfall-stats">
-                    <div class="waterfall-stat">
-                        <span class="waterfall-stat-value">${spans.length}</span>
-                        <span>spans</span>
+    get metric() { return this.getAttribute('metric') || 'latency'; }
+    get service() { return this.getAttribute('service') || ''; }
+    get timeRange() { return this.getAttribute('time-range') || '1h'; }
+    get sensitivity() { return parseFloat(this.getAttribute('sensitivity')) || 2.0; }
+
+    render() {
+        this.innerHTML = `
+            <style>
+                .anomaly-container {
+                    display: flex;
+                    flex-direction: column;
+                    height: 100%;
+                    background: var(--bg-card, #16181c);
+                    border-radius: 8px;
+                    overflow: hidden;
+                }
+                .anomaly-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 0.75rem 1rem;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border-bottom: 1px solid var(--border-color, #2f3336);
+                }
+                .anomaly-title {
+                    font-weight: 600;
+                    font-size: 0.9rem;
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                }
+                .anomaly-badge {
+                    background: #f43f5e;
+                    color: white;
+                    padding: 0.2rem 0.5rem;
+                    border-radius: 10px;
+                    font-size: 0.7rem;
+                    font-weight: 600;
+                }
+                .anomaly-controls {
+                    display: flex;
+                    gap: 0.5rem;
+                    align-items: center;
+                }
+                .anomaly-controls label {
+                    font-size: 0.8rem;
+                    color: var(--text-muted, #71767b);
+                }
+                .anomaly-controls input[type="range"] {
+                    width: 80px;
+                }
+                .anomaly-body {
+                    flex: 1;
+                    padding: 1rem;
+                    min-height: 200px;
+                }
+                .anomaly-chart {
+                    width: 100%;
+                    height: 100%;
+                }
+                .anomaly-list {
+                    max-height: 150px;
+                    overflow-y: auto;
+                    border-top: 1px solid var(--border-color, #2f3336);
+                }
+                .anomaly-item {
+                    display: flex;
+                    align-items: center;
+                    gap: 0.75rem;
+                    padding: 0.75rem 1rem;
+                    border-bottom: 1px solid var(--border-color, #2f3336);
+                    cursor: pointer;
+                    transition: background 0.15s ease;
+                }
+                .anomaly-item:hover {
+                    background: var(--bg-elevated, #1a1f2e);
+                }
+                .anomaly-item:last-child {
+                    border-bottom: none;
+                }
+                .anomaly-dot {
+                    width: 10px;
+                    height: 10px;
+                    border-radius: 50%;
+                    flex-shrink: 0;
+                }
+                .anomaly-dot.high { background: #f43f5e; }
+                .anomaly-dot.medium { background: #f59e0b; }
+                .anomaly-dot.low { background: #3b82f6; }
+                .anomaly-info {
+                    flex: 1;
+                    min-width: 0;
+                }
+                .anomaly-time {
+                    font-size: 0.8rem;
+                    font-weight: 600;
+                }
+                .anomaly-desc {
+                    font-size: 0.75rem;
+                    color: var(--text-muted, #71767b);
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+                .anomaly-score {
+                    font-size: 0.8rem;
+                    font-weight: 600;
+                    color: var(--text-muted, #71767b);
+                }
+            </style>
+            <div class="anomaly-container">
+                <div class="anomaly-header">
+                    <div class="anomaly-title">
+                        <span>&#128270;</span>
+                        <span>Anomaly Detection</span>
+                        <span class="anomaly-badge" id="count">0</span>
                     </div>
-                    <div class="waterfall-stat">
-                        <span class="waterfall-stat-value">${formatTraceDuration(totalDuration)}</span>
-                        <span>total</span>
-                    </div>
-                    ${errorCount > 0 ? `
-                    <div class="waterfall-stat">
-                        <span class="waterfall-stat-value" style="color:#f4212e">${errorCount}</span>
-                        <span>errors</span>
-                    </div>` : ''}
-                </div>
-            </div>
-            <div class="waterfall-legend" id="waterfall-legend">
-                ${Object.entries(serviceColors).map(([svc, color]) => `
-                    <div class="waterfall-legend-item" onclick="filterByService('${escapeHtml(svc)}')" data-service="${escapeHtml(svc)}">
-                        <div class="waterfall-legend-color" style="background:${color}"></div>
-                        <span class="waterfall-legend-name">${escapeHtml(svc)}</span>
-                        <span class="waterfall-legend-count">${serviceSpanCounts[svc]}</span>
-                    </div>
-                `).join('')}
-            </div>
-            <div class="waterfall">
-                <div class="waterfall-header">
-                    <div class="waterfall-header-op">Operation</div>
-                    <div class="waterfall-header-timeline">
-                        ${timeMarkers.map(m => `<span>${m}</span>`).join('')}
+                    <div class="anomaly-controls">
+                        <label>Sensitivity:</label>
+                        <input type="range" id="sensitivity" min="1" max="4" step="0.5" value="${this.sensitivity}">
                     </div>
                 </div>
-                <div class="waterfall-body" id="waterfall-body">
-                    ${orderedSpans.map((span, idx) => renderSpanRow(span, minTime, totalDuration, serviceColors, criticalPathIds)).join('')}
+                <div class="anomaly-body">
+                    <canvas class="anomaly-chart" id="chart"></canvas>
                 </div>
-            </div>
-            <div class="span-detail-panel" id="span-detail-panel">
-                <div class="span-detail-header">
-                    <div class="span-detail-title" id="span-detail-title">Span Details</div>
-                    <button class="span-detail-close" onclick="closeSpanDetail()">×</button>
-                </div>
-                <div class="span-detail-body" id="span-detail-body"></div>
-            </div>
-        </div>
-    `;
-
-    // Store for interactions
-    container.dataset.criticalPath = JSON.stringify([...criticalPathIds]);
-}
-
-function renderSpanRow(span, minTime, totalDuration, serviceColors, criticalPathIds) {
-    const startOffset = new Date(span.start_time).getTime() - minTime;
-    const left = totalDuration > 0 ? (startOffset / totalDuration * 100) : 0;
-    const width = totalDuration > 0 ? ((span.duration_ms || 0) / totalDuration * 100) : 100;
-    const color = serviceColors[span.service_name];
-    const isError = span.status === 'ERROR';
-    const isCritical = criticalPathIds.has(span.span_id);
-    const kind = (span.kind || 'internal').toLowerCase();
-
-    // Indent based on depth
-    const indent = span.depth * 16;
-
-    const kindIcons = { server: '◆', client: '◇', internal: '○', producer: '▷', consumer: '◁' };
-    const kindIcon = kindIcons[kind] || '○';
-
-    return `<div class="span-row ${isCritical ? 'critical-path' : ''} ${isError ? 'error' : ''}"
-                data-span-id="${span.span_id}"
-                data-service="${escapeHtml(span.service_name)}"
-                onclick="selectSpan('${span.span_id}')">
-        <div class="span-info" style="padding-left:${indent}px">
-            <div class="span-icon" style="background:${color}20;color:${color}">${kindIcon}</div>
-            <div class="span-details">
-                <div class="span-name" title="${escapeHtml(span.name)}">${escapeHtml(span.name)}</div>
-                <div class="span-meta">
-                    <span class="span-service" style="color:${color}">${escapeHtml(span.service_name)}</span>
-                    <span class="span-kind">${kind}</span>
-                </div>
-            </div>
-        </div>
-        <div class="span-timeline">
-            <div class="timeline-grid">${'<div class="timeline-grid-line"></div>'.repeat(4)}</div>
-            <div class="span-bar ${isError ? 'error' : ''}"
-                 style="left:${left}%;width:${Math.max(width, 0.5)}%;background:linear-gradient(90deg,${color},${color}cc)">
-                ${isError ? `<div class="span-status-icon" style="background:#f4212e"></div>` : ''}
-            </div>
-            <span class="span-duration">${formatTraceDuration(span.duration_ms)}</span>
-        </div>
-    </div>`;
-}
-
-function selectSpan(spanId) {
-    selectedSpanId = spanId;
-
-    // Update row selection
-    document.querySelectorAll('.span-row').forEach(row => {
-        row.classList.toggle('selected', row.dataset.spanId === spanId);
-    });
-
-    // Find span data
-    const span = currentTraceData?.spans?.find(s => s.span_id === spanId);
-    if (!span) return;
-
-    // Open detail panel
-    const panel = document.getElementById('span-detail-panel');
-    const title = document.getElementById('span-detail-title');
-    const body = document.getElementById('span-detail-body');
-
-    if (!panel) return;
-
-    title.textContent = span.name;
-
-    const attributes = span.attributes || {};
-    const attrEntries = Object.entries(attributes);
-
-    body.innerHTML = `
-        <div class="span-detail-section">
-            <div class="span-detail-section-title">Timing</div>
-            <div class="span-detail-grid">
-                <div class="span-detail-stat">
-                    <div class="span-detail-stat-value">${formatTraceDuration(span.duration_ms)}</div>
-                    <div class="span-detail-stat-label">Duration</div>
-                </div>
-                <div class="span-detail-stat">
-                    <div class="span-detail-stat-value">${new Date(span.start_time).toLocaleTimeString()}</div>
-                    <div class="span-detail-stat-label">Start Time</div>
-                </div>
-            </div>
-        </div>
-        <div class="span-detail-section">
-            <div class="span-detail-section-title">Info</div>
-            <div class="span-detail-tags">
-                <div class="span-detail-tag">
-                    <span class="span-detail-tag-key">Service</span>
-                    <span class="span-detail-tag-value">${escapeHtml(span.service_name)}</span>
-                </div>
-                <div class="span-detail-tag">
-                    <span class="span-detail-tag-key">Kind</span>
-                    <span class="span-detail-tag-value">${span.kind || 'internal'}</span>
-                </div>
-                <div class="span-detail-tag">
-                    <span class="span-detail-tag-key">Status</span>
-                    <span class="span-detail-tag-value" style="color:${span.status === 'ERROR' ? '#f4212e' : '#00ba7c'}">${span.status || 'OK'}</span>
-                </div>
-                <div class="span-detail-tag">
-                    <span class="span-detail-tag-key">Span ID</span>
-                    <span class="span-detail-tag-value">${span.span_id.slice(0, 16)}</span>
-                </div>
-                ${span.parent_span_id ? `
-                <div class="span-detail-tag">
-                    <span class="span-detail-tag-key">Parent</span>
-                    <span class="span-detail-tag-value">${span.parent_span_id.slice(0, 16)}</span>
-                </div>` : ''}
-            </div>
-        </div>
-        ${attrEntries.length > 0 ? `
-        <div class="span-detail-section">
-            <div class="span-detail-section-title">Attributes (${attrEntries.length})</div>
-            <div class="span-detail-tags">
-                ${attrEntries.slice(0, 10).map(([k, v]) => `
-                    <div class="span-detail-tag">
-                        <span class="span-detail-tag-key">${escapeHtml(k)}</span>
-                        <span class="span-detail-tag-value" title="${escapeHtml(String(v))}">${escapeHtml(String(v).slice(0, 50))}</span>
-                    </div>
-                `).join('')}
-                ${attrEntries.length > 10 ? `<div style="color:#71767b;font-size:0.7rem;text-align:center;padding:8px;">+${attrEntries.length - 10} more</div>` : ''}
-            </div>
-        </div>` : ''}
-    `;
-
-    panel.classList.add('open');
-}
-
-function closeSpanDetail() {
-    selectedSpanId = null;
-    document.querySelectorAll('.span-row').forEach(row => row.classList.remove('selected'));
-    document.getElementById('span-detail-panel')?.classList.remove('open');
-}
-
-function toggleCriticalPath() {
-    const btn = document.getElementById('critical-path-btn');
-    const isActive = btn?.classList.toggle('active');
-    const container = document.getElementById('trace-detail');
-    const criticalIds = JSON.parse(container?.dataset.criticalPath || '[]');
-
-    document.querySelectorAll('.span-row').forEach(row => {
-        if (isActive && !criticalIds.includes(row.dataset.spanId)) {
-            row.classList.add('dimmed');
-        } else {
-            row.classList.remove('dimmed');
-        }
-    });
-}
-
-function filterByService(service) {
-    const legendItems = document.querySelectorAll('.waterfall-legend-item');
-    const rows = document.querySelectorAll('.span-row');
-
-    if (traceServiceFilter === service) {
-        // Clear filter
-        traceServiceFilter = null;
-        legendItems.forEach(item => item.classList.remove('dimmed'));
-        rows.forEach(row => row.classList.remove('dimmed'));
-    } else {
-        // Apply filter
-        traceServiceFilter = service;
-        legendItems.forEach(item => {
-            item.classList.toggle('dimmed', item.dataset.service !== service);
-        });
-        rows.forEach(row => {
-            row.classList.toggle('dimmed', row.dataset.service !== service);
-        });
-    }
-}
-
-function expandAllSpans() {
-    // Future: expand collapsed spans
-}
-
-function formatTraceDuration(ms) {
-    if (ms === undefined || ms === null) return '-';
-    if (ms < 1) return '<1ms';
-    if (ms < 1000) return Math.round(ms) + 'ms';
-    if (ms < 60000) return (ms / 1000).toFixed(2) + 's';
-    return (ms / 60000).toFixed(1) + 'm';
-}
-
-// Flame graph - redesigned
-// moved to top
-// moved to top
-// moved to top
-// moved to top
-// moved to top
-// moved to top
-// moved to top
-
-function updateFlameGraph() {
-    fetch('/api/flamegraph').then(r => r.json()).then(data => {
-        // Use demo data if empty and demo mode enabled
-        if ((!data || !data.children || data.children.length === 0) && DemoData.enabled) {
-            data = DemoData.generateFlameGraph();
-        }
-        flameData = data;
-        flameZoomStack = [];
-        renderFlameGraph();
-    }).catch(() => {
-        if (DemoData.enabled) {
-            flameData = DemoData.generateFlameGraph();
-            flameZoomStack = [];
-            renderFlameGraph();
-        } else {
-            const el = document.getElementById('flamegraph');
-            if (el) el.innerHTML = '<div class="flamegraph-empty"><div class="flamegraph-empty-icon">📊</div>Profiler unavailable</div>';
-        }
-    });
-}
-
-function clearFlameGraph() {
-    fetch('/api/flamegraph/clear', { method: 'POST' }).then(() => {
-        flameData = null;
-        flameBaselineData = null;
-        flameZoomStack = [];
-        flameDiffMode = false;
-        const el = document.getElementById('flamegraph');
-        if (el) el.innerHTML = '<div class="flamegraph-empty"><div class="flamegraph-empty-icon">🔄</div>Cleared. Collecting new samples...</div>';
-        document.getElementById('flamegraph-stats').innerHTML = '';
-        document.getElementById('flamegraph-diff-btn')?.classList.remove('active');
-    }).catch(() => {});
-}
-
-function searchFlameGraph(term) {
-    flameSearchTerm = term.toLowerCase();
-    renderFlameGraph();
-}
-
-function resetFlameGraphZoom() {
-    flameZoomStack = [];
-    renderFlameGraph();
-}
-
-function setFlameMode(mode) {
-    flameMode = mode;
-    document.getElementById('flamegraph-flame-btn')?.classList.toggle('active', mode === 'flame');
-    document.getElementById('flamegraph-icicle-btn')?.classList.toggle('active', mode === 'icicle');
-    renderFlameGraph();
-}
-
-function toggleDiffMode() {
-    if (!flameDiffMode && flameData) {
-        // Save current as baseline and enable diff mode
-        flameBaselineData = JSON.parse(JSON.stringify(flameData));
-        flameDiffMode = true;
-        document.getElementById('flamegraph-diff-btn')?.classList.add('active');
-        showToast('Baseline saved. Refresh to capture new profile for comparison.', 'info');
-    } else {
-        // Disable diff mode
-        flameDiffMode = false;
-        flameBaselineData = null;
-        document.getElementById('flamegraph-diff-btn')?.classList.remove('active');
-    }
-    renderFlameGraph();
-}
-
-function zoomToFlameNode(index) {
-    if (index < 0) {
-        flameZoomStack = [];
-    } else {
-        flameZoomStack = flameZoomStack.slice(0, index + 1);
-    }
-    renderFlameGraph();
-}
-
-function getFrameColor(name, pct, selfPct) {
-    // Determine category
-    const isKernel = name.startsWith('0x') || name.includes('[unknown]') || name.includes('[kernel');
-    const isRuntime = name.includes('runtime.') || name.includes('syscall') || name.includes('libc');
-    const isGC = name.includes('gc') || name.includes('GC') || name.includes('malloc') || name.includes('free');
-
-    if (isKernel) {
-        return 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)'; // Red
-    } else if (isGC) {
-        return 'linear-gradient(135deg, #a855f7 0%, #9333ea 100%)'; // Purple
-    } else if (isRuntime) {
-        return 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)'; // Indigo
-    } else if (pct > 10) {
-        return 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)'; // Orange (hot)
-    } else if (pct > 5) {
-        return 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)'; // Yellow (warm)
-    } else if (pct > 2) {
-        return 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)'; // Green
-    } else {
-        return 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)'; // Blue (cold)
-    }
-}
-
-function getFrameType(name) {
-    if (name.startsWith('0x') || name.includes('[unknown]')) return 'kernel';
-    if (name.includes('runtime.') || name.includes('syscall')) return 'runtime';
-    if (name.includes('gc') || name.includes('GC')) return 'gc';
-    if (name.includes('net/http') || name.includes('grpc')) return 'network';
-    if (name.includes('database') || name.includes('sql')) return 'database';
-    return 'user';
-}
-
-function renderFlameGraph() {
-    const container = document.getElementById('flamegraph');
-    const tooltip = document.getElementById('flamegraph-tooltip');
-    const statsEl = document.getElementById('flamegraph-stats');
-    const breadcrumbsEl = document.getElementById('flamegraph-breadcrumbs');
-
-    if (!container) return;
-
-    // Get data to render (zoomed or full)
-    let data = flameZoomStack.length > 0 ? flameZoomStack[flameZoomStack.length - 1] : flameData;
-
-    if (!data?.children?.length) {
-        container.innerHTML = '<div class="flamegraph-empty"><div class="flamegraph-empty-icon">📊</div>Collecting samples... Click Refresh to update.</div>';
-        if (statsEl) statsEl.innerHTML = '';
-        if (breadcrumbsEl) breadcrumbsEl.style.display = 'none';
-        return;
-    }
-
-    // Calculate total samples
-    function countSamples(node) {
-        return (node.value || 0) + (node.children || []).reduce((sum, c) => sum + countSamples(c), 0);
-    }
-    flameTotalSamples = countSamples(data);
-    const rootTotalSamples = countSamples(flameData);
-
-    // Update stats
-    if (statsEl) {
-        const hotFunctions = [];
-        function findHot(node, depth = 0) {
-            const total = countSamples(node);
-            const pct = (total / rootTotalSamples) * 100;
-            if (pct > 5 && depth > 0) hotFunctions.push({ name: node.name, pct });
-            (node.children || []).forEach(c => findHot(c, depth + 1));
-        }
-        findHot(flameData);
-        hotFunctions.sort((a, b) => b.pct - a.pct);
-
-        statsEl.innerHTML = `
-            <div class="flamegraph-stat">
-                <span class="flamegraph-stat-value">${flameTotalSamples.toLocaleString()}</span>
-                <span class="flamegraph-stat-label">samples</span>
-            </div>
-            ${hotFunctions.length > 0 ? `
-            <div class="flamegraph-stat">
-                <span class="flamegraph-stat-value" style="color:#f97316">${hotFunctions[0].pct.toFixed(1)}%</span>
-                <span class="flamegraph-stat-label">hottest</span>
-            </div>` : ''}
-        `;
-    }
-
-    // Update breadcrumbs
-    if (breadcrumbsEl) {
-        if (flameZoomStack.length > 0) {
-            breadcrumbsEl.style.display = 'flex';
-            let html = `<span class="flamegraph-breadcrumb" onclick="zoomToFlameNode(-1)">root</span>`;
-            flameZoomStack.forEach((node, i) => {
-                const isLast = i === flameZoomStack.length - 1;
-                html += `<span class="flamegraph-breadcrumb-sep">›</span>`;
-                html += `<span class="flamegraph-breadcrumb ${isLast ? 'current' : ''}" ${isLast ? '' : `onclick="zoomToFlameNode(${i})"`}>${escapeHtml(node.name)}</span>`;
-            });
-            breadcrumbsEl.innerHTML = html;
-        } else {
-            breadcrumbsEl.style.display = 'none';
-        }
-    }
-
-    container.innerHTML = '';
-    const rect = container.getBoundingClientRect();
-    const width = rect.width - 16;
-    const frameHeight = 24;
-    const padding = 8;
-    const gap = 1;
-
-    // Flatten the tree for rendering
-    const frames = [];
-    let maxDepth = 0;
-
-    function processNode(node, depth, x, parentWidth) {
-        if (!node || node.value === 0 && (!node.children || !node.children.length)) return;
-
-        const nodeValue = node.value || 0;
-        const childrenValue = (node.children || []).reduce((sum, c) => sum + (c.value || 0), 0);
-        const totalValue = nodeValue + childrenValue;
-        const nodeWidth = (totalValue / flameTotalSamples) * width;
-
-        if (nodeWidth < 1) return;
-
-        const matched = flameSearchTerm && node.name.toLowerCase().includes(flameSearchTerm);
-        const faded = flameSearchTerm && !matched;
-
-        frames.push({
-            name: node.name,
-            depth,
-            x,
-            width: nodeWidth,
-            value: totalValue,
-            self: nodeValue,
-            matched,
-            faded,
-            node
-        });
-
-        maxDepth = Math.max(maxDepth, depth);
-
-        // Process children
-        let childX = x;
-        (node.children || []).forEach(child => {
-            const childTotal = (child.value || 0) + (child.children || []).reduce((sum, c) => sum + (c.value || 0), 0);
-            const childWidth = (childTotal / flameTotalSamples) * width;
-            processNode(child, depth + 1, childX, childWidth);
-            childX += childWidth;
-        });
-    }
-
-    processNode(data, 0, padding, width);
-
-    // Render frames
-    const totalHeight = (maxDepth + 1) * (frameHeight + gap) + padding * 2;
-    container.style.height = Math.max(totalHeight, rect.height) + 'px';
-
-    frames.forEach(f => {
-        if (f.width < 2) return;
-
-        const div = document.createElement('div');
-        div.className = 'flamegraph-frame' + (f.matched ? ' matched' : '') + (f.faded ? ' faded' : '');
-
-        // Position based on mode
-        const y = flameMode === 'icicle'
-            ? padding + f.depth * (frameHeight + gap)
-            : totalHeight - padding - (f.depth + 1) * (frameHeight + gap);
-
-        div.style.cssText = `left:${f.x}px;top:${y}px;width:${f.width - gap}px;height:${frameHeight}px;`;
-
-        // Color based on function type and CPU time
-        const pct = (f.value / rootTotalSamples) * 100;
-        const selfPct = (f.self / rootTotalSamples) * 100;
-        div.style.background = getFrameColor(f.name, pct, selfPct);
-
-        // Label
-        if (f.width > 50) {
-            const label = document.createElement('span');
-            label.className = 'flamegraph-frame-label';
-            label.textContent = f.name;
-            div.appendChild(label);
-        }
-
-        // Tooltip
-        div.addEventListener('mouseenter', (e) => {
-            const pctStr = pct.toFixed(2);
-            const selfPctStr = selfPct.toFixed(2);
-            const frameType = getFrameType(f.name);
-            const color = getFrameColor(f.name, pct, selfPct);
-            const isHot = pct > 10;
-            const isWarm = pct > 5;
-
-            tooltip.innerHTML = `
-                <div class="flamegraph-tooltip-header">
-                    <div class="flamegraph-tooltip-color" style="background:${color}"></div>
-                    <div>
-                        <div class="flamegraph-tooltip-name">${escapeHtml(f.name)}</div>
-                        <span class="flamegraph-tooltip-type">${frameType}</span>
-                    </div>
-                </div>
-                <div class="flamegraph-tooltip-grid">
-                    <div class="flamegraph-tooltip-stat">
-                        <div class="flamegraph-tooltip-stat-value ${isHot ? 'hot' : isWarm ? 'warm' : ''}">${pctStr}%</div>
-                        <div class="flamegraph-tooltip-stat-label">Total Time</div>
-                    </div>
-                    <div class="flamegraph-tooltip-stat">
-                        <div class="flamegraph-tooltip-stat-value">${selfPctStr}%</div>
-                        <div class="flamegraph-tooltip-stat-label">Self Time</div>
-                    </div>
-                    <div class="flamegraph-tooltip-stat">
-                        <div class="flamegraph-tooltip-stat-value">${f.value.toLocaleString()}</div>
-                        <div class="flamegraph-tooltip-stat-label">Samples</div>
-                    </div>
-                    <div class="flamegraph-tooltip-stat">
-                        <div class="flamegraph-tooltip-stat-value">${f.self.toLocaleString()}</div>
-                        <div class="flamegraph-tooltip-stat-label">Self Samples</div>
-                    </div>
-                </div>
-                <div class="flamegraph-tooltip-bar">
-                    <div class="flamegraph-tooltip-bar-fill" style="width:${pct}%;background:${color}"></div>
-                </div>
-            `;
-            tooltip.style.display = 'block';
-            tooltip.style.left = Math.min(e.clientX + 15, window.innerWidth - 480) + 'px';
-            tooltip.style.top = Math.min(e.clientY + 15, window.innerHeight - 250) + 'px';
-        });
-
-        div.addEventListener('mousemove', (e) => {
-            tooltip.style.left = Math.min(e.clientX + 15, window.innerWidth - 480) + 'px';
-            tooltip.style.top = Math.min(e.clientY + 15, window.innerHeight - 250) + 'px';
-        });
-
-        div.addEventListener('mouseleave', () => {
-            tooltip.style.display = 'none';
-        });
-
-        // Click to zoom
-        div.addEventListener('click', () => {
-            if (f.node.children && f.node.children.length > 0) {
-                flameZoomStack.push(f.node);
-                renderFlameGraph();
-            }
-        });
-
-        container.appendChild(div);
-    });
-}
-
-// Watches
-// moved to top
-
-function loadWatchMetrics() {
-    fetch('/api/watch/metrics').then(r => r.json()).then(data => {
-        watchMetrics = data || [];
-    }).catch(() => {});
-}
-
-function loadWatches() {
-    fetch('/api/watches').then(r => r.json()).then(watches => {
-        const list = document.getElementById('watches-list');
-        if (!list) return;
-
-        if (!watches?.length) {
-            list.innerHTML = '<div class="empty-state">No watches configured. Click "+ New" to create one.</div>';
-            return;
-        }
-
-        list.innerHTML = watches.map(w => {
-            const stateClass = (w.state || 'no_data').toLowerCase();
-            const metric = watchMetrics.find(m => m.id === w.metric) || { name: w.metric };
-            return `<div class="watch-item">
-                <div class="watch-info">
-                    <div class="watch-name">${escapeHtml(w.name)}</div>
-                    <div class="watch-condition">${metric.name} ${w.operator} ${w.threshold} for ${w.duration}</div>
-                </div>
-                <span class="watch-value">${w.last_value?.toFixed(1) || '-'}</span>
-                <span class="watch-state ${stateClass}">${w.state || 'NO_DATA'}</span>
-                <div class="watch-actions">
-                    <button class="btn" onclick="deleteWatch('${w.id}')" title="Delete">X</button>
-                </div>
-            </div>`;
-        }).join('');
-    }).catch(() => {});
-}
-
-function showCreateWatch() {
-    loadChannels();
-    setTimeout(() => {
-        const metricOptions = watchMetrics.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
-        const channelOptions = channels.length
-            ? channels.map(c => `<label style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0;"><input type="checkbox" class="watch-channel" value="${c.id}"> ${escapeHtml(c.name)}</label>`).join('')
-            : '<div style="color:#71767b;font-size:0.75rem;">No channels configured. <a href="#" onclick="showChannels();return false;" style="color:#1d9bf0;">Add one</a></div>';
-        const modal = document.createElement('div');
-        modal.className = 'modal-overlay';
-        modal.innerHTML = `
-            <div class="modal">
-                <div class="modal-header">
-                    <span class="modal-title">Create Watch</span>
-                    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-                </div>
-                <div class="modal-body">
-                    <div class="form-group">
-                        <label class="form-label">Name</label>
-                        <input type="text" class="form-input" id="watch-name" placeholder="e.g., High CPU Alert">
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label class="form-label">Metric</label>
-                            <select class="form-select" id="watch-metric">${metricOptions}</select>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Operator</label>
-                            <select class="form-select" id="watch-operator">
-                                <option value=">">Greater than (&gt;)</option>
-                                <option value=">=">Greater or equal (&ge;)</option>
-                                <option value="<">Less than (&lt;)</option>
-                                <option value="<=">Less or equal (&le;)</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label class="form-label">Threshold</label>
-                            <input type="number" class="form-input" id="watch-threshold" placeholder="80" step="any">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Duration</label>
-                            <select class="form-select" id="watch-duration">
-                                <option value="0s">Instant</option>
-                                <option value="1m">1 minute</option>
-                                <option value="5m" selected>5 minutes</option>
-                                <option value="15m">15 minutes</option>
-                                <option value="30m">30 minutes</option>
-                                <option value="1h">1 hour</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Notify via</label>
-                        <div id="watch-channels">${channelOptions}</div>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                    <button class="btn btn-primary" onclick="createWatch()">Create Watch</button>
-                </div>
+                <div class="anomaly-list" id="list"></div>
             </div>
         `;
-        document.body.appendChild(modal);
-    }, 100);
-}
 
-function createWatch() {
-    const name = document.getElementById('watch-name').value;
-    const metric = document.getElementById('watch-metric').value;
-    const operator = document.getElementById('watch-operator').value;
-    const threshold = parseFloat(document.getElementById('watch-threshold').value);
-    const duration = document.getElementById('watch-duration').value;
-    const selectedChannels = Array.from(document.querySelectorAll('.watch-channel:checked')).map(cb => cb.value);
-
-    if (!name || !metric || isNaN(threshold)) {
-        alert('Please fill in all fields');
-        return;
+        this.querySelector('#sensitivity')?.addEventListener('input', (e) => {
+            this.setAttribute('sensitivity', e.target.value);
+            this.detectAnomalies();
+        });
     }
 
-    fetch('/api/watches', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, metric, operator, threshold, duration, enabled: true, channels: selectedChannels })
-    }).then(r => {
-        if (!r.ok) throw new Error('Failed to create watch');
-        return r.json();
-    }).then(() => {
-        document.querySelector('.modal-overlay')?.remove();
-        loadWatches();
-    }).catch(err => alert(err.message));
-}
-
-function deleteWatch(id) {
-    if (!confirm('Delete this watch?')) return;
-    fetch(`/api/watches/${id}`, { method: 'DELETE' })
-        .then(() => loadWatches())
-        .catch(err => alert('Failed to delete: ' + err.message));
-}
-
-// Notification Channels
-// moved to top
-
-function loadChannels() {
-    fetch('/api/watch/channels').then(r => r.json()).then(data => {
-        channels = data || [];
-    }).catch(() => { channels = []; });
-}
-
-function showChannels() {
-    loadChannels();
-    setTimeout(() => {
-        const channelList = channels.length ? channels.map(c => `
-            <div class="watch-item">
-                <div class="watch-info">
-                    <div class="watch-name">${escapeHtml(c.name)}</div>
-                    <div class="watch-condition">${c.type} - ${c.type === 'webhook' ? JSON.parse(c.config).url : 'Slack'}</div>
-                </div>
-                <div class="watch-actions">
-                    <button class="btn" onclick="testChannel('${c.id}')">Test</button>
-                    <button class="btn" onclick="deleteChannel('${c.id}')">X</button>
-                </div>
-            </div>
-        `).join('') : '<div class="empty-state">No channels configured</div>';
-
-        const modal = document.createElement('div');
-        modal.className = 'modal-overlay';
-        modal.innerHTML = `
-            <div class="modal">
-                <div class="modal-header">
-                    <span class="modal-title">Notification Channels</span>
-                    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-                </div>
-                <div class="modal-body" style="padding:0;">
-                    ${channelList}
-                </div>
-                <div class="modal-footer">
-                    <button class="btn" onclick="showCreateChannel()">+ Add Channel</button>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(modal);
-    }, 100);
-}
-
-function showCreateChannel() {
-    document.querySelector('.modal-overlay')?.remove();
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.innerHTML = `
-        <div class="modal">
-            <div class="modal-header">
-                <span class="modal-title">Add Notification Channel</span>
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">Name</label>
-                    <input type="text" class="form-input" id="channel-name" placeholder="e.g., PagerDuty Prod">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Type</label>
-                    <select class="form-select" id="channel-type" onchange="updateChannelForm()">
-                        <option value="webhook">Webhook (PagerDuty, Opsgenie, etc.)</option>
-                        <option value="slack">Slack</option>
-                    </select>
-                </div>
-                <div id="channel-config">
-                    <div class="form-group">
-                        <label class="form-label">Webhook URL</label>
-                        <input type="url" class="form-input" id="channel-url" placeholder="https://events.pagerduty.com/v2/enqueue">
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="showChannels()">Back</button>
-                <button class="btn btn-primary" onclick="createChannel()">Add Channel</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-}
-
-function updateChannelForm() {
-    const type = document.getElementById('channel-type').value;
-    const configDiv = document.getElementById('channel-config');
-    if (type === 'slack') {
-        configDiv.innerHTML = `
-            <div class="form-group">
-                <label class="form-label">Slack Webhook URL</label>
-                <input type="url" class="form-input" id="channel-url" placeholder="https://hooks.slack.com/services/...">
-            </div>
-        `;
-    } else {
-        configDiv.innerHTML = `
-            <div class="form-group">
-                <label class="form-label">Webhook URL</label>
-                <input type="url" class="form-input" id="channel-url" placeholder="https://events.pagerduty.com/v2/enqueue">
-            </div>
-        `;
-    }
-}
-
-function createChannel() {
-    const name = document.getElementById('channel-name').value;
-    const type = document.getElementById('channel-type').value;
-    const url = document.getElementById('channel-url').value;
-
-    if (!name || !url) {
-        alert('Please fill in all fields');
-        return;
-    }
-
-    const config = type === 'slack'
-        ? { webhook_url: url }
-        : { url: url, method: 'POST' };
-
-    fetch('/api/watch/channels', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, type, config })
-    }).then(r => {
-        if (!r.ok) throw new Error('Failed to create channel');
-        return r.json();
-    }).then(() => {
-        loadChannels();
-        showChannels();
-    }).catch(err => alert(err.message));
-}
-
-function testChannel(id) {
-    fetch(`/api/watch/channels/${id}/test`, { method: 'POST' })
-        .then(r => {
-            if (!r.ok) throw new Error('Test failed');
-            alert('Test notification sent!');
-        })
-        .catch(err => alert('Test failed: ' + err.message));
-}
-
-function deleteChannel(id) {
-    if (!confirm('Delete this channel?')) return;
-    fetch(`/api/watch/channels/${id}`, { method: 'DELETE' })
-        .then(() => showChannels())
-        .catch(err => alert('Failed to delete: ' + err.message));
-}
-
-// Start data refresh timers
-function startDataRefresh() {
-    // Initial loads - staggered to prevent server overload
-    setTimeout(initCharts, 100);
-    updateSystemMetrics();
-    updateStats();
-    updateServiceMap();
-    updateProcesses();
-
-    // Core widgets - immediate
-    loadTraceServices();
-    loadTraces();
-    loadWatchMetrics();
-    loadWatches();
-
-    // Secondary widgets - staggered
-    setTimeout(updateFlameGraph, 200);
-    setTimeout(loadLogServices, 250);
-    setTimeout(searchLogs, 300);
-    setTimeout(loadPatterns, 350);
-    setTimeout(loadSynthetics, 400);
-    setTimeout(loadSLOs, 450);
-    setTimeout(loadContainers, 500);
-    setTimeout(loadDeployments, 550);
-    setTimeout(loadIncidents, 600);
-    setTimeout(loadStatusPages, 650);
-    setTimeout(loadCatalog, 700);
-    setTimeout(loadCorrelations, 750);
-    setTimeout(loadCluster, 800);
-    setTimeout(loadAnomalies, 850);
-    setTimeout(loadAlerts, 900);
-    setTimeout(loadOnCallWidget, 950);
-    setTimeout(loadAuditWidget, 1000);
-    setTimeout(loadCostIntel, 1050);
-    setTimeout(loadDBWatch, 1100);
-    setTimeout(loadCardinality, 1150);
-    setTimeout(loadNotifyWidget, 1200);
-
-    // Set up WebSocket real-time updates (reduces polling overhead)
-    setupWebSocketUpdates();
-
-    // Periodic refreshes - WebSocket handles most real-time data
-    // Polling is kept as fallback only (slower intervals since WebSocket is primary)
-    setInterval(updateSystemMetrics, 15000);  // WebSocket handles real-time, poll for fallback
-    setInterval(updateStats, 10000);
-    setInterval(updateServiceMap, 60000);     // WebSocket handles real-time updates
-    setInterval(updateProcesses, 5000);
-    setInterval(loadTraceServices, 60000);
-    setInterval(loadTraces, 30000);           // WebSocket streams new traces in real-time
-    setInterval(loadWatches, 30000);          // WebSocket handles state changes
-    setInterval(searchLogs, 30000);           // WebSocket streams logs in real-time
-    setInterval(() => loadChartData(document.querySelector('.time-btn.active')?.dataset.dur || '15m'), 15000);
-
-    // Resize handler
-    window.addEventListener('resize', () => { renderServiceMap(); });
-}
-
-// Set up WebSocket subscriptions for real-time updates
-function setupWebSocketUpdates() {
-    if (typeof dwSocket === 'undefined') {
-        console.log('[app] WebSocket client not loaded, using polling only');
-        return;
-    }
-
-    // Subscribe to system stats for real-time CPU/memory updates
-    dwSocket.onSystemStats((msg) => {
-        if (msg.type === 'stats' && msg.payload) {
-            // Update system metrics display
-            const data = msg.payload;
-            const cpuEl = document.getElementById('cpu-value');
-            const memEl = document.getElementById('mem-value');
-            const updateEl = document.getElementById('last-update');
-            if (cpuEl) cpuEl.innerText = (data.cpu_percent || 0).toFixed(1) + '%';
-            if (memEl) memEl.innerText = (data.memory_percent || 0).toFixed(1) + '%';
-            if (updateEl) updateEl.innerText = 'Live';
-
-            // Update charts if available
-            if (cpuChart && memChart && data.cpu_percent !== undefined) {
-                const now = new Date();
-                cpuChart.data.labels.push(now);
-                cpuChart.data.datasets[0].data.push(data.cpu_percent);
-                if (cpuChart.data.labels.length > 60) {
-                    cpuChart.data.labels.shift();
-                    cpuChart.data.datasets[0].data.shift();
-                }
-                cpuChart.update('none');
-
-                memChart.data.labels.push(now);
-                memChart.data.datasets[0].data.push(data.memory_percent);
-                if (memChart.data.labels.length > 60) {
-                    memChart.data.labels.shift();
-                    memChart.data.datasets[0].data.shift();
-                }
-                memChart.update('none');
-            }
-        }
-    });
-
-    // Subscribe to service map updates
-    dwSocket.onServiceMapUpdate((msg) => {
-        if (msg.type === 'update' && msg.payload) {
-            svcMapData = msg.payload;
-            renderServiceMap();
-        }
-    });
-
-    // Subscribe to watch state changes for real-time alert updates
-    dwSocket.onWatchStateChange((msg) => {
-        if (msg.type === 'state_change' && msg.payload) {
-            const { id, state, value } = msg.payload;
-            // Update the specific watch in the UI
-            const watchRow = document.querySelector(`[data-watch-id="${id}"]`);
-            if (watchRow) {
-                const stateEl = watchRow.querySelector('.watch-state');
-                if (stateEl) {
-                    stateEl.className = `watch-state state-${state.toLowerCase()}`;
-                    stateEl.textContent = state;
-                }
-                const valueEl = watchRow.querySelector('.watch-value');
-                if (valueEl) {
-                    valueEl.textContent = value.toFixed(2);
-                }
-            }
-            // Show toast for alerting state
-            if (state === 'alerting') {
-                showToast(`Watch alert: ${id}`, 'error');
-            } else if (state === 'ok') {
-                showToast(`Watch recovered: ${id}`, 'success');
-            }
-        }
-    });
-
-    // Subscribe to incident updates
-    dwSocket.onIncidentUpdate((msg) => {
-        if (msg.type === 'update') {
-            loadIncidents(); // Refresh incidents list
-        }
-    });
-
-    // Subscribe to anomaly detections
-    dwSocket.onAnomalyDetected((msg) => {
-        if (msg.type === 'detected' && msg.payload) {
-            showToast('New anomaly detected', 'warning');
-            loadAnomalies(); // Refresh anomalies
-        }
-    });
-
-    // Subscribe to new traces for real-time trace streaming
-    dwSocket.onNewTrace((msg) => {
-        if (msg.type === 'new' && msg.payload) {
-            // Update traces list if visible
-            const tracesList = document.getElementById('traces-list');
-            if (tracesList && tracesList.children.length > 0) {
-                const trace = msg.payload;
-                const row = document.createElement('div');
-                row.className = 'trace-row';
-                row.innerHTML = `
-                    <span class="trace-id">${(trace.trace_id || '').substring(0, 8)}...</span>
-                    <span class="trace-service">${trace.service_name || 'unknown'}</span>
-                    <span class="trace-name">${trace.name || ''}</span>
-                    <span class="trace-duration">${(trace.duration_ms || 0).toFixed(1)}ms</span>
-                    <span class="trace-status ${trace.status === 'ERROR' ? 'status-error' : 'status-success'}">${trace.status || 'OK'}</span>
-                `;
-                tracesList.insertBefore(row, tracesList.firstChild);
-                // Keep max 100 rows
-                while (tracesList.children.length > 100) {
-                    tracesList.removeChild(tracesList.lastChild);
-                }
-            }
-        }
-    });
-
-    // Subscribe to log entries for real-time log streaming
-    dwSocket.onLogEntry((msg) => {
-        if (msg.type === 'entry' && msg.payload) {
-            const logsList = document.getElementById('logs-list');
-            if (logsList) {
-                const entry = msg.payload;
-                const levelClass = `log-level-${(entry.level || 'info').toLowerCase()}`;
-                const row = document.createElement('div');
-                row.className = `log-row ${levelClass}`;
-                row.innerHTML = `
-                    <span class="log-time">${new Date(entry.timestamp).toLocaleTimeString()}</span>
-                    <span class="log-level">${(entry.level || 'INFO').toUpperCase()}</span>
-                    <span class="log-service">${entry.service || '-'}</span>
-                    <span class="log-message">${entry.message || ''}</span>
-                `;
-                logsList.insertBefore(row, logsList.firstChild);
-                // Keep max 200 rows
-                while (logsList.children.length > 200) {
-                    logsList.removeChild(logsList.lastChild);
-                }
-            }
-        }
-    });
-
-    // Subscribe to alert updates for real-time alerting
-    dwSocket.onAlertUpdate((msg) => {
-        if (msg.type === 'update' && msg.payload) {
-            const alert = msg.payload;
-            // Show toast for new alerts
-            if (alert.state === 'firing') {
-                const severity = alert.severity || 'warning';
-                showToast(`Alert: ${alert.rule_name || 'Unknown'}`, severity === 'critical' ? 'error' : 'warning');
-            } else if (alert.state === 'resolved') {
-                showToast(`Resolved: ${alert.rule_name || 'Unknown'}`, 'success');
-            }
-            // Refresh alerts list
-            loadAlerts();
-        }
-    });
-
-    console.log('[app] WebSocket real-time updates enabled');
-}
-
-// Log functions
-function loadLogServices() {
-    fetch('/api/logs/services')
-        .then(r => r.json())
-        .then(services => {
-            const select = document.getElementById('log-service');
-            if (!select) return;
-            const current = select.value;
-            select.innerHTML = '<option value="">All Services</option>';
-            (services || []).forEach(svc => {
-                const opt = document.createElement('option');
-                opt.value = svc;
-                opt.textContent = svc;
-                select.appendChild(opt);
+    async loadData() {
+        try {
+            const params = new URLSearchParams({
+                metric: this.metric,
+                range: this.timeRange
             });
-            select.value = current;
-        })
-        .catch(() => {});
-}
+            if (this.service) params.append('service', this.service);
 
-function searchLogs() {
-    const searchEl = document.getElementById('log-search');
-    const levelEl = document.getElementById('log-level');
-    const serviceEl = document.getElementById('log-service');
-    const timeEl = document.getElementById('log-time');
-    if (!searchEl) return;
-
-    const params = new URLSearchParams();
-    if (searchEl.value) params.set('q', searchEl.value);
-    if (levelEl?.value) params.set('level', levelEl.value);
-    if (serviceEl?.value) params.set('service', serviceEl.value);
-
-    // Handle custom time range vs preset
-    if (timeEl?.value === 'custom' && customLogTimeStart) {
-        params.set('start', new Date(customLogTimeStart).toISOString());
-        if (customLogTimeEnd) {
-            params.set('end', new Date(customLogTimeEnd).toISOString());
-        }
-    } else if (timeEl?.value && timeEl.value !== 'custom') {
-        params.set('since', timeEl.value);
-    }
-    params.set('limit', '100');
-
-    // Update filter pills on search
-    updateFilterPills();
-
-    fetch('/api/logs?' + params.toString())
-        .then(r => r.json())
-        .then(result => {
-            const list = document.getElementById('logs-list');
-            if (!list) return;
-            let entries = result?.data || result?.entries || [];
-            // Use demo data if empty and demo mode enabled
-            if (!entries.length && DemoData.enabled) {
-                entries = DemoData.generateLogs().entries;
-            }
-            if (!entries.length) {
-                list.innerHTML = '<div class="empty-state">No logs found</div>';
-                return;
-            }
-            list.innerHTML = entries.map(log => {
-                const time = new Date(log.timestamp).toLocaleTimeString();
-                const traceLink = log.trace_id ?
-                    `<span class="log-trace-link" onclick="selectTrace('${log.trace_id}')">${log.trace_id.slice(0,8)}</span>` : '';
-                return `<div class="log-entry">
-                    <span class="log-time">${time}</span>
-                    <span class="log-level ${log.level}">${log.level}</span>
-                    ${log.service ? `<span class="log-service">[${escapeHtml(log.service)}]</span>` : ''}
-                    <span class="log-message">${escapeHtml(log.message)}</span>
-                    ${traceLink}
-                </div>`;
-            }).join('');
-        })
-        .catch(() => {});
-}
-
-function refreshLogs() {
-    loadLogServices();
-    searchLogs();
-}
-
-// Live tail mode
-// moved to top
-// moved to top
-
-function toggleLogTail() {
-    logTailEnabled = !logTailEnabled;
-    const btn = document.getElementById('log-tail-btn');
-    const icon = document.getElementById('log-tail-icon');
-
-    if (logTailEnabled) {
-        btn.style.background = '#1a3d2e';
-        btn.style.borderColor = '#00ba7c';
-        btn.style.color = '#00ba7c';
-        icon.textContent = '⏸';
-        // Poll every 2 seconds
-        logTailInterval = setInterval(() => {
-            searchLogs();
-            // Auto-scroll to bottom
-            const list = document.getElementById('logs-list');
-            if (list) list.scrollTop = 0;
-        }, 2000);
-        showToast('Live tail enabled', 'success');
-    } else {
-        btn.style.background = '';
-        btn.style.borderColor = '';
-        btn.style.color = '';
-        icon.textContent = '▶';
-        if (logTailInterval) {
-            clearInterval(logTailInterval);
-            logTailInterval = null;
-        }
-        showToast('Live tail disabled', 'info');
-    }
-}
-
-// Filter pills and custom time range
-// moved to top
-// moved to top
-
-function updateLogFilters() {
-    const timeEl = document.getElementById('log-time');
-    if (timeEl?.value === 'custom') {
-        showCustomTimeRangeModal();
-        return;
-    }
-    updateFilterPills();
-    searchLogs();
-}
-
-function updateFilterPills() {
-    const pillsEl = document.getElementById('log-filter-pills');
-    if (!pillsEl) return;
-
-    const level = document.getElementById('log-level')?.value;
-    const service = document.getElementById('log-service')?.value;
-    const search = document.getElementById('log-search')?.value;
-    const time = document.getElementById('log-time')?.value;
-
-    const pills = [];
-
-    if (search) {
-        pills.push(`<span class="filter-pill">query: "${escapeHtml(search)}" <span onclick="clearLogFilter('search')">&times;</span></span>`);
-    }
-    if (level) {
-        pills.push(`<span class="filter-pill level-${level}">level: ${level} <span onclick="clearLogFilter('level')">&times;</span></span>`);
-    }
-    if (service) {
-        pills.push(`<span class="filter-pill">service: ${escapeHtml(service)} <span onclick="clearLogFilter('service')">&times;</span></span>`);
-    }
-    if (time === 'custom' && customLogTimeStart) {
-        const start = new Date(customLogTimeStart).toLocaleString();
-        const end = customLogTimeEnd ? new Date(customLogTimeEnd).toLocaleString() : 'now';
-        pills.push(`<span class="filter-pill">time: ${start} - ${end} <span onclick="clearLogFilter('time')">&times;</span></span>`);
-    }
-
-    if (pills.length > 0) {
-        pillsEl.innerHTML = pills.join('') + `<span class="filter-clear" onclick="clearAllLogFilters()">Clear all</span>`;
-        pillsEl.style.display = 'flex';
-    } else {
-        pillsEl.style.display = 'none';
-    }
-}
-
-function clearLogFilter(type) {
-    switch(type) {
-        case 'search':
-            document.getElementById('log-search').value = '';
-            break;
-        case 'level':
-            document.getElementById('log-level').value = '';
-            break;
-        case 'service':
-            document.getElementById('log-service').value = '';
-            break;
-        case 'time':
-            document.getElementById('log-time').value = '1h';
-            customLogTimeStart = null;
-            customLogTimeEnd = null;
-            break;
-    }
-    updateFilterPills();
-    searchLogs();
-}
-
-function clearAllLogFilters() {
-    document.getElementById('log-search').value = '';
-    document.getElementById('log-level').value = '';
-    document.getElementById('log-service').value = '';
-    document.getElementById('log-time').value = '1h';
-    customLogTimeStart = null;
-    customLogTimeEnd = null;
-    updateFilterPills();
-    searchLogs();
-}
-
-function showCustomTimeRangeModal() {
-    const now = new Date();
-    const hourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = (e) => {
-        if (e.target === modal) {
-            modal.remove();
-            document.getElementById('log-time').value = '1h';
-        }
-    };
-    modal.innerHTML = `
-        <div class="modal" style="max-width:400px">
-            <div class="modal-header">
-                <span class="modal-title">Custom Time Range</span>
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove();document.getElementById('log-time').value='1h';">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label>Start Time</label>
-                    <input type="datetime-local" id="custom-time-start" value="${hourAgo.toISOString().slice(0,16)}">
-                </div>
-                <div class="form-group">
-                    <label>End Time</label>
-                    <input type="datetime-local" id="custom-time-end" value="${now.toISOString().slice(0,16)}">
-                </div>
-                <div style="display:flex;gap:0.5rem;margin-top:1rem;">
-                    <button class="btn" onclick="setQuickTimeRange(15)">15m</button>
-                    <button class="btn" onclick="setQuickTimeRange(60)">1h</button>
-                    <button class="btn" onclick="setQuickTimeRange(360)">6h</button>
-                    <button class="btn" onclick="setQuickTimeRange(1440)">24h</button>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove();document.getElementById('log-time').value='1h';">Cancel</button>
-                <button class="btn btn-primary" onclick="applyCustomTimeRange()">Apply</button>
-            </div>
-        </div>`;
-    document.body.appendChild(modal);
-}
-
-function setQuickTimeRange(minutes) {
-    const now = new Date();
-    const start = new Date(now.getTime() - minutes * 60 * 1000);
-    document.getElementById('custom-time-start').value = start.toISOString().slice(0,16);
-    document.getElementById('custom-time-end').value = now.toISOString().slice(0,16);
-}
-
-function applyCustomTimeRange() {
-    customLogTimeStart = document.getElementById('custom-time-start').value;
-    customLogTimeEnd = document.getElementById('custom-time-end').value;
-    document.querySelector('.modal-overlay')?.remove();
-    updateFilterPills();
-    searchLogs();
-}
-
-// Synthetics functions
-function loadSynthetics() {
-    fetch('/api/synthetics/checks')
-        .then(r => r.ok ? r.json() : Promise.reject('API error'))
-        .then(result => {
-            const list = document.getElementById('synthetics-list');
-            if (!list) return;
-
-            // Handle wrapped response or null
-            let checks = result?.data || result || [];
-            if (!Array.isArray(checks)) checks = [];
-
-            // Use demo data if empty and demo mode enabled
-            if (!checks.length && DemoData.enabled) {
-                checks = DemoData.generateSynthetics();
-            }
-            if (!checks.length) {
-                list.innerHTML = '<div class="empty-state">No synthetic checks configured. Click "+ New" to create one.</div>';
-                return;
-            }
-
-            syntheticChecks = checks;
-            renderSyntheticsList(list, checks);
-        })
-        .catch(() => {
-            if (DemoData.enabled) {
-                const list = document.getElementById('synthetics-list');
-                if (list) renderSyntheticsList(list, DemoData.generateSynthetics());
-            }
-        });
-}
-
-function renderSyntheticsList(list, checks) {
-    list.innerHTML = checks.map(c => {
-        const statusClass = (c.status || 'unknown').toLowerCase();
-        const latency = c.last_latency_ms ? formatLatency(c.last_latency_ms) : '-';
-        return `<div class="synth-item">
-            <div class="synth-info">
-                <div class="synth-name">${escapeHtml(c.name)}</div>
-                <div class="synth-url">${escapeHtml(c.url)}</div>
-            </div>
-            <span class="synth-latency">${latency}</span>
-            <span class="synth-status ${statusClass}">${c.status || 'unknown'}</span>
-            <div class="synth-actions">
-                <button class="btn" onclick="runSynthetic('${c.id}')" title="Run Now">Run</button>
-                <button class="btn" onclick="deleteSynthetic('${c.id}')" title="Delete">X</button>
-            </div>
-        </div>`;
-    }).join('');
-}
-
-function showCreateSynthetic() {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.innerHTML = `
-        <div class="modal">
-            <div class="modal-header">
-                <span class="modal-title">Create Synthetic Check</span>
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">Name</label>
-                    <input type="text" class="form-input" id="synth-name" placeholder="e.g., Homepage Check">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">URL</label>
-                    <input type="url" class="form-input" id="synth-url" placeholder="https://example.com/health">
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">Method</label>
-                        <select class="form-select" id="synth-method">
-                            <option value="GET">GET</option>
-                            <option value="POST">POST</option>
-                            <option value="PUT">PUT</option>
-                            <option value="HEAD">HEAD</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Interval (seconds)</label>
-                        <input type="number" class="form-input" id="synth-interval" value="60" min="10" max="3600">
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">Timeout (seconds)</label>
-                        <input type="number" class="form-input" id="synth-timeout" value="10" min="1" max="60">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Expected Status</label>
-                        <input type="number" class="form-input" id="synth-status" value="200" placeholder="200">
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                <button class="btn btn-primary" onclick="createSynthetic()">Create Check</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-}
-
-function createSynthetic() {
-    const name = document.getElementById('synth-name').value;
-    const url = document.getElementById('synth-url').value;
-    const method = document.getElementById('synth-method').value;
-    const interval = parseInt(document.getElementById('synth-interval').value) || 60;
-    const timeout = parseInt(document.getElementById('synth-timeout').value) || 10;
-    const expectedStatus = document.getElementById('synth-status').value;
-
-    if (!name || !url) {
-        alert('Please fill in name and URL');
-        return;
-    }
-
-    const assertions = [];
-    if (expectedStatus) {
-        assertions.push({
-            type: 'status_code',
-            operator: 'equals',
-            value: expectedStatus
-        });
-    }
-
-    fetch('/api/synthetics/checks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            name, url, method, interval, timeout,
-            type: 'http',
-            enabled: true,
-            assertions
-        })
-    }).then(r => {
-        if (!r.ok) throw new Error('Failed to create check');
-        return r.json();
-    }).then(() => {
-        document.querySelector('.modal-overlay')?.remove();
-        loadSynthetics();
-    }).catch(err => alert(err.message));
-}
-
-function runSynthetic(id) {
-    fetch(`/api/synthetics/checks/${id}/run`, { method: 'POST' })
-        .then(r => r.json())
-        .then(result => {
-            if (result.status === 'up') {
-                alert(`Check passed! Latency: ${result.latency_ms}ms`);
+            const resp = await fetch(`/api/metrics/timeseries?${params}`);
+            if (!resp.ok) {
+                this.data = this.generateDemoData();
             } else {
-                alert(`Check failed: ${result.error || 'Unknown error'}`);
+                this.data = await resp.json();
             }
-            loadSynthetics();
-        })
-        .catch(err => alert('Failed to run check: ' + err.message));
-}
-
-function deleteSynthetic(id) {
-    if (!confirm('Delete this synthetic check?')) return;
-    fetch(`/api/synthetics/checks/${id}`, { method: 'DELETE' })
-        .then(() => loadSynthetics())
-        .catch(err => alert('Failed to delete: ' + err.message));
-}
-
-// Initialize synthetics
-setTimeout(loadSynthetics, 500);
-setInterval(loadSynthetics, 10000);
-
-// SLO functions
-// moved to top
-
-function loadSyntheticChecksForSLO() {
-    return fetch('/api/synthetics/checks')
-        .then(r => r.json())
-        .then(checks => {
-            syntheticChecks = checks || [];
-            return checks;
-        })
-        .catch(() => { syntheticChecks = []; return []; });
-}
-
-function loadSLOs() {
-    fetch('/api/slos')
-        .then(r => r.ok ? r.json() : Promise.reject('API error'))
-        .then(slos => {
-            const list = document.getElementById('slos-list');
-            if (!list) return;
-
-            // Handle wrapped response
-            if (slos?.data) slos = slos.data;
-
-            // Use demo data if empty and demo mode enabled
-            if (!slos?.length && DemoData.enabled) {
-                slos = DemoData.generateSLOs();
-            }
-            if (!slos?.length) {
-                list.innerHTML = '<div class="empty-state">No SLOs configured. Click "+ New" to create one.</div>';
-                return;
-            }
-
-            // Render SLOs - handle {slo, state} wrapper
-            list.innerHTML = slos.map(item => {
-                const slo = item.slo || item;
-                const state = item.state || {};
-                const statusClass = (state.status || 'unknown').toLowerCase();
-                const target = slo.target?.toFixed(1) || '-';
-                const current = state.current_value?.toFixed(2) || '-';
-                return `<div class="slo-item">
-                    <div class="slo-header">
-                        <span class="slo-name">${escapeHtml(slo.name)}</span>
-                        <span class="slo-status ${statusClass}">${state.status || 'NO DATA'}</span>
-                    </div>
-                    <div class="slo-metrics">
-                        <div class="slo-metric"><div class="slo-metric-value">${current}%</div><div class="slo-metric-label">Current</div></div>
-                        <div class="slo-metric"><div class="slo-metric-value">${target}%</div><div class="slo-metric-label">Target</div></div>
-                        <div class="slo-metric"><div class="slo-metric-value">${slo.window || '-'}</div><div class="slo-metric-label">Window</div></div>
-                    </div>
-                </div>`;
-            }).join('');
-        })
-        .catch(() => {
-            if (DemoData.enabled) {
-                const list = document.getElementById('slos-list');
-                if (!list) return;
-                const slos = DemoData.generateSLOs();
-                list.innerHTML = slos.map(item => {
-                    const slo = item.slo;
-                    const state = item.state || {};
-                    const statusClass = (state.status || 'no_data').toLowerCase().replace(' ', '_');
-                    const currentValue = state.current_value?.toFixed(2) || '-';
-                    const target = slo.target?.toFixed(1) || '-';
-                    const budgetUsed = state.budget_used_pct || 0;
-                    const budgetRemaining = state.budget_remaining?.toFixed(1) || '-';
-                    const valueClass = state.current_value >= slo.target ? 'good' : state.current_value >= slo.target - 1 ? 'warn' : 'bad';
-                    const budgetClass = budgetUsed < 50 ? 'healthy' : budgetUsed < 80 ? 'warning' : 'critical';
-                    return `<div class="slo-item">
-                        <div class="slo-header">
-                            <span class="slo-name">${escapeHtml(slo.name)}</span>
-                            <span class="slo-status ${statusClass}">${state.status || 'NO DATA'}</span>
-                        </div>
-                        <div class="slo-metrics">
-                            <div class="slo-metric"><div class="slo-metric-value ${valueClass}">${currentValue}%</div><div class="slo-metric-label">Current</div></div>
-                            <div class="slo-metric"><div class="slo-metric-value">${target}%</div><div class="slo-metric-label">Target</div></div>
-                            <div class="slo-metric"><div class="slo-metric-value">${slo.window}</div><div class="slo-metric-label">Window</div></div>
-                        </div>
-                        <div class="slo-budget">
-                            <div class="slo-budget-bar"><div class="slo-budget-fill ${budgetClass}" style="width:${Math.min(budgetUsed, 100)}%"></div></div>
-                            <div class="slo-budget-text"><span>Error Budget: ${budgetRemaining} min remaining</span><span>${budgetUsed.toFixed(1)}% used</span></div>
-                        </div>
-                    </div>`;
-                }).join('');
-            }
-        });
-}
-
-function showCreateSLO() {
-    loadSyntheticChecksForSLO().then(() => {
-        const checkOptions = syntheticChecks.length
-            ? syntheticChecks.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')
-            : '<option value="">No synthetic checks available</option>';
-
-        const modal = document.createElement('div');
-        modal.className = 'modal-overlay';
-        modal.innerHTML = `
-            <div class="modal">
-                <div class="modal-header">
-                    <span class="modal-title">Create SLO</span>
-                    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-                </div>
-                <div class="modal-body">
-                    <div class="form-group">
-                        <label class="form-label">Name</label>
-                        <input type="text" class="form-input" id="slo-name" placeholder="e.g., API Availability">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Description</label>
-                        <input type="text" class="form-input" id="slo-desc" placeholder="e.g., Main API must be available 99.9%">
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label class="form-label">Type</label>
-                            <select class="form-select" id="slo-type">
-                                <option value="availability">Availability (%)</option>
-                                <option value="latency">Latency (P95)</option>
-                                <option value="error_rate">Error Rate</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Target (%)</label>
-                            <input type="number" class="form-input" id="slo-target" value="99.9" step="0.1" min="0" max="100">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label class="form-label">Time Window</label>
-                            <select class="form-select" id="slo-window">
-                                <option value="7d">7 Days</option>
-                                <option value="30d" selected>30 Days</option>
-                                <option value="90d">90 Days</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Latency Threshold (ms)</label>
-                            <input type="number" class="form-input" id="slo-threshold" value="200" placeholder="For latency SLOs">
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Data Source (Synthetic Check)</label>
-                        <select class="form-select" id="slo-source">${checkOptions}</select>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                    <button class="btn btn-primary" onclick="createSLO()">Create SLO</button>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(modal);
-    });
-}
-
-function createSLO() {
-    const name = document.getElementById('slo-name').value;
-    const description = document.getElementById('slo-desc').value;
-    const type = document.getElementById('slo-type').value;
-    const target = parseFloat(document.getElementById('slo-target').value);
-    const window = document.getElementById('slo-window').value;
-    const threshold = parseFloat(document.getElementById('slo-threshold').value) || 0;
-    const sourceId = document.getElementById('slo-source').value;
-
-    if (!name || !sourceId) {
-        alert('Please fill in name and select a data source');
-        return;
+            this.detectAnomalies();
+        } catch (e) {
+            this.data = this.generateDemoData();
+            this.detectAnomalies();
+        }
     }
 
-    if (isNaN(target) || target <= 0 || target > 100) {
-        alert('Target must be between 0 and 100');
-        return;
-    }
+    generateDemoData() {
+        const points = 60;
+        const data = [];
+        const now = Date.now();
 
-    fetch('/api/slos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            name,
-            description,
-            type,
-            target,
-            window,
-            threshold,
-            enabled: true,
-            source: {
-                type: 'synthetics',
-                id: sourceId
-            }
-        })
-    }).then(r => {
-        if (!r.ok) throw new Error('Failed to create SLO');
-        return r.json();
-    }).then(() => {
-        document.querySelector('.modal-overlay')?.remove();
-        loadSLOs();
-    }).catch(err => alert(err.message));
-}
+        for (let i = 0; i < points; i++) {
+            let value = 50 + Math.random() * 20;
 
-function deleteSLO(id) {
-    if (!confirm('Delete this SLO?')) return;
-    fetch(`/api/slos/${id}`, { method: 'DELETE' })
-        .then(() => loadSLOs())
-        .catch(err => alert('Failed to delete: ' + err.message));
-}
+            // Add anomalies
+            if (i === 15) value = 150;
+            if (i === 16) value = 140;
+            if (i === 35) value = 120;
+            if (i === 50) value = 5;
 
-// Log Patterns functions
-function loadPatterns() {
-    const filter = document.getElementById('pattern-filter')?.value || 'all';
-    fetch(`/api/logs/patterns?filter=${filter}&limit=20`)
-        .then(r => r.json())
-        .then(data => {
-            // Use demo data if empty and demo mode enabled
-            if (DemoData.enabled && (!data?.patterns || data.patterns.length === 0)) {
-                data = DemoData.generatePatterns();
-            }
-            const stats = data.stats || {};
-            const patterns = data.patterns || [];
-
-            // Update stats
-            const statsEl = document.getElementById('pattern-stats');
-            if (statsEl) {
-                statsEl.innerHTML = `
-                    <div class="pattern-stat">
-                        <span class="pattern-stat-value">${stats.total_patterns || 0}</span>
-                        <span class="pattern-stat-label">Patterns</span>
-                    </div>
-                    <div class="pattern-stat">
-                        <span class="pattern-stat-value">${stats.total_matches || 0}</span>
-                        <span class="pattern-stat-label">Total Logs</span>
-                    </div>
-                    <div class="pattern-stat">
-                        <span class="pattern-stat-value">${stats.matches_last_hour || 0}</span>
-                        <span class="pattern-stat-label">Last Hour</span>
-                    </div>
-                    <div class="pattern-stat">
-                        <span class="pattern-stat-value">${stats.new_patterns_today || 0}</span>
-                        <span class="pattern-stat-label">New Today</span>
-                    </div>
-                `;
-            }
-
-            // Update patterns list
-            const list = document.getElementById('patterns-list');
-            if (!list) return;
-
-            if (!patterns?.length) {
-                list.innerHTML = '<div class="empty-state">No patterns detected yet. Send some logs to see patterns emerge.</div>';
-                return;
-            }
-
-            list.innerHTML = patterns.map(p => {
-                const trend = p.trend || 'stable';
-                const trendLabel = trend === 'increasing' ? 'Increasing' :
-                                  trend === 'decreasing' ? 'Decreasing' :
-                                  trend === 'new' ? 'New' : 'Stable';
-                const examples = (p.examples || []).slice(0, 2);
-                const lastSeen = p.last_seen ? new Date(p.last_seen).toLocaleString() : '-';
-
-                return `<div class="pattern-item">
-                    <div class="pattern-header">
-                        <span class="pattern-trend ${trend}">${trendLabel}</span>
-                        <span class="pattern-count">${p.count.toLocaleString()} occurrences</span>
-                        ${p.count_last_hr ? `<span style="color:#71767b;font-size:0.65rem;">(${p.count_last_hr} last hour)</span>` : ''}
-                    </div>
-                    <div class="pattern-signature" title="${escapeHtml(p.signature)}">${escapeHtml(p.signature)}</div>
-                    <div class="pattern-meta">
-                        <span>Level: ${p.level || '-'}</span>
-                        <span>Service: ${p.service || '-'}</span>
-                        <span>Last seen: ${lastSeen}</span>
-                    </div>
-                    ${examples.length ? `<div class="pattern-examples">
-                        <span style="color:#71767b">Examples:</span>
-                        ${examples.map(ex => `<div class="pattern-example" title="${escapeHtml(ex)}">${escapeHtml(ex)}</div>`).join('')}
-                    </div>` : ''}
-                </div>`;
-            }).join('');
-        })
-        .catch(() => {});
-}
-
-// Container functions
-function loadContainers() {
-    fetch('/api/containers')
-        .then(r => r.json())
-        .then(data => {
-            if (!Array.isArray(data)) data = [];
-
-            // Update summary
-            const running = data.filter(d => d.container?.state === 'running').length;
-            const stopped = data.filter(d => d.container?.state !== 'running').length;
-            let totalCpu = 0, totalMem = 0;
-            data.forEach(d => {
-                if (d.stats) {
-                    totalCpu += d.stats.cpu_percent || 0;
-                    totalMem += d.stats.memory_usage || 0;
-                }
+            data.push({
+                timestamp: now - (points - i) * 60000,
+                value
             });
+        }
 
-            const summaryEl = document.getElementById('container-summary');
-            if (summaryEl) {
-                summaryEl.innerHTML = `
-                    <div class="container-stat">
-                        <span class="container-stat-value">${data.length}</span>
-                        <span class="container-stat-label">Total</span>
-                    </div>
-                    <div class="container-stat">
-                        <span class="container-stat-value" style="color:#00ba7c">${running}</span>
-                        <span class="container-stat-label">Running</span>
-                    </div>
-                    <div class="container-stat">
-                        <span class="container-stat-value" style="color:#71767b">${stopped}</span>
-                        <span class="container-stat-label">Stopped</span>
-                    </div>
-                    <div class="container-stat">
-                        <span class="container-stat-value">${totalCpu.toFixed(1)}%</span>
-                        <span class="container-stat-label">CPU</span>
-                    </div>
-                    <div class="container-stat">
-                        <span class="container-stat-value">${formatBytes(totalMem)}</span>
-                        <span class="container-stat-label">Memory</span>
-                    </div>
-                `;
-            }
-
-            // Update list
-            const list = document.getElementById('containers-list');
-            if (!list) return;
-
-            if (!data.length) {
-                list.innerHTML = '<div class="empty-state">No containers found. Is Docker running?</div>';
-                return;
-            }
-
-            list.innerHTML = data.map(d => {
-                const c = d.container || {};
-                const s = d.stats || {};
-                const state = c.state || 'unknown';
-                const cpuPct = (s.cpu_percent || 0).toFixed(1);
-                const memPct = (s.memory_percent || 0).toFixed(1);
-                const memUsed = formatBytes(s.memory_usage || 0);
-                const netRx = formatBytes(s.network_rx_bytes || 0);
-                const netTx = formatBytes(s.network_tx_bytes || 0);
-
-                return `<div class="container-item">
-                    <div class="container-header">
-                        <span class="container-state ${state}">${state}</span>
-                        <span class="container-name">${escapeHtml(c.name || c.id)}</span>
-                    </div>
-                    <div class="container-image">${escapeHtml(c.image || '-')}</div>
-                    ${state === 'running' ? `
-                    <div class="container-metrics">
-                        <div class="container-metric">
-                            <span class="container-metric-value">${cpuPct}%</span>
-                            <span class="container-metric-label">CPU</span>
-                            <div class="container-bar"><div class="container-bar-fill cpu" style="width:${Math.min(cpuPct, 100)}%"></div></div>
-                        </div>
-                        <div class="container-metric">
-                            <span class="container-metric-value">${memUsed}</span>
-                            <span class="container-metric-label">Memory (${memPct}%)</span>
-                            <div class="container-bar"><div class="container-bar-fill mem" style="width:${Math.min(memPct, 100)}%"></div></div>
-                        </div>
-                        <div class="container-metric">
-                            <span class="container-metric-value">${netRx} / ${netTx}</span>
-                            <span class="container-metric-label">Net RX / TX</span>
-                        </div>
-                        <div class="container-metric">
-                            <span class="container-metric-value">${s.pids || 0}</span>
-                            <span class="container-metric-label">PIDs</span>
-                        </div>
-                    </div>
-                    ` : `<div style="font-size:0.7rem;color:#71767b;margin-top:0.3rem;">${escapeHtml(c.status || '')}</div>`}
-                </div>`;
-            }).join('');
-        })
-        .catch(() => {
-            const list = document.getElementById('containers-list');
-            if (list) list.innerHTML = '<div class="empty-state">Container monitoring not available</div>';
-        });
-}
-
-// Deployment functions
-function loadDeployments() {
-    fetch('/api/deploys')
-        .then(r => r.json())
-        .then(data => {
-            if (!Array.isArray(data)) data = [];
-            // Use demo data if empty and demo mode enabled
-            if (!data.length && DemoData.enabled) {
-                data = DemoData.generateDeployments();
-            }
-
-            // Load stats
-            fetch('/api/deploys/stats')
-                .then(r => r.json())
-                .then(stats => {
-                    // Use demo stats if empty
-                    if (DemoData.enabled && !stats?.total_deployments) {
-                        stats = DemoData.generateDeployStats();
-                    }
-                    const summaryEl = document.getElementById('deploy-summary');
-                    if (summaryEl) {
-                        summaryEl.innerHTML = `
-                            <div class="deploy-stat">
-                                <span class="deploy-stat-value">${stats.total_deployments || 0}</span>
-                                <span class="deploy-stat-label">Total</span>
-                            </div>
-                            <div class="deploy-stat">
-                                <span class="deploy-stat-value">${stats.deploys_today || 0}</span>
-                                <span class="deploy-stat-label">Today</span>
-                            </div>
-                            <div class="deploy-stat">
-                                <span class="deploy-stat-value">${stats.deploys_this_week || 0}</span>
-                                <span class="deploy-stat-label">This Week</span>
-                            </div>
-                            <div class="deploy-stat">
-                                <span class="deploy-stat-value" style="color:#00ba7c">${(stats.success_rate || 0).toFixed(0)}%</span>
-                                <span class="deploy-stat-label">Success Rate</span>
-                            </div>
-                            <div class="deploy-stat">
-                                <span class="deploy-stat-value" style="color:${stats.recent_failures > 0 ? '#f4212e' : '#71767b'}">${stats.recent_failures || 0}</span>
-                                <span class="deploy-stat-label">Recent Failures</span>
-                            </div>
-                        `;
-                    }
-                })
-                .catch(() => {
-                    if (DemoData.enabled) {
-                        const stats = DemoData.generateDeployStats();
-                        const summaryEl = document.getElementById('deploy-summary');
-                        if (summaryEl) {
-                            summaryEl.innerHTML = `
-                                <div class="deploy-stat"><span class="deploy-stat-value">${stats.total_deployments}</span><span class="deploy-stat-label">Total</span></div>
-                                <div class="deploy-stat"><span class="deploy-stat-value">${stats.deploys_today}</span><span class="deploy-stat-label">Today</span></div>
-                                <div class="deploy-stat"><span class="deploy-stat-value">${stats.deploys_this_week}</span><span class="deploy-stat-label">This Week</span></div>
-                                <div class="deploy-stat"><span class="deploy-stat-value" style="color:#00ba7c">${stats.success_rate.toFixed(0)}%</span><span class="deploy-stat-label">Success Rate</span></div>
-                                <div class="deploy-stat"><span class="deploy-stat-value" style="color:${stats.recent_failures > 0 ? '#f4212e' : '#71767b'}">${stats.recent_failures}</span><span class="deploy-stat-label">Recent Failures</span></div>
-                            `;
-                        }
-                    }
-                });
-
-            // Update list
-            const list = document.getElementById('deployments-list');
-            if (!list) return;
-
-            if (!data.length) {
-                list.innerHTML = '<div class="empty-state">No deployments recorded. Click "+ Deploy" to record one.</div>';
-                return;
-            }
-
-            list.innerHTML = data.slice(0, 20).map(d => {
-                const time = new Date(d.timestamp).toLocaleString();
-                const relTime = timeAgo(new Date(d.timestamp));
-                const commitLink = d.commit_url ?
-                    `<a href="${escapeHtml(d.commit_url)}" target="_blank" class="deploy-commit">${escapeHtml(d.commit_sha?.substring(0, 7) || '')}</a>` :
-                    (d.commit_sha ? `<span class="deploy-commit">${escapeHtml(d.commit_sha.substring(0, 7))}</span>` : '');
-
-                return `<div class="deploy-item" onclick="showDeployImpact('${d.id}')" style="cursor:pointer">
-                    <div class="deploy-marker ${d.status || 'success'}"></div>
-                    <div class="deploy-info">
-                        <div class="deploy-header">
-                            <span class="deploy-service">${escapeHtml(d.service)}</span>
-                            <span class="deploy-version">${escapeHtml(d.version)}</span>
-                            <span class="deploy-env ${d.environment || 'prod'}">${d.environment || 'prod'}</span>
-                        </div>
-                        <div class="deploy-meta">
-                            <span class="deploy-time" title="${time}">${relTime}</span>
-                            ${d.user ? `<span class="deploy-user">by ${escapeHtml(d.user)}</span>` : ''}
-                            ${commitLink}
-                            ${d.duration_ms ? `<span>${d.duration_ms}ms</span>` : ''}
-                        </div>
-                    </div>
-                    <div class="deploy-actions" onclick="event.stopPropagation()">
-                        <button class="btn" onclick="showDeployImpact('${d.id}')" title="View impact">&#128200;</button>
-                        ${d.status === 'success' ? `<button class="btn" onclick="markDeployFailed('${d.id}')" title="Mark as failed">&#10006;</button>` : ''}
-                        ${d.status === 'failed' ? `<button class="btn" onclick="markDeployRolledBack('${d.id}')" title="Mark as rolled back">&#8634;</button>` : ''}
-                    </div>
-                </div>`;
-            }).join('');
-        })
-        .catch(() => {
-            const list = document.getElementById('deployments-list');
-            if (list) list.innerHTML = '<div class="empty-state">Deployments not available</div>';
-        });
-}
-
-function timeAgo(date) {
-    const seconds = Math.floor((new Date() - date) / 1000);
-    if (seconds < 60) return 'just now';
-    if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
-    if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ago';
-    return Math.floor(seconds / 86400) + 'd ago';
-}
-
-function showNewDeployModal() {
-    const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
-    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
-    overlay.innerHTML = `
-        <div class="modal">
-            <div class="modal-header">
-                <span class="modal-title">Record Deployment</span>
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">Service *</label>
-                        <input type="text" id="deploy-service" class="form-input" placeholder="my-api">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Version *</label>
-                        <input type="text" id="deploy-version" class="form-input" placeholder="v1.2.3">
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">Environment</label>
-                        <select id="deploy-env" class="form-select">
-                            <option value="prod">Production</option>
-                            <option value="staging">Staging</option>
-                            <option value="dev">Development</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Status</label>
-                        <select id="deploy-status" class="form-select">
-                            <option value="success">Success</option>
-                            <option value="failed">Failed</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Deployed By</label>
-                    <input type="text" id="deploy-user" class="form-input" placeholder="username">
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">Commit SHA</label>
-                        <input type="text" id="deploy-sha" class="form-input" placeholder="abc1234">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Commit URL</label>
-                        <input type="text" id="deploy-url" class="form-input" placeholder="https://github.com/...">
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Description</label>
-                    <input type="text" id="deploy-desc" class="form-input" placeholder="Optional notes">
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                <button class="btn btn-primary" onclick="submitDeploy()">Record Deploy</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(overlay);
-}
-
-function submitDeploy() {
-    const service = document.getElementById('deploy-service').value.trim();
-    const version = document.getElementById('deploy-version').value.trim();
-    if (!service || !version) {
-        alert('Service and Version are required');
-        return;
+        return { data };
     }
 
-    const deploy = {
-        service: service,
-        version: version,
-        environment: document.getElementById('deploy-env').value,
-        status: document.getElementById('deploy-status').value,
-        user: document.getElementById('deploy-user').value.trim(),
-        commit_sha: document.getElementById('deploy-sha').value.trim(),
-        commit_url: document.getElementById('deploy-url').value.trim(),
-        description: document.getElementById('deploy-desc').value.trim()
-    };
+    detectAnomalies() {
+        if (!this.data?.data) return;
 
-    fetch('/api/deploys', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(deploy)
-    })
-    .then(r => {
-        if (!r.ok) throw new Error('Failed to record deploy');
-        return r.json();
-    })
-    .then(() => {
-        document.querySelector('.modal-overlay').remove();
-        loadDeployments();
-    })
-    .catch(err => alert('Error: ' + err.message));
-}
+        const values = this.data.data.map(d => d.value);
 
-function markDeployFailed(id) {
-    if (!confirm('Mark this deployment as failed?')) return;
-    fetch(`/api/deploys/${id}/status`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'failed' })
-    })
-    .then(() => loadDeployments())
-    .catch(err => alert('Error: ' + err.message));
-}
+        // Calculate mean and std
+        const mean = values.reduce((a, b) => a + b, 0) / values.length;
+        const std = Math.sqrt(values.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / values.length);
 
-function markDeployRolledBack(id) {
-    if (!confirm('Mark this deployment as rolled back?')) return;
-    fetch(`/api/deploys/${id}/status`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'rolled_back' })
-    })
-    .then(() => loadDeployments())
-    .catch(err => alert('Error: ' + err.message));
-}
+        // Detect anomalies based on z-score
+        const anomalies = [];
+        const threshold = this.sensitivity;
 
-function showDeployImpact(id) {
-    fetch(`/api/deploys/${id}/impact?window=30m`)
-        .then(r => r.json())
-        .then(impact => {
-            fetch(`/api/deploys/${id}`)
-                .then(r => r.json())
-                .then(deploy => {
-                    const impactColor = impact.impact === 'positive' ? '#00ba7c' :
-                                      impact.impact === 'negative' ? '#f4212e' : '#71767b';
-                    const impactIcon = impact.impact === 'positive' ? '&#9650;' :
-                                     impact.impact === 'negative' ? '&#9660;' : '&#9679;';
-
-                    const errorChange = impact.error_rate_change || 0;
-                    const latencyChange = impact.latency_change || 0;
-                    const errorColor = errorChange > 0 ? '#f4212e' : errorChange < 0 ? '#00ba7c' : '#71767b';
-                    const latencyColor = latencyChange > 0 ? '#f4212e' : latencyChange < 0 ? '#00ba7c' : '#71767b';
-
-                    const modal = document.createElement('div');
-                    modal.className = 'modal-overlay';
-                    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-                    modal.innerHTML = `
-                        <div class="modal" style="max-width:500px">
-                            <div class="modal-header">
-                                <span class="modal-title">Deployment Impact Analysis</span>
-                                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-                            </div>
-                            <div style="padding:1rem">
-                                <div style="display:flex;align-items:center;gap:0.8rem;margin-bottom:1rem;padding-bottom:1rem;border-bottom:1px solid #2f3336">
-                                    <div class="deploy-marker ${deploy.status}" style="height:50px"></div>
-                                    <div>
-                                        <div style="font-size:1.1rem;font-weight:600">${escapeHtml(deploy.service)} ${escapeHtml(deploy.version)}</div>
-                                        <div style="color:#71767b;font-size:0.8rem">${new Date(deploy.timestamp).toLocaleString()}</div>
-                                    </div>
-                                    <div style="margin-left:auto;text-align:center">
-                                        <div style="font-size:2rem;color:${impactColor}">${impactIcon}</div>
-                                        <div style="font-size:0.7rem;text-transform:uppercase;font-weight:600;color:${impactColor}">${impact.impact}</div>
-                                    </div>
-                                </div>
-
-                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
-                                    <div class="stat-card" style="padding:0.8rem">
-                                        <div style="font-size:0.7rem;color:#71767b;text-transform:uppercase;margin-bottom:0.5rem">Error Rate Change</div>
-                                        <div style="font-size:1.5rem;font-weight:700;color:${errorColor}">
-                                            ${errorChange > 0 ? '+' : ''}${errorChange.toFixed(1)}%
-                                        </div>
-                                        <div style="font-size:0.7rem;color:#71767b;margin-top:0.3rem">
-                                            ${impact.errors_before || 0} &rarr; ${impact.errors_after || 0} errors
-                                        </div>
-                                    </div>
-                                    <div class="stat-card" style="padding:0.8rem">
-                                        <div style="font-size:0.7rem;color:#71767b;text-transform:uppercase;margin-bottom:0.5rem">CPU Change</div>
-                                        <div style="font-size:1.5rem;font-weight:700;color:${latencyColor}">
-                                            ${latencyChange > 0 ? '+' : ''}${latencyChange.toFixed(1)}%
-                                        </div>
-                                        <div style="font-size:0.7rem;color:#71767b;margin-top:0.3rem">
-                                            ${(impact.latency_p50_before || 0).toFixed(1)}% &rarr; ${(impact.latency_p50_after || 0).toFixed(1)}%
-                                        </div>
-                                    </div>
-                                    <div class="stat-card" style="padding:0.8rem">
-                                        <div style="font-size:0.7rem;color:#71767b;text-transform:uppercase;margin-bottom:0.5rem">Requests Before</div>
-                                        <div style="font-size:1.5rem;font-weight:700">${impact.requests_before || 0}</div>
-                                        <div style="font-size:0.7rem;color:#71767b;margin-top:0.3rem">30 min window</div>
-                                    </div>
-                                    <div class="stat-card" style="padding:0.8rem">
-                                        <div style="font-size:0.7rem;color:#71767b;text-transform:uppercase;margin-bottom:0.5rem">Requests After</div>
-                                        <div style="font-size:1.5rem;font-weight:700">${impact.requests_after || 0}</div>
-                                        <div style="font-size:0.7rem;color:#71767b;margin-top:0.3rem">30 min window</div>
-                                    </div>
-                                </div>
-
-                                ${deploy.description ? `
-                                <div style="margin-top:1rem;padding:0.8rem;background:#1a1d21;border-radius:6px">
-                                    <div style="font-size:0.7rem;color:#71767b;margin-bottom:0.3rem">Notes</div>
-                                    <div style="font-size:0.85rem">${escapeHtml(deploy.description)}</div>
-                                </div>` : ''}
-
-                                ${deploy.commit_sha ? `
-                                <div style="margin-top:0.8rem;font-size:0.8rem;color:#71767b">
-                                    Commit: ${deploy.commit_url ?
-                                        `<a href="${escapeHtml(deploy.commit_url)}" target="_blank" style="color:#1d9bf0">${deploy.commit_sha.substring(0,7)}</a>` :
-                                        `<code>${deploy.commit_sha.substring(0,7)}</code>`}
-                                    ${deploy.user ? ` by ${escapeHtml(deploy.user)}` : ''}
-                                </div>` : ''}
-                            </div>
-                        </div>`;
-                    document.body.appendChild(modal);
+        this.data.data.forEach((d, i) => {
+            const zScore = Math.abs((d.value - mean) / std);
+            if (zScore > threshold) {
+                anomalies.push({
+                    index: i,
+                    timestamp: d.timestamp,
+                    value: d.value,
+                    zScore,
+                    severity: zScore > threshold * 1.5 ? 'high' : zScore > threshold * 1.2 ? 'medium' : 'low',
+                    direction: d.value > mean ? 'spike' : 'drop'
                 });
-        })
-        .catch(err => alert('Error loading impact: ' + err.message));
-}
+            }
+        });
 
-function formatBytes(bytes) {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-}
+        this.anomalies = anomalies;
+        this.renderChart();
+        this.renderList();
+    }
 
-// Incident functions
-function loadIncidents() {
-    fetch('/api/incidents?status=all&limit=20')
-        .then(r => r.ok ? r.json() : Promise.reject('API error'))
-        .then(incidents => {
-            // Load stats
-            fetch('/api/incidents/stats')
-                .then(r => r.json())
-                .then(stats => {
-                    // Use demo stats if empty
-                    if (DemoData.enabled && !stats?.active_incidents && !stats?.triggered_count) {
-                        stats = DemoData.generateIncidentStats();
-                    }
-                    document.getElementById('inc-active').textContent = stats.active_incidents || 0;
-                    document.getElementById('inc-triggered').textContent = stats.triggered_count || 0;
-                    document.getElementById('inc-acked').textContent = stats.acknowledged_count || 0;
-                })
-                .catch(() => {
-                    if (DemoData.enabled) {
-                        const stats = DemoData.generateIncidentStats();
-                        document.getElementById('inc-active').textContent = stats.active_incidents || 0;
-                        document.getElementById('inc-triggered').textContent = stats.triggered_count || 0;
-                        document.getElementById('inc-acked').textContent = stats.acknowledged_count || 0;
-                    }
-                });
+    async renderChart() {
+        const canvas = this.querySelector('#chart');
+        if (!canvas || !this.data) return;
 
-            // Load on-call
-            fetch('/api/oncall/current')
-                .then(r => r.json())
-                .then(oncall => {
-                    // Use demo on-call if empty
-                    if (DemoData.enabled && (!oncall || Object.keys(oncall).length === 0)) {
-                        oncall = DemoData.generateCurrentOnCall();
+        if (!window.Chart && window.LibLoader) {
+            await window.LibLoader.loadAll(['chart', 'chart-date']);
+        }
+
+        if (this.chart) this.chart.destroy();
+
+        const ctx = canvas.getContext('2d');
+        const data = this.data.data;
+
+        // Create anomaly highlighting dataset
+        const anomalyData = data.map((d, i) => {
+            const anomaly = this.anomalies.find(a => a.index === i);
+            return anomaly ? d.value : null;
+        });
+
+        this.chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.map(d => new Date(d.timestamp)),
+                datasets: [
+                    {
+                        label: 'Metric',
+                        data: data.map(d => d.value),
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 0,
+                    },
+                    {
+                        label: 'Anomaly',
+                        data: anomalyData,
+                        borderColor: '#f43f5e',
+                        backgroundColor: '#f43f5e',
+                        pointRadius: 8,
+                        pointHoverRadius: 10,
+                        showLine: false,
                     }
-                    const display = document.getElementById('oncall-display');
-                    if (display) {
-                        const names = Object.values(oncall).filter(v => v);
-                        if (names.length > 0) {
-                            display.innerHTML = `<span class="oncall-badge">${escapeHtml(names[0])}</span>`;
-                        }
-                    }
-                })
-                .catch(() => {
-                    if (DemoData.enabled) {
-                        const oncall = DemoData.generateCurrentOnCall();
-                        const display = document.getElementById('oncall-display');
-                        if (display) {
-                            const names = Object.values(oncall).filter(v => v);
-                            if (names.length > 0) {
-                                display.innerHTML = `<span class="oncall-badge">${escapeHtml(names[0])}</span>`;
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: (ctx) => {
+                                if (ctx.datasetIndex === 1) {
+                                    const anomaly = this.anomalies.find(a => a.index === ctx.dataIndex);
+                                    return anomaly ? `Anomaly: ${ctx.raw.toFixed(1)} (z=${anomaly.zScore.toFixed(2)})` : '';
+                                }
+                                return `Value: ${ctx.raw.toFixed(1)}`;
                             }
                         }
                     }
-                });
+                },
+                scales: {
+                    x: {
+                        type: 'time',
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: { color: '#71767b', maxTicksLimit: 6 }
+                    },
+                    y: {
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: { color: '#71767b' }
+                    }
+                }
+            }
+        });
+    }
 
-            // Use demo data if empty and demo mode enabled
-            if ((!incidents || incidents.length === 0) && DemoData.enabled) {
-                incidents = DemoData.generateIncidents();
+    renderList() {
+        const list = this.querySelector('#list');
+        const countBadge = this.querySelector('#count');
+
+        if (!list) return;
+
+        countBadge.textContent = this.anomalies.length;
+
+        if (this.anomalies.length === 0) {
+            list.innerHTML = '<div style="padding: 1rem; text-align: center; color: var(--text-muted);">No anomalies detected</div>';
+            return;
+        }
+
+        list.innerHTML = this.anomalies.map(a => `
+            <div class="anomaly-item" data-index="${a.index}">
+                <div class="anomaly-dot ${a.severity}"></div>
+                <div class="anomaly-info">
+                    <div class="anomaly-time">${new Date(a.timestamp).toLocaleTimeString()}</div>
+                    <div class="anomaly-desc">${a.direction === 'spike' ? 'Spike' : 'Drop'}: ${a.value.toFixed(1)} (${a.severity})</div>
+                </div>
+                <div class="anomaly-score">z=${a.zScore.toFixed(1)}</div>
+            </div>
+        `).join('');
+
+        // Click to highlight on chart
+        list.querySelectorAll('.anomaly-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const index = parseInt(item.dataset.index);
+                // Could zoom to this point on the chart
+                this.dispatchEvent(new CustomEvent('anomaly-click', {
+                    detail: this.anomalies.find(a => a.index === index)
+                }));
+            });
+        });
+    }
+}
+
+customElements.define('anomaly-overlay', AnomalyOverlay);
+
+/**
+ * Correlation View Component
+ * Split-pane view with metrics on top and related logs/traces below
+ */
+class CorrelationView extends HTMLElement {
+    constructor() {
+        super();
+        this.metricsData = null;
+        this.correlatedData = null;
+        this.selectedTimeRange = null;
+        this.chart = null;
+    }
+
+    connectedCallback() {
+        this.render();
+        this.loadMetrics();
+    }
+
+    disconnectedCallback() {
+        if (this.chart) {
+            this.chart.destroy();
+        }
+    }
+
+    static get observedAttributes() {
+        return ['metric', 'service', 'time-range'];
+    }
+
+    attributeChangedCallback(name, oldValue, newValue) {
+        if (oldValue !== newValue) {
+            this.loadMetrics();
+        }
+    }
+
+    get metric() { return this.getAttribute('metric') || 'http_request_duration_seconds'; }
+    get service() { return this.getAttribute('service') || ''; }
+    get timeRange() { return this.getAttribute('time-range') || '1h'; }
+
+    render() {
+        this.innerHTML = `
+            <style>
+                .correlation-container {
+                    display: flex;
+                    flex-direction: column;
+                    height: 100%;
+                    background: var(--bg-card, #16181c);
+                    border-radius: 8px;
+                    overflow: hidden;
+                }
+                .correlation-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 0.75rem 1rem;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border-bottom: 1px solid var(--border-color, #2f3336);
+                }
+                .correlation-title {
+                    font-weight: 600;
+                    font-size: 0.9rem;
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                }
+                .correlation-controls {
+                    display: flex;
+                    gap: 0.5rem;
+                }
+                .correlation-controls select {
+                    background: var(--bg-primary, #0f1419);
+                    border: 1px solid var(--border-color, #2f3336);
+                    border-radius: 4px;
+                    padding: 0.4rem 0.5rem;
+                    color: var(--text-primary, #e7e9ea);
+                    font-size: 0.8rem;
+                }
+                .correlation-metrics-panel {
+                    height: 200px;
+                    padding: 1rem;
+                    border-bottom: 1px solid var(--border-color, #2f3336);
+                    position: relative;
+                }
+                .correlation-chart {
+                    width: 100%;
+                    height: 100%;
+                }
+                .correlation-hint {
+                    position: absolute;
+                    top: 0.5rem;
+                    right: 1rem;
+                    font-size: 0.75rem;
+                    color: var(--text-muted, #71767b);
+                }
+                .correlation-details-panel {
+                    flex: 1;
+                    display: flex;
+                    flex-direction: column;
+                    overflow: hidden;
+                }
+                .correlation-tabs {
+                    display: flex;
+                    border-bottom: 1px solid var(--border-color, #2f3336);
+                }
+                .correlation-tab {
+                    padding: 0.75rem 1rem;
+                    cursor: pointer;
+                    font-size: 0.85rem;
+                    color: var(--text-muted, #71767b);
+                    border-bottom: 2px solid transparent;
+                    transition: all 0.15s ease;
+                }
+                .correlation-tab:hover {
+                    color: var(--text-primary, #e7e9ea);
+                }
+                .correlation-tab.active {
+                    color: var(--color-info, #1d9bf0);
+                    border-bottom-color: var(--color-info, #1d9bf0);
+                }
+                .correlation-content {
+                    flex: 1;
+                    overflow: auto;
+                    padding: 1rem;
+                }
+                .correlation-empty {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    height: 100%;
+                    color: var(--text-muted, #71767b);
+                    text-align: center;
+                    gap: 0.5rem;
+                }
+                .correlation-trace-item, .correlation-log-item {
+                    padding: 0.75rem;
+                    border: 1px solid var(--border-color, #2f3336);
+                    border-radius: 6px;
+                    margin-bottom: 0.5rem;
+                    cursor: pointer;
+                    transition: all 0.15s ease;
+                }
+                .correlation-trace-item:hover, .correlation-log-item:hover {
+                    border-color: var(--color-info, #1d9bf0);
+                    background: var(--bg-elevated, #1a1f2e);
+                }
+                .correlation-item-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 0.5rem;
+                }
+                .correlation-item-title {
+                    font-weight: 600;
+                    font-size: 0.85rem;
+                }
+                .correlation-item-time {
+                    font-size: 0.75rem;
+                    color: var(--text-muted, #71767b);
+                }
+                .correlation-item-meta {
+                    display: flex;
+                    gap: 1rem;
+                    font-size: 0.8rem;
+                    color: var(--text-muted, #71767b);
+                }
+                .correlation-log-message {
+                    font-family: monospace;
+                    font-size: 0.8rem;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+                .correlation-badge {
+                    display: inline-flex;
+                    padding: 0.2rem 0.5rem;
+                    border-radius: 4px;
+                    font-size: 0.7rem;
+                    font-weight: 600;
+                }
+                .correlation-badge.error {
+                    background: rgba(244, 63, 94, 0.2);
+                    color: #f43f5e;
+                }
+                .correlation-badge.warning {
+                    background: rgba(245, 158, 11, 0.2);
+                    color: #f59e0b;
+                }
+                .correlation-badge.info {
+                    background: rgba(59, 130, 246, 0.2);
+                    color: #3b82f6;
+                }
+                .correlation-selection-info {
+                    padding: 0.5rem 1rem;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border-bottom: 1px solid var(--border-color, #2f3336);
+                    font-size: 0.8rem;
+                    display: none;
+                }
+                .correlation-selection-info.visible {
+                    display: block;
+                }
+            </style>
+            <div class="correlation-container">
+                <div class="correlation-header">
+                    <div class="correlation-title">
+                        <span>&#128279;</span>
+                        <span>Correlation View</span>
+                    </div>
+                    <div class="correlation-controls">
+                        <select id="metric-select">
+                            <option value="http_request_duration_seconds">Request Latency</option>
+                            <option value="http_requests_total">Request Rate</option>
+                            <option value="http_request_errors_total">Error Rate</option>
+                        </select>
+                        <select id="time-select">
+                            <option value="15m">15 min</option>
+                            <option value="1h" selected>1 hour</option>
+                            <option value="6h">6 hours</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="correlation-metrics-panel">
+                    <canvas class="correlation-chart" id="chart"></canvas>
+                    <div class="correlation-hint">Click and drag to select a time range</div>
+                </div>
+                <div class="correlation-selection-info" id="selection-info">
+                    Selected: <span id="selection-range"></span> -
+                    <span id="selection-count"></span> events found
+                </div>
+                <div class="correlation-details-panel">
+                    <div class="correlation-tabs">
+                        <div class="correlation-tab active" data-tab="traces">Traces</div>
+                        <div class="correlation-tab" data-tab="logs">Logs</div>
+                        <div class="correlation-tab" data-tab="events">Events</div>
+                    </div>
+                    <div class="correlation-content" id="content">
+                        <div class="correlation-empty">
+                            <span style="font-size: 2rem;">&#128270;</span>
+                            <span>Select a time range on the chart above</span>
+                            <span>to see correlated traces and logs</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        this.setupEventListeners();
+    }
+
+    setupEventListeners() {
+        // Tab switching
+        this.querySelectorAll('.correlation-tab').forEach(tab => {
+            tab.addEventListener('click', (e) => {
+                this.querySelectorAll('.correlation-tab').forEach(t => t.classList.remove('active'));
+                e.target.classList.add('active');
+                this.renderCorrelatedData(e.target.dataset.tab);
+            });
+        });
+
+        // Metric selection
+        this.querySelector('#metric-select')?.addEventListener('change', (e) => {
+            this.setAttribute('metric', e.target.value);
+        });
+
+        // Time range
+        this.querySelector('#time-select')?.addEventListener('change', (e) => {
+            this.setAttribute('time-range', e.target.value);
+        });
+    }
+
+    async loadMetrics() {
+        try {
+            const params = new URLSearchParams({
+                metric: this.metric,
+                range: this.timeRange
+            });
+            if (this.service) params.append('service', this.service);
+
+            const resp = await fetch(`/api/metrics/timeseries?${params}`);
+
+            if (!resp.ok) {
+                this.metricsData = this.generateDemoMetrics();
+            } else {
+                this.metricsData = await resp.json();
             }
 
-            const list = document.getElementById('incidents-list');
-            if (!list) return;
+            this.renderChart();
+        } catch (e) {
+            console.error('Failed to load metrics:', e);
+            this.metricsData = this.generateDemoMetrics();
+            this.renderChart();
+        }
+    }
 
-            if (!incidents || incidents.length === 0) {
-                list.innerHTML = '<div class="empty-state">No incidents. All quiet!</div>';
+    generateDemoMetrics() {
+        const now = Date.now();
+        const points = 60;
+        const interval = 60000; // 1 minute
+        const data = [];
+
+        for (let i = 0; i < points; i++) {
+            const timestamp = now - (points - i) * interval;
+            let value = 50 + Math.random() * 30;
+
+            // Add some spikes
+            if (i === 25 || i === 26) value += 100;
+            if (i === 45) value += 80;
+
+            data.push({ timestamp, value });
+        }
+
+        return { data };
+    }
+
+    async renderChart() {
+        const canvas = this.querySelector('#chart');
+        if (!canvas || !this.metricsData) return;
+
+        // Ensure Chart.js is loaded
+        if (!window.Chart) {
+            if (window.LibLoader) {
+                await window.LibLoader.loadAll(['chart', 'chart-date']);
+            }
+        }
+
+        if (this.chart) {
+            this.chart.destroy();
+        }
+
+        const ctx = canvas.getContext('2d');
+        const data = this.metricsData.data;
+
+        this.chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.map(d => new Date(d.timestamp)),
+                datasets: [{
+                    data: data.map(d => d.value),
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'time',
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: { color: '#71767b', maxTicksLimit: 6 }
+                    },
+                    y: {
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: { color: '#71767b' }
+                    }
+                },
+                interaction: {
+                    mode: 'nearest',
+                    axis: 'x',
+                    intersect: false
+                },
+                onClick: (event, elements) => {
+                    if (elements.length > 0) {
+                        const index = elements[0].index;
+                        const timestamp = data[index].timestamp;
+                        this.selectTimeRange(timestamp - 60000, timestamp + 60000);
+                    }
+                }
+            }
+        });
+
+        // Add drag selection (simplified)
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const chartArea = this.chart.chartArea;
+
+            if (x >= chartArea.left && x <= chartArea.right) {
+                const xScale = this.chart.scales.x;
+                const timestamp = xScale.getValueForPixel(x);
+                this.selectTimeRange(timestamp - 60000, timestamp + 60000);
+            }
+        });
+    }
+
+    async selectTimeRange(start, end) {
+        this.selectedTimeRange = { start, end };
+
+        // Update UI
+        const selectionInfo = this.querySelector('#selection-info');
+        const selectionRange = this.querySelector('#selection-range');
+
+        selectionInfo.classList.add('visible');
+        selectionRange.textContent = `${new Date(start).toLocaleTimeString()} - ${new Date(end).toLocaleTimeString()}`;
+
+        // Load correlated data
+        await this.loadCorrelatedData(start, end);
+    }
+
+    async loadCorrelatedData(start, end) {
+        try {
+            const params = new URLSearchParams({
+                start: new Date(start).toISOString(),
+                end: new Date(end).toISOString()
+            });
+            if (this.service) params.append('service', this.service);
+
+            const resp = await fetch(`/api/correlation/events?${params}`);
+
+            if (!resp.ok) {
+                this.correlatedData = this.generateDemoCorrelatedData();
+            } else {
+                this.correlatedData = await resp.json();
+            }
+
+            this.querySelector('#selection-count').textContent =
+                (this.correlatedData.traces?.length || 0) + (this.correlatedData.logs?.length || 0);
+
+            // Render active tab
+            const activeTab = this.querySelector('.correlation-tab.active');
+            this.renderCorrelatedData(activeTab?.dataset.tab || 'traces');
+        } catch (e) {
+            console.error('Failed to load correlated data:', e);
+            this.correlatedData = this.generateDemoCorrelatedData();
+            this.renderCorrelatedData('traces');
+        }
+    }
+
+    generateDemoCorrelatedData() {
+        return {
+            traces: [
+                { id: 'trace-1', service: 'api-gateway', operation: 'GET /api/users', duration: 245, status: 'error', timestamp: Date.now() - 30000 },
+                { id: 'trace-2', service: 'user-service', operation: 'getUserById', duration: 180, status: 'ok', timestamp: Date.now() - 35000 },
+                { id: 'trace-3', service: 'api-gateway', operation: 'POST /api/orders', duration: 520, status: 'error', timestamp: Date.now() - 40000 },
+            ],
+            logs: [
+                { timestamp: Date.now() - 28000, level: 'error', service: 'api-gateway', message: 'Connection timeout to upstream service' },
+                { timestamp: Date.now() - 32000, level: 'warn', service: 'user-service', message: 'Slow query detected: 180ms' },
+                { timestamp: Date.now() - 38000, level: 'error', service: 'order-service', message: 'Database connection pool exhausted' },
+                { timestamp: Date.now() - 42000, level: 'info', service: 'api-gateway', message: 'Retry attempt 1 for request xyz' },
+            ],
+            events: [
+                { timestamp: Date.now() - 25000, type: 'deploy', service: 'api-gateway', message: 'Deployed v2.4.1' },
+                { timestamp: Date.now() - 60000, type: 'alert', service: 'user-service', message: 'High latency alert triggered' },
+            ]
+        };
+    }
+
+    renderCorrelatedData(tab) {
+        const content = this.querySelector('#content');
+        if (!content || !this.correlatedData) return;
+
+        if (tab === 'traces') {
+            const traces = this.correlatedData.traces || [];
+            if (traces.length === 0) {
+                content.innerHTML = '<div class="correlation-empty"><span>No traces found in this time range</span></div>';
                 return;
             }
 
-            list.innerHTML = incidents.map(inc => {
-                const time = new Date(inc.created_at).toLocaleString();
-                const relTime = formatRelativeTime(new Date(inc.created_at));
-                const sourceLabel = inc.source ? `from ${inc.source}` : '';
-
-                return `<div class="incident-item" onclick="showIncidentDetail('${inc.id}')">
-                    <div class="incident-severity ${inc.severity || 'medium'}"></div>
-                    <div class="incident-info">
-                        <div class="incident-header">
-                            <span class="incident-title">${escapeHtml(inc.title)}</span>
-                            <span class="incident-status ${inc.status}">${inc.status}</span>
-                        </div>
-                        <div class="incident-meta">
-                            <span class="incident-time" title="${time}">${relTime}</span>
-                            ${inc.service ? `<span class="incident-source">${escapeHtml(inc.service)}</span>` : ''}
-                            ${sourceLabel ? `<span class="incident-source">${sourceLabel}</span>` : ''}
-                            ${inc.assigned_to ? `<span style="color:#00ba7c">@${escapeHtml(inc.assigned_to)}</span>` : ''}
-                        </div>
+            content.innerHTML = traces.map(t => `
+                <div class="correlation-trace-item" data-trace-id="${t.id}">
+                    <div class="correlation-item-header">
+                        <span class="correlation-item-title">${t.operation}</span>
+                        <span class="correlation-item-time">${new Date(t.timestamp).toLocaleTimeString()}</span>
                     </div>
-                    <div class="incident-actions" onclick="event.stopPropagation()">
-                        ${inc.status === 'triggered' ? `<button class="btn-quick ack" onclick="ackIncident('${inc.id}', true)" title="Quick Ack">Ack</button>` : ''}
-                        ${inc.status !== 'resolved' ? `<button class="btn-quick resolve" onclick="resolveIncident('${inc.id}', true)" title="Quick Resolve">Resolve</button>` : ''}
-                    </div>
-                </div>`;
-            }).join('');
-        })
-        .catch(() => {
-            if (DemoData.enabled) {
-                // Load demo stats
-                const stats = DemoData.generateIncidentStats();
-                document.getElementById('inc-active').textContent = stats.active_incidents || 0;
-                document.getElementById('inc-triggered').textContent = stats.triggered_count || 0;
-                document.getElementById('inc-acked').textContent = stats.acknowledged_count || 0;
-                // Load demo on-call
-                const oncall = DemoData.generateCurrentOnCall();
-                const display = document.getElementById('oncall-display');
-                if (display) {
-                    const names = Object.values(oncall).filter(v => v);
-                    if (names.length > 0) display.innerHTML = `<span class="oncall-badge">${escapeHtml(names[0])}</span>`;
-                }
-                // Load demo incidents
-                const list = document.getElementById('incidents-list');
-                if (list) {
-                    const incidents = DemoData.generateIncidents();
-                    list.innerHTML = incidents.map(inc => {
-                        const relTime = formatRelativeTime(new Date(inc.created_at));
-                        return `<div class="incident-item"><div class="incident-severity ${inc.severity || 'medium'}"></div><div class="incident-info"><div class="incident-header"><span class="incident-title">${escapeHtml(inc.title)}</span><span class="incident-status ${inc.status}">${inc.status}</span></div><div class="incident-meta"><span class="incident-time">${relTime}</span>${inc.service ? `<span class="incident-source">${escapeHtml(inc.service)}</span>` : ''}</div></div></div>`;
-                    }).join('');
-                }
-            } else {
-                const list = document.getElementById('incidents-list');
-                if (list) list.innerHTML = '<div class="empty-state">Incidents not available</div>';
-            }
-        });
-}
-
-function showNewIncidentModal() {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-    modal.innerHTML = `
-        <div class="modal">
-            <div class="modal-header">
-                <span class="modal-title">Create Incident</span>
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">Title *</label>
-                    <input type="text" id="inc-title" class="form-input" placeholder="Brief description of the incident">
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">Severity</label>
-                        <select id="inc-severity" class="form-select">
-                            <option value="critical">Critical (P1)</option>
-                            <option value="high">High (P2)</option>
-                            <option value="medium" selected>Medium (P3)</option>
-                            <option value="low">Low (P4)</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Service</label>
-                        <input type="text" id="inc-service" class="form-input" placeholder="affected-service">
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Description</label>
-                    <textarea id="inc-description" class="form-input" rows="3" placeholder="Details about the incident..."></textarea>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-primary" onclick="submitIncident()">Create Incident</button>
-            </div>
-        </div>`;
-    document.body.appendChild(modal);
-}
-
-function submitIncident() {
-    const title = document.getElementById('inc-title').value.trim();
-    if (!title) {
-        alert('Title is required');
-        return;
-    }
-
-    const incident = {
-        title: title,
-        severity: document.getElementById('inc-severity').value,
-        service: document.getElementById('inc-service').value.trim(),
-        description: document.getElementById('inc-description').value.trim(),
-        source: 'manual'
-    };
-
-    fetch('/api/incidents', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(incident)
-    })
-    .then(r => {
-        if (!r.ok) throw new Error('Failed to create incident');
-        return r.json();
-    })
-    .then(() => {
-        document.querySelector('.modal-overlay').remove();
-        loadIncidents();
-    })
-    .catch(err => alert('Error: ' + err.message));
-}
-
-function ackIncident(id, skipModal = false) {
-    if (skipModal) {
-        // Quick ack with default user from localStorage
-        const user = localStorage.getItem('dogwatch_user') || 'operator';
-        fetch(`/api/incidents/${id}/ack`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user: user })
-        })
-        .then(() => loadIncidents())
-        .catch(err => showToast('Error: ' + err.message, 'error'));
-        return;
-    }
-
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-    modal.innerHTML = `
-        <div class="modal" style="max-width:400px">
-            <div class="modal-header">
-                <span class="modal-title">Acknowledge Incident</span>
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label>Your Name</label>
-                    <input type="text" id="ack-user" value="${localStorage.getItem('dogwatch_user') || 'operator'}" placeholder="Enter your name">
-                </div>
-                <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.8rem;color:#71767b;margin-top:0.5rem;">
-                    <input type="checkbox" id="ack-remember" checked> Remember my name
-                </label>
-                <div id="ack-error" style="color:#f4212e;font-size:0.8rem;margin-top:0.5rem;display:none;"></div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                <button class="btn btn-primary" onclick="submitAck('${id}')">Acknowledge</button>
-            </div>
-        </div>`;
-    document.body.appendChild(modal);
-    document.getElementById('ack-user').focus();
-    document.getElementById('ack-user').select();
-}
-
-function submitAck(id) {
-    const user = document.getElementById('ack-user').value.trim();
-    const remember = document.getElementById('ack-remember').checked;
-    const errorEl = document.getElementById('ack-error');
-
-    if (!user) {
-        errorEl.textContent = 'Please enter your name';
-        errorEl.style.display = 'block';
-        return;
-    }
-
-    if (remember) {
-        localStorage.setItem('dogwatch_user', user);
-    }
-
-    fetch(`/api/incidents/${id}/ack`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user: user })
-    })
-    .then(r => {
-        if (!r.ok) throw new Error('Failed to acknowledge');
-        document.querySelector('.modal-overlay')?.remove();
-        loadIncidents();
-        showToast('Incident acknowledged', 'success');
-    })
-    .catch(err => {
-        errorEl.textContent = err.message;
-        errorEl.style.display = 'block';
-    });
-}
-
-function resolveIncident(id, skipModal = false) {
-    if (skipModal) {
-        // Quick resolve with default user
-        const user = localStorage.getItem('dogwatch_user') || 'operator';
-        fetch(`/api/incidents/${id}/resolve`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user: user, resolution: '' })
-        })
-        .then(() => loadIncidents())
-        .catch(err => showToast('Error: ' + err.message, 'error'));
-        return;
-    }
-
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-    modal.innerHTML = `
-        <div class="modal" style="max-width:450px">
-            <div class="modal-header">
-                <span class="modal-title">Resolve Incident</span>
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label>Your Name</label>
-                    <input type="text" id="resolve-user" value="${localStorage.getItem('dogwatch_user') || 'operator'}" placeholder="Enter your name">
-                </div>
-                <div class="form-group">
-                    <label>Resolution Notes <span style="color:#71767b;font-weight:normal;">(optional)</span></label>
-                    <textarea id="resolve-notes" rows="3" placeholder="What fixed it? Root cause?"></textarea>
-                </div>
-                <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.8rem;color:#71767b;">
-                    <input type="checkbox" id="resolve-remember" checked> Remember my name
-                </label>
-                <div id="resolve-error" style="color:#f4212e;font-size:0.8rem;margin-top:0.5rem;display:none;"></div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                <button class="btn btn-primary" onclick="submitResolve('${id}')">Resolve</button>
-            </div>
-        </div>`;
-    document.body.appendChild(modal);
-    document.getElementById('resolve-notes').focus();
-}
-
-function submitResolve(id) {
-    const user = document.getElementById('resolve-user').value.trim();
-    const resolution = document.getElementById('resolve-notes').value.trim();
-    const remember = document.getElementById('resolve-remember').checked;
-    const errorEl = document.getElementById('resolve-error');
-
-    if (!user) {
-        errorEl.textContent = 'Please enter your name';
-        errorEl.style.display = 'block';
-        return;
-    }
-
-    if (remember) {
-        localStorage.setItem('dogwatch_user', user);
-    }
-
-    fetch(`/api/incidents/${id}/resolve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user: user, resolution: resolution })
-    })
-    .then(r => {
-        if (!r.ok) throw new Error('Failed to resolve');
-        document.querySelector('.modal-overlay')?.remove();
-        loadIncidents();
-        showToast('Incident resolved', 'success');
-    })
-    .catch(err => {
-        errorEl.textContent = err.message;
-        errorEl.style.display = 'block';
-    });
-}
-
-// Toast notification helper
-function showToast(message, type = 'info') {
-    const toast = document.createElement('div');
-    toast.className = 'toast toast-' + type;
-    toast.style.cssText = `
-        position: fixed;
-        bottom: 20px;
-        right: 20px;
-        padding: 12px 20px;
-        border-radius: 6px;
-        color: white;
-        font-size: 0.9rem;
-        z-index: 10001;
-        animation: slideIn 0.3s ease;
-        background: ${type === 'success' ? '#00ba7c' : type === 'error' ? '#f4212e' : '#1d9bf0'};
-    `;
-    toast.textContent = message;
-    document.body.appendChild(toast);
-    setTimeout(() => {
-        toast.style.animation = 'fadeOut 0.3s ease';
-        setTimeout(() => toast.remove(), 300);
-    }, 3000);
-}
-
-function showIncidentDetail(id) {
-    fetch(`/api/incidents/${id}`)
-        .then(r => r.json())
-        .then(inc => {
-            const severityColor = {
-                critical: '#f4212e',
-                high: '#ff6b35',
-                medium: '#ffd400',
-                low: '#1d9bf0'
-            }[inc.severity] || '#71767b';
-
-            const timeline = (inc.timeline || []).map(e => `
-                <div style="display:flex;gap:0.5rem;padding:0.5rem 0;border-bottom:1px solid #2f3336;">
-                    <div style="width:60px;flex-shrink:0;font-size:0.7rem;color:#71767b;">
-                        ${new Date(e.timestamp).toLocaleTimeString()}
-                    </div>
-                    <div style="flex:1;">
-                        <span style="font-weight:500;color:#e7e9ea;">${escapeHtml(e.type)}</span>
-                        ${e.user ? `<span style="color:#71767b;"> by ${escapeHtml(e.user)}</span>` : ''}
-                        <div style="font-size:0.8rem;color:#8b949e;margin-top:0.2rem;">${escapeHtml(e.message)}</div>
+                    <div class="correlation-item-meta">
+                        <span>${t.service}</span>
+                        <span>${t.duration}ms</span>
+                        <span class="correlation-badge ${t.status}">${t.status}</span>
                     </div>
                 </div>
             `).join('');
 
-            const modal = document.createElement('div');
-            modal.className = 'modal-overlay';
-            modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-            modal.innerHTML = `
-                <div class="modal" style="max-width:600px">
-                    <div class="modal-header">
-                        <span class="modal-title">Incident Details</span>
-                        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-                    </div>
-                    <div style="padding:1rem">
-                        <div style="display:flex;gap:1rem;align-items:flex-start;margin-bottom:1rem;">
-                            <div class="incident-severity ${inc.severity}" style="height:60px;width:6px;"></div>
-                            <div style="flex:1;">
-                                <div style="font-size:1.2rem;font-weight:600;margin-bottom:0.3rem;">${escapeHtml(inc.title)}</div>
-                                <div style="display:flex;gap:0.5rem;align-items:center;">
-                                    <span class="incident-status ${inc.status}">${inc.status}</span>
-                                    <span style="color:${severityColor};font-weight:600;text-transform:uppercase;font-size:0.7rem;">${inc.severity}</span>
-                                    ${inc.service ? `<span style="color:#71767b;">| ${escapeHtml(inc.service)}</span>` : ''}
-                                </div>
-                            </div>
-                            <div style="text-align:right;">
-                                ${inc.status === 'triggered' ? `<button class="btn btn-primary" onclick="ackIncident('${inc.id}');this.closest('.modal-overlay').remove();">Acknowledge</button>` : ''}
-                                ${inc.status !== 'resolved' ? `<button class="btn" onclick="resolveIncident('${inc.id}');this.closest('.modal-overlay').remove();" style="margin-left:0.3rem;">Resolve</button>` : ''}
-                            </div>
-                        </div>
-
-                        ${inc.description ? `
-                        <div style="padding:0.8rem;background:#1a1d21;border-radius:6px;margin-bottom:1rem;">
-                            <div style="font-size:0.7rem;color:#71767b;margin-bottom:0.3rem;">Description</div>
-                            <div style="font-size:0.9rem;">${escapeHtml(inc.description)}</div>
-                        </div>` : ''}
-
-                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem;">
-                            <div class="stat-card" style="padding:0.6rem;">
-                                <div style="font-size:0.65rem;color:#71767b;text-transform:uppercase;">Created</div>
-                                <div style="font-size:0.85rem;">${new Date(inc.created_at).toLocaleString()}</div>
-                            </div>
-                            <div class="stat-card" style="padding:0.6rem;">
-                                <div style="font-size:0.65rem;color:#71767b;text-transform:uppercase;">Assigned To</div>
-                                <div style="font-size:0.85rem;">${inc.assigned_to || 'Unassigned'}</div>
-                            </div>
-                            ${inc.acked_at ? `
-                            <div class="stat-card" style="padding:0.6rem;">
-                                <div style="font-size:0.65rem;color:#71767b;text-transform:uppercase;">Acknowledged</div>
-                                <div style="font-size:0.85rem;">${new Date(inc.acked_at).toLocaleString()} by ${inc.acked_by || 'unknown'}</div>
-                            </div>` : ''}
-                            ${inc.resolved_at ? `
-                            <div class="stat-card" style="padding:0.6rem;">
-                                <div style="font-size:0.65rem;color:#71767b;text-transform:uppercase;">Resolved</div>
-                                <div style="font-size:0.85rem;">${new Date(inc.resolved_at).toLocaleString()} by ${inc.resolved_by || 'unknown'}</div>
-                            </div>` : ''}
-                        </div>
-
-                        <div style="font-size:0.8rem;font-weight:600;margin-bottom:0.5rem;">Timeline</div>
-                        <div style="max-height:200px;overflow:auto;">
-                            ${timeline || '<div style="color:#71767b;">No timeline events</div>'}
-                        </div>
-                    </div>
-                </div>`;
-            document.body.appendChild(modal);
-        })
-        .catch(err => alert('Error loading incident: ' + err.message));
-}
-
-// Initialize SLOs, Patterns, Containers, Deployments, and Incidents
-setTimeout(loadSLOs, 600);
-setInterval(loadSLOs, 30000);
-setTimeout(loadPatterns, 700);
-setInterval(loadPatterns, 60000);
-setTimeout(loadContainers, 800);
-setInterval(loadContainers, 30000);
-setTimeout(loadDeployments, 900);
-setInterval(loadDeployments, 30000);
-setTimeout(loadIncidents, 1000);
-setInterval(loadIncidents, 30000);  // WebSocket handles real-time updates
-
-// ============ Cluster/Federation Functions ============
-function loadCluster() {
-    fetch('/api/cluster')
-        .then(r => r.json())
-        .then(info => {
-            const enabledEl = document.getElementById('cluster-enabled');
-            const nodesCountEl = document.getElementById('cluster-nodes');
-            const localEl = document.getElementById('cluster-local');
-            const nodesListEl = document.getElementById('cluster-nodes-list');
-
-            if (!enabledEl) return;
-
-            // Use demo data if not enabled and demo mode is on
-            if (!info.enabled && DemoData.enabled) {
-                info = DemoData.generateClusterInfo();
-            }
-
-            if (!info.enabled) {
-                enabledEl.textContent = 'Disabled';
-                enabledEl.style.color = '#71767b';
-                nodesCountEl.textContent = '-';
-                localEl.textContent = '';
-                nodesListEl.innerHTML = '<div class="empty-state">Federation not enabled. Start with --cluster flag.</div>';
-                return;
-            }
-
-            enabledEl.textContent = 'Active';
-            enabledEl.style.color = '#00ba7c';
-            nodesCountEl.textContent = info.node_count;
-            nodesCountEl.style.color = info.node_count > 1 ? '#00ba7c' : '#e7e9ea';
-
-            if (info.local_node) {
-                localEl.textContent = `This node: ${info.local_node.id} (${info.gossip_addr})`;
-            }
-
-            // Load node list (or use demo data)
-            if (DemoData.enabled) {
-                return Promise.resolve(DemoData.generateClusterNodes());
-            }
-            return fetch('/api/cluster/nodes').then(r => r.json());
-        })
-        .then(nodes => {
-            if (!nodes) return;
-
-            const nodesListEl = document.getElementById('cluster-nodes-list');
-            if (!nodesListEl) return;
-
-            if (!nodes || nodes.length === 0) {
-                nodesListEl.innerHTML = '<div class="empty-state">No nodes in cluster</div>';
-                return;
-            }
-
-            // Get local node ID for comparison
-            let localNodeId = DemoData.enabled ? 'node-local-001' : '';
-            if (!DemoData.enabled) {
-                fetch('/api/cluster').then(r => r.json()).then(info => {
-                    localNodeId = info.node_id || '';
+            // Add click handlers
+            content.querySelectorAll('.correlation-trace-item').forEach(el => {
+                el.addEventListener('click', () => {
+                    this.dispatchEvent(new CustomEvent('trace-select', {
+                        detail: { traceId: el.dataset.traceId }
+                    }));
                 });
+            });
+        } else if (tab === 'logs') {
+            const logs = this.correlatedData.logs || [];
+            if (logs.length === 0) {
+                content.innerHTML = '<div class="correlation-empty"><span>No logs found in this time range</span></div>';
+                return;
             }
 
-            nodesListEl.innerHTML = nodes.map(node => {
-                const isLocal = node.id === localNodeId || (node.hostname && node.hostname === location.hostname);
-                const stateClass = (node.state || 'alive').toLowerCase();
-                const uptime = node.started_at ? formatUptime(new Date(node.started_at)) : '-';
-
-                return `<div class="cluster-node-item">
-                    <div class="cluster-node-status ${stateClass}"></div>
-                    <div class="cluster-node-info">
-                        <div class="cluster-node-name">
-                            ${node.id || node.hostname || 'unknown'}
-                            ${isLocal ? '<span class="local-badge">LOCAL</span>' : ''}
-                        </div>
-                        <div class="cluster-node-meta">
-                            <span>${node.address || '-'}</span>
-                            <span>v${node.version || '?'}</span>
-                            <span>Up ${uptime}</span>
-                        </div>
+            content.innerHTML = logs.map(l => `
+                <div class="correlation-log-item">
+                    <div class="correlation-item-header">
+                        <span class="correlation-badge ${l.level}">${l.level}</span>
+                        <span class="correlation-item-time">${new Date(l.timestamp).toLocaleTimeString()}</span>
                     </div>
-                    <div class="cluster-node-metrics">
-                        <div class="cluster-node-metric">
-                            <span class="cluster-node-metric-value">${node.cpu_percent ? node.cpu_percent.toFixed(1) + '%' : '-'}</span>
-                            <span>CPU</span>
-                        </div>
-                        <div class="cluster-node-metric">
-                            <span class="cluster-node-metric-value">${node.mem_percent ? node.mem_percent.toFixed(1) + '%' : '-'}</span>
-                            <span>Mem</span>
-                        </div>
-                        <div class="cluster-node-metric">
-                            <span class="cluster-node-metric-value">${node.active_incidents || 0}</span>
-                            <span>Inc</span>
-                        </div>
+                    <div class="correlation-log-message">${this.escapeHtml(l.message)}</div>
+                    <div class="correlation-item-meta">
+                        <span>${l.service}</span>
                     </div>
-                </div>`;
-            }).join('');
-
-            // Update cluster incidents count
-            const totalIncidents = nodes.reduce((sum, n) => sum + (n.active_incidents || 0), 0);
-            const incEl = document.getElementById('cluster-incidents');
-            if (incEl) {
-                incEl.textContent = totalIncidents;
-                incEl.style.color = totalIncidents > 0 ? '#f4212e' : '#e7e9ea';
-            }
-        })
-        .catch(err => console.error('Error loading cluster:', err));
-}
-
-function formatUptime(startTime) {
-    const now = new Date();
-    const diff = now - startTime;
-    const days = Math.floor(diff / (24 * 60 * 60 * 1000));
-    const hours = Math.floor((diff % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
-    const mins = Math.floor((diff % (60 * 60 * 1000)) / (60 * 1000));
-
-    if (days > 0) return `${days}d ${hours}h`;
-    if (hours > 0) return `${hours}h ${mins}m`;
-    return `${mins}m`;
-}
-
-function showJoinClusterModal() {
-    const addresses = prompt('Enter seed node addresses (comma-separated, e.g., 192.168.1.10:7946,192.168.1.11:7946):');
-    if (!addresses) return;
-
-    fetch('/api/cluster/join', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ addresses: addresses.split(',').map(a => a.trim()) })
-    })
-    .then(r => {
-        if (!r.ok) return r.text().then(t => { throw new Error(t); });
-        return r.json();
-    })
-    .then(result => {
-        alert(`Joined ${result.joined} node(s). Total nodes: ${result.total}`);
-        loadCluster();
-    })
-    .catch(err => alert('Error joining cluster: ' + err.message));
-}
-
-setTimeout(loadCluster, 1100);
-setInterval(loadCluster, 10000);
-
-// ============ Status Page Functions ============
-// moved to top
-// moved to top
-
-function loadStatusPages() {
-    Promise.all([
-        fetch('/api/statuspages').then(r => r.json()),
-        fetch('/api/statuspage/components').then(r => r.json()),
-        fetch('/api/statuspage/incidents').then(r => r.json())
-    ])
-    .then(([pages, components, incidents]) => {
-        statusPages = pages || [];
-        statusComponents = components || [];
-
-        const pagesEl = document.getElementById('sp-pages');
-        const componentsEl = document.getElementById('sp-components');
-        const incidentsEl = document.getElementById('sp-incidents');
-        const overallEl = document.getElementById('statuspage-overall');
-        const listEl = document.getElementById('statuspage-list');
-
-        if (!listEl) return;
-
-        if (pagesEl) pagesEl.textContent = statusPages.length;
-        if (componentsEl) componentsEl.textContent = statusComponents.length;
-        if (incidentsEl) {
-            const activeIncidents = (incidents || []).filter(i => i.status !== 'resolved').length;
-            incidentsEl.textContent = activeIncidents;
-            if (activeIncidents > 0) incidentsEl.style.color = '#f4212e';
-            else incidentsEl.style.color = '#e7e9ea';
-        }
-
-        // Calculate overall status from components
-        if (overallEl) {
-            const statuses = statusComponents.map(c => c.status);
-            let overallStatus = 'operational';
-            let overallText = 'All Systems Operational';
-
-            if (statuses.includes('major_outage')) {
-                overallStatus = 'major_outage';
-                overallText = 'Major Outage';
-            } else if (statuses.includes('partial_outage')) {
-                overallStatus = 'partial_outage';
-                overallText = 'Partial Outage';
-            } else if (statuses.includes('degraded')) {
-                overallStatus = 'degraded';
-                overallText = 'Degraded Performance';
-            } else if (statuses.includes('maintenance')) {
-                overallStatus = 'maintenance';
-                overallText = 'Under Maintenance';
+                </div>
+            `).join('');
+        } else if (tab === 'events') {
+            const events = this.correlatedData.events || [];
+            if (events.length === 0) {
+                content.innerHTML = '<div class="correlation-empty"><span>No events found in this time range</span></div>';
+                return;
             }
 
-            overallEl.className = 'statuspage-overall ' + overallStatus;
-            overallEl.textContent = overallText;
+            content.innerHTML = events.map(e => `
+                <div class="correlation-log-item">
+                    <div class="correlation-item-header">
+                        <span class="correlation-badge info">${e.type}</span>
+                        <span class="correlation-item-time">${new Date(e.timestamp).toLocaleTimeString()}</span>
+                    </div>
+                    <div class="correlation-log-message">${this.escapeHtml(e.message)}</div>
+                    <div class="correlation-item-meta">
+                        <span>${e.service}</span>
+                    </div>
+                </div>
+            `).join('');
         }
+    }
 
-        // Render components grouped by group
-        if (statusComponents.length === 0 && statusPages.length === 0) {
-            listEl.innerHTML = '<div class="empty-state">No status pages configured. Click "+ New Page" to create one.</div>';
+    escapeHtml(str) {
+        if (!str) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+}
+
+customElements.define('correlation-view', CorrelationView);
+
+/**
+ * Cost Dashboard Widget
+ * "You'd pay $X on Datadog" visualization
+ */
+class CostDashboard extends HTMLElement {
+    constructor() {
+        super();
+        this.estimate = null;
+        this.recommendations = [];
+        this.loading = true;
+    }
+
+    connectedCallback() {
+        this.render();
+        this.loadData();
+    }
+
+    async loadData() {
+        this.loading = true;
+        this.render();
+
+        try {
+            const [estimateResp, recsResp] = await Promise.all([
+                fetch('/api/cost/estimate'),
+                fetch('/api/cost/recommendations')
+            ]);
+
+            if (estimateResp.ok) this.estimate = await estimateResp.json();
+            if (recsResp.ok) this.recommendations = await recsResp.json() || [];
+        } catch (e) {
+            console.error('Failed to load cost data:', e);
+        } finally {
+            this.loading = false;
+            this.render();
+        }
+    }
+
+    render() {
+        if (this.loading) {
+            this.innerHTML = `
+                <style>${this.getStyles()}</style>
+                <div class="cost-dashboard">
+                    <div class="cost-header">
+                        <span class="title-icon">💰</span>
+                        <span>Cost Intelligence</span>
+                    </div>
+                    <div class="loading">Loading cost data...</div>
+                </div>
+            `;
             return;
         }
 
-        let html = '';
+        const estimate = this.estimate || {};
+        const datadog = estimate.datadog || {};
+        const newrelic = estimate.newrelic || {};
+        const splunk = estimate.splunk || {};
+        const savings = this.calculateSavings();
 
-        // Group components
-        const groups = {};
-        statusComponents.forEach(c => {
-            const group = c.group || 'Services';
-            if (!groups[group]) groups[group] = [];
-            groups[group].push(c);
-        });
+        this.innerHTML = `
+            <style>${this.getStyles()}</style>
+            <div class="cost-dashboard">
+                <div class="cost-header">
+                    <div class="header-title">
+                        <span class="title-icon">💰</span>
+                        <span>Cost Intelligence</span>
+                    </div>
+                    <button class="btn-refresh" onclick="this.getRootNode().host.loadData()">↻</button>
+                </div>
 
-        // Render grouped components
-        Object.keys(groups).sort().forEach(groupName => {
-            html += `<div class="component-group">${groupName}</div>`;
-            groups[groupName].forEach(comp => {
-                html += renderComponentItem(comp);
-            });
-        });
+                <div class="savings-banner">
+                    <div class="savings-text">
+                        <span class="savings-label">Your estimated savings</span>
+                        <span class="savings-value">${this.formatCurrency(savings.total)}<span class="period">/month</span></span>
+                    </div>
+                    <div class="savings-subtext">
+                        vs. commercial alternatives
+                    </div>
+                </div>
 
-        // Render status pages
-        if (statusPages.length > 0) {
-            html += `<div class="component-group">Status Pages</div>`;
-            statusPages.forEach(page => {
-                html += `<div class="statuspage-item" onclick="viewStatusPage('${page.slug}')">
-                    <div class="statuspage-status operational"></div>
-                    <div class="statuspage-info">
-                        <div class="statuspage-name">${escapeHtml(page.name)}</div>
-                        <div class="statuspage-meta">
-                            <span>${page.slug}</span>
-                            <span>${page.public ? 'Public' : 'Private'}</span>
-                            <span>${page.component_ids ? page.component_ids.length : 0} components</span>
+                <div class="comparison-grid">
+                    <div class="comparison-card dogwatch">
+                        <div class="card-header">
+                            <span class="provider-icon">🐕</span>
+                            <span class="provider-name">dogwatch</span>
+                        </div>
+                        <div class="card-price">
+                            <span class="price-value">$0</span>
+                            <span class="price-period">/month</span>
+                        </div>
+                        <div class="card-subtitle">Self-hosted, unlimited</div>
+                    </div>
+
+                    <div class="comparison-card">
+                        <div class="card-header">
+                            <span class="provider-icon">🐕</span>
+                            <span class="provider-name">Datadog</span>
+                        </div>
+                        <div class="card-price">
+                            <span class="price-value">${this.formatCurrency(datadog.total || 0)}</span>
+                            <span class="price-period">/month</span>
+                        </div>
+                        <div class="card-breakdown">
+                            ${datadog.hosts ? `<div class="breakdown-item">Infrastructure: ${this.formatCurrency(datadog.hosts)}</div>` : ''}
+                            ${datadog.apm ? `<div class="breakdown-item">APM: ${this.formatCurrency(datadog.apm)}</div>` : ''}
+                            ${datadog.logs ? `<div class="breakdown-item">Logs: ${this.formatCurrency(datadog.logs)}</div>` : ''}
                         </div>
                     </div>
-                    <div style="display:flex;gap:0.3rem;">
-                        <button class="btn" onclick="event.stopPropagation();editStatusPage('${page.id}')">Edit</button>
-                        <button class="btn" onclick="event.stopPropagation();window.open('/status/${page.slug}','_blank')">View</button>
-                    </div>
-                </div>`;
-            });
-        }
 
-        listEl.innerHTML = html || '<div class="empty-state">No components configured</div>';
-    })
-    .catch(err => console.error('Error loading status pages:', err));
-}
-
-function renderComponentItem(comp) {
-    const statusClass = comp.status || 'operational';
-    const uptime = comp.uptime_30d ? comp.uptime_30d.toFixed(2) : '100.00';
-
-    return `<div class="component-item" onclick="showComponentDetail('${comp.id}')">
-        <div class="statuspage-status ${statusClass}"></div>
-        <div class="statuspage-info">
-            <div class="statuspage-name">${escapeHtml(comp.name)}</div>
-            <div class="statuspage-meta">
-                <span>${comp.description || ''}</span>
-            </div>
-        </div>
-        <div class="statuspage-uptime">${uptime}%</div>
-        <div style="display:flex;gap:0.3rem;">
-            <button class="btn" onclick="event.stopPropagation();updateComponentStatus('${comp.id}')">Update</button>
-        </div>
-    </div>`;
-}
-
-function showCreateStatusPage() {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = e => { if (e.target === modal) modal.remove(); };
-    modal.innerHTML = `
-        <div class="modal">
-            <div class="modal-header">
-                <span class="modal-title">Create Status Page</span>
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">×</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label>Name</label>
-                    <input type="text" id="sp-name" placeholder="My Service Status">
-                </div>
-                <div class="form-group">
-                    <label>Slug (URL path)</label>
-                    <input type="text" id="sp-slug" placeholder="my-service">
-                </div>
-                <div class="form-group">
-                    <label>Description</label>
-                    <textarea id="sp-description" rows="2" placeholder="Status page for my service"></textarea>
-                </div>
-                <div class="form-group">
-                    <label><input type="checkbox" id="sp-public" checked> Public (accessible without login)</label>
-                </div>
-                <div class="form-group">
-                    <label><input type="checkbox" id="sp-uptime" checked> Show uptime metrics</label>
-                </div>
-                <div class="form-group">
-                    <label>Components</label>
-                    <div id="sp-components-list" style="max-height:150px;overflow:auto;">
-                        ${statusComponents.map(c => `
-                            <label style="display:block;padding:0.3rem 0;">
-                                <input type="checkbox" value="${c.id}" class="sp-comp-check"> ${escapeHtml(c.name)}
-                            </label>
-                        `).join('') || '<span class="empty-state">No components. Create components first.</span>'}
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                <button class="btn btn-primary" onclick="createStatusPage()">Create</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-}
-
-function createStatusPage() {
-    const name = document.getElementById('sp-name').value;
-    const slug = document.getElementById('sp-slug').value;
-    const description = document.getElementById('sp-description').value;
-    const isPublic = document.getElementById('sp-public').checked;
-    const showUptime = document.getElementById('sp-uptime').checked;
-    const componentIds = Array.from(document.querySelectorAll('.sp-comp-check:checked')).map(c => c.value);
-
-    if (!name || !slug) {
-        alert('Name and slug are required');
-        return;
-    }
-
-    fetch('/api/statuspages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            name, slug, description,
-            public: isPublic,
-            show_uptime: showUptime,
-            show_incidents: true,
-            component_ids: componentIds
-        })
-    })
-    .then(r => {
-        if (!r.ok) throw new Error('Failed to create status page');
-        return r.json();
-    })
-    .then(() => {
-        document.querySelector('.modal-overlay').remove();
-        loadStatusPages();
-    })
-    .catch(err => alert('Error: ' + err.message));
-}
-
-function showCreateComponent() {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = e => { if (e.target === modal) modal.remove(); };
-    modal.innerHTML = `
-        <div class="modal">
-            <div class="modal-header">
-                <span class="modal-title">Create Component</span>
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">×</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label>Name</label>
-                    <input type="text" id="comp-name" placeholder="API Server">
-                </div>
-                <div class="form-group">
-                    <label>Description</label>
-                    <input type="text" id="comp-description" placeholder="Core API services">
-                </div>
-                <div class="form-group">
-                    <label>Group</label>
-                    <input type="text" id="comp-group" placeholder="Infrastructure" value="Services">
-                </div>
-                <div class="form-group">
-                    <label>Initial Status</label>
-                    <select id="comp-status">
-                        <option value="operational">Operational</option>
-                        <option value="degraded">Degraded</option>
-                        <option value="partial_outage">Partial Outage</option>
-                        <option value="major_outage">Major Outage</option>
-                        <option value="maintenance">Maintenance</option>
-                    </select>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                <button class="btn btn-primary" onclick="createComponent()">Create</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-}
-
-function createComponent() {
-    const name = document.getElementById('comp-name').value;
-    const description = document.getElementById('comp-description').value;
-    const group = document.getElementById('comp-group').value;
-    const status = document.getElementById('comp-status').value;
-
-    if (!name) {
-        alert('Name is required');
-        return;
-    }
-
-    fetch('/api/statuspage/components', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, description, group, status })
-    })
-    .then(r => {
-        if (!r.ok) throw new Error('Failed to create component');
-        return r.json();
-    })
-    .then(() => {
-        document.querySelector('.modal-overlay').remove();
-        loadStatusPages();
-    })
-    .catch(err => alert('Error: ' + err.message));
-}
-
-function updateComponentStatus(compId) {
-    const comp = statusComponents.find(c => c.id === compId);
-    if (!comp) return;
-
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = e => { if (e.target === modal) modal.remove(); };
-    modal.innerHTML = `
-        <div class="modal">
-            <div class="modal-header">
-                <span class="modal-title">Update Status: ${escapeHtml(comp.name)}</span>
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">×</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label>Status</label>
-                    <select id="update-status">
-                        <option value="operational" ${comp.status === 'operational' ? 'selected' : ''}>Operational</option>
-                        <option value="degraded" ${comp.status === 'degraded' ? 'selected' : ''}>Degraded</option>
-                        <option value="partial_outage" ${comp.status === 'partial_outage' ? 'selected' : ''}>Partial Outage</option>
-                        <option value="major_outage" ${comp.status === 'major_outage' ? 'selected' : ''}>Major Outage</option>
-                        <option value="maintenance" ${comp.status === 'maintenance' ? 'selected' : ''}>Maintenance</option>
-                    </select>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                <button class="btn btn-primary" onclick="submitStatusUpdate('${compId}')">Update</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-}
-
-function submitStatusUpdate(compId) {
-    const status = document.getElementById('update-status').value;
-
-    fetch(`/api/statuspage/components/${compId}/status`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status, response_time_ms: 0 })
-    })
-    .then(r => {
-        if (!r.ok) throw new Error('Failed to update status');
-        return r.json();
-    })
-    .then(() => {
-        document.querySelector('.modal-overlay').remove();
-        loadStatusPages();
-    })
-    .catch(err => alert('Error: ' + err.message));
-}
-
-function viewStatusPage(slug) {
-    window.open('/status/' + slug, '_blank');
-}
-
-function editStatusPage(id) {
-    const page = statusPages.find(p => p.id === id);
-    if (!page) return;
-
-    // For simplicity, just show the basic info - could expand this
-    alert('Edit functionality coming soon. View the page at: /status/' + page.slug);
-}
-
-function showComponentDetail(compId) {
-    const comp = statusComponents.find(c => c.id === compId);
-    if (!comp) return;
-
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = e => { if (e.target === modal) modal.remove(); };
-    modal.innerHTML = `
-        <div class="modal">
-            <div class="modal-header">
-                <span class="modal-title">${escapeHtml(comp.name)}</span>
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">×</button>
-            </div>
-            <div class="modal-body">
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
-                    <div>
-                        <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;">Current Status</div>
-                        <div style="font-size:1.2rem;font-weight:600;color:${getStatusColor(comp.status)}">${formatStatus(comp.status)}</div>
-                    </div>
-                    <div>
-                        <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;">Response Time</div>
-                        <div style="font-size:1.2rem;font-weight:600;">${comp.response_time_ms ? comp.response_time_ms.toFixed(0) + 'ms' : '-'}</div>
-                    </div>
-                </div>
-                <div style="margin-top:1rem;">
-                    <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;margin-bottom:0.5rem;">Uptime</div>
-                    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.5rem;text-align:center;">
-                        <div>
-                            <div style="font-size:1rem;font-weight:600;color:#00ba7c">${(comp.uptime_24h || 100).toFixed(2)}%</div>
-                            <div style="font-size:0.65rem;color:#71767b">24h</div>
+                    <div class="comparison-card">
+                        <div class="card-header">
+                            <span class="provider-icon">📊</span>
+                            <span class="provider-name">New Relic</span>
                         </div>
-                        <div>
-                            <div style="font-size:1rem;font-weight:600;color:#00ba7c">${(comp.uptime_7d || 100).toFixed(2)}%</div>
-                            <div style="font-size:0.65rem;color:#71767b">7d</div>
+                        <div class="card-price">
+                            <span class="price-value">${this.formatCurrency(newrelic.total || 0)}</span>
+                            <span class="price-period">/month</span>
                         </div>
-                        <div>
-                            <div style="font-size:1rem;font-weight:600;color:#00ba7c">${(comp.uptime_30d || 100).toFixed(2)}%</div>
-                            <div style="font-size:0.65rem;color:#71767b">30d</div>
-                        </div>
-                        <div>
-                            <div style="font-size:1rem;font-weight:600;color:#00ba7c">${(comp.uptime_90d || 100).toFixed(2)}%</div>
-                            <div style="font-size:0.65rem;color:#71767b">90d</div>
+                        <div class="card-breakdown">
+                            ${newrelic.users ? `<div class="breakdown-item">Users: ${this.formatCurrency(newrelic.users)}</div>` : ''}
+                            ${newrelic.data ? `<div class="breakdown-item">Data Ingest: ${this.formatCurrency(newrelic.data)}</div>` : ''}
                         </div>
                     </div>
-                </div>
-                ${comp.description ? `<div style="margin-top:1rem;color:#71767b;font-size:0.8rem;">${escapeHtml(comp.description)}</div>` : ''}
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Close</button>
-                <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove();updateComponentStatus('${compId}')">Update Status</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-}
 
-function getStatusColor(status) {
-    switch(status) {
-        case 'operational': return '#00ba7c';
-        case 'degraded': return '#ffd400';
-        case 'partial_outage': return '#ff9800';
-        case 'major_outage': return '#f4212e';
-        case 'maintenance': return '#1d9bf0';
-        default: return '#71767b';
-    }
-}
-
-function formatStatus(status) {
-    switch(status) {
-        case 'operational': return 'Operational';
-        case 'degraded': return 'Degraded';
-        case 'partial_outage': return 'Partial Outage';
-        case 'major_outage': return 'Major Outage';
-        case 'maintenance': return 'Maintenance';
-        default: return 'Unknown';
-    }
-}
-
-setTimeout(loadStatusPages, 1200);
-setInterval(loadStatusPages, 30000);
-
-// ============ Service Catalog Functions ============
-// moved to top
-// moved to top
-
-function loadCatalog() {
-    const tierFilter = document.getElementById('cat-tier-filter')?.value || '';
-    const healthFilter = document.getElementById('cat-health-filter')?.value || '';
-
-    let url = '/api/catalog/services?';
-    if (tierFilter) url += `tier=${tierFilter}&`;
-    if (healthFilter) url += `health=${healthFilter}&`;
-
-    Promise.all([
-        fetch(url).then(r => r.json()),
-        fetch('/api/catalog/services/stats').then(r => r.json()),
-        fetch('/api/catalog/teams').then(r => r.json())
-    ])
-    .then(([services, stats, teams]) => {
-        // Use demo data if empty and demo mode enabled
-        if (DemoData.enabled && (!services || services.length === 0)) {
-            services = DemoData.generateCatalogServices();
-            stats = DemoData.generateCatalogStats();
-            teams = DemoData.generateCatalogTeams();
-        }
-        catalogServices = services || [];
-        catalogTeams = teams || [];
-
-        const totalEl = document.getElementById('cat-total');
-        const criticalEl = document.getElementById('cat-critical');
-        const healthyEl = document.getElementById('cat-healthy');
-        const unhealthyEl = document.getElementById('cat-unhealthy');
-        const listEl = document.getElementById('catalog-list');
-
-        if (!listEl) return;
-
-        if (totalEl) totalEl.textContent = stats.total || 0;
-        if (criticalEl) criticalEl.textContent = stats.critical || 0;
-        if (healthyEl) healthyEl.textContent = stats.healthy || 0;
-        if (unhealthyEl) unhealthyEl.textContent = stats.unhealthy || 0;
-
-        if (catalogServices.length === 0) {
-            listEl.innerHTML = '<div class="empty-state">No services in catalog. Click "+ Service" to add one.</div>';
-            return;
-        }
-
-        listEl.innerHTML = catalogServices.map(svc => renderServiceItem(svc)).join('');
-    })
-    .catch(err => console.error('Error loading catalog:', err));
-}
-
-function renderServiceItem(svc) {
-    const healthClass = svc.health || 'unknown';
-    const tierClass = svc.tier || 'medium';
-
-    let links = '';
-    if (svc.repo_url) links += `<a class="service-link" href="${svc.repo_url}" target="_blank" onclick="event.stopPropagation()">Repo</a>`;
-    if (svc.docs_url) links += `<a class="service-link" href="${svc.docs_url}" target="_blank" onclick="event.stopPropagation()">Docs</a>`;
-    if (svc.runbook_url) links += `<a class="service-link" href="${svc.runbook_url}" target="_blank" onclick="event.stopPropagation()">Runbook</a>`;
-
-    return `<div class="service-item" onclick="showServiceDetail('${svc.id}')">
-        <div class="service-health ${healthClass}"></div>
-        <div class="service-info">
-            <div class="service-name">
-                ${escapeHtml(svc.display_name || svc.name)}
-                <span class="service-tier ${tierClass}">${svc.tier || 'medium'}</span>
-            </div>
-            <div class="service-meta">
-                ${svc.team_name ? `<span class="service-owner"><span class="team-badge">${escapeHtml(svc.team_name)}</span></span>` : ''}
-                ${svc.description ? `<span>${escapeHtml(svc.description.substring(0, 50))}${svc.description.length > 50 ? '...' : ''}</span>` : ''}
-            </div>
-        </div>
-        <div class="service-links">${links}</div>
-    </div>`;
-}
-
-function showCreateService() {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = e => { if (e.target === modal) modal.remove(); };
-    modal.innerHTML = `
-        <div class="modal" style="max-width:600px;">
-            <div class="modal-header">
-                <span class="modal-title">Add Service</span>
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">×</button>
-            </div>
-            <div class="modal-body">
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
-                    <div class="form-group">
-                        <label>Service Name *</label>
-                        <input type="text" id="svc-name" placeholder="payment-service">
-                    </div>
-                    <div class="form-group">
-                        <label>Display Name</label>
-                        <input type="text" id="svc-display" placeholder="Payment Service">
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label>Description</label>
-                    <textarea id="svc-desc" rows="2" placeholder="Handles payment processing"></textarea>
-                </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
-                    <div class="form-group">
-                        <label>Tier</label>
-                        <select id="svc-tier">
-                            <option value="critical">Critical (P0)</option>
-                            <option value="high">High (P1)</option>
-                            <option value="medium" selected>Medium (P2)</option>
-                            <option value="low">Low (P3)</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Team</label>
-                        <select id="svc-team">
-                            <option value="">No Team</option>
-                            ${catalogTeams.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('')}
-                        </select>
-                    </div>
-                </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
-                    <div class="form-group">
-                        <label>Owner Email</label>
-                        <input type="email" id="svc-owner" placeholder="team@example.com">
-                    </div>
-                    <div class="form-group">
-                        <label>Slack Channel</label>
-                        <input type="text" id="svc-slack" placeholder="#team-payments">
-                    </div>
-                </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
-                    <div class="form-group">
-                        <label>Repository URL</label>
-                        <input type="url" id="svc-repo" placeholder="https://github.com/...">
-                    </div>
-                    <div class="form-group">
-                        <label>Documentation URL</label>
-                        <input type="url" id="svc-docs" placeholder="https://docs.example.com/...">
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label>Runbook URL</label>
-                    <input type="url" id="svc-runbook" placeholder="https://runbooks.example.com/...">
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                <button class="btn btn-primary" onclick="createService()">Create Service</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-}
-
-function createService() {
-    const name = document.getElementById('svc-name').value;
-    const displayName = document.getElementById('svc-display').value;
-    const description = document.getElementById('svc-desc').value;
-    const tier = document.getElementById('svc-tier').value;
-    const teamId = document.getElementById('svc-team').value;
-    const ownerEmail = document.getElementById('svc-owner').value;
-    const slackChannel = document.getElementById('svc-slack').value;
-    const repoUrl = document.getElementById('svc-repo').value;
-    const docsUrl = document.getElementById('svc-docs').value;
-    const runbookUrl = document.getElementById('svc-runbook').value;
-
-    if (!name) {
-        alert('Service name is required');
-        return;
-    }
-
-    const teamName = teamId ? catalogTeams.find(t => t.id === teamId)?.name : '';
-
-    fetch('/api/catalog/services', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            name,
-            display_name: displayName || name,
-            description,
-            tier,
-            team_id: teamId,
-            team_name: teamName,
-            owner_email: ownerEmail,
-            slack_channel: slackChannel,
-            repo_url: repoUrl,
-            docs_url: docsUrl,
-            runbook_url: runbookUrl
-        })
-    })
-    .then(r => {
-        if (!r.ok) throw new Error('Failed to create service');
-        return r.json();
-    })
-    .then(() => {
-        document.querySelector('.modal-overlay').remove();
-        loadCatalog();
-    })
-    .catch(err => alert('Error: ' + err.message));
-}
-
-function showCreateTeam() {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = e => { if (e.target === modal) modal.remove(); };
-    modal.innerHTML = `
-        <div class="modal">
-            <div class="modal-header">
-                <span class="modal-title">Create Team</span>
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">×</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label>Team Name *</label>
-                    <input type="text" id="team-name" placeholder="Platform Team">
-                </div>
-                <div class="form-group">
-                    <label>Description</label>
-                    <textarea id="team-desc" rows="2" placeholder="Responsible for core platform services"></textarea>
-                </div>
-                <div class="form-group">
-                    <label>Slack Channel</label>
-                    <input type="text" id="team-slack" placeholder="#platform-team">
-                </div>
-                <div class="form-group">
-                    <label>Email</label>
-                    <input type="email" id="team-email" placeholder="platform@example.com">
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                <button class="btn btn-primary" onclick="createTeam()">Create Team</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-}
-
-function createTeam() {
-    const name = document.getElementById('team-name').value;
-    const description = document.getElementById('team-desc').value;
-    const slackChannel = document.getElementById('team-slack').value;
-    const email = document.getElementById('team-email').value;
-
-    if (!name) {
-        alert('Team name is required');
-        return;
-    }
-
-    fetch('/api/catalog/teams', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, description, slack_channel: slackChannel, email })
-    })
-    .then(r => {
-        if (!r.ok) throw new Error('Failed to create team');
-        return r.json();
-    })
-    .then(() => {
-        document.querySelector('.modal-overlay').remove();
-        loadCatalog();
-    })
-    .catch(err => alert('Error: ' + err.message));
-}
-
-function showServiceDetail(serviceId) {
-    const svc = catalogServices.find(s => s.id === serviceId);
-    if (!svc) return;
-
-    // Fetch full service context with linked resources
-    fetch(`/api/catalog/services/${serviceId}/context`)
-        .then(r => r.json())
-        .then(ctx => {
-            showServiceDetailModal(ctx.service || svc, {
-                upstream: ctx.upstream_dependencies || [],
-                downstream: ctx.downstream_dependencies || [],
-                runbooks: ctx.runbooks || [],
-                incidents: ctx.recent_incidents || [],
-                synthetics: ctx.synthetic_checks || [],
-                team: ctx.team
-            });
-        })
-        .catch(() => showServiceDetailModal(svc, { upstream: [], downstream: [], runbooks: [], incidents: [], synthetics: [] }));
-}
-
-function showServiceDetailModal(svc, ctx) {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = e => { if (e.target === modal) modal.remove(); };
-
-    const upstreamHtml = (ctx.upstream || []).length > 0
-        ? ctx.upstream.map(d => `<span class="service-link">${d.target_service_id}</span>`).join(' ')
-        : '<span style="color:#71767b">None</span>';
-
-    const downstreamHtml = (ctx.downstream || []).length > 0
-        ? ctx.downstream.map(d => `<span class="service-link">${d.source_service_id}</span>`).join(' ')
-        : '<span style="color:#71767b">None</span>';
-
-    // Build runbooks section
-    const runbooksHtml = (ctx.runbooks || []).length > 0
-        ? ctx.runbooks.map(rb => `<a class="service-link" href="${rb.content_url || '#'}" target="_blank">${escapeHtml(rb.title)}</a>`).join(' ')
-        : '<span style="color:#71767b">None</span>';
-
-    // Build recent incidents section
-    const incidentsHtml = (ctx.incidents || []).length > 0
-        ? ctx.incidents.slice(0, 5).map(inc => {
-            const sevClass = inc.severity === 'critical' ? 'severity-critical' :
-                             inc.severity === 'high' ? 'severity-high' :
-                             inc.severity === 'medium' ? 'severity-medium' : 'severity-low';
-            const statusColor = inc.status === 'resolved' ? '#00ba7c' : inc.status === 'acknowledged' ? '#ffd400' : '#f4212e';
-            return `<div style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0;border-bottom:1px solid #2f3336;">
-                <span class="severity-badge ${sevClass}">${inc.severity}</span>
-                <span style="flex:1;font-size:0.8rem;">${escapeHtml(inc.title || 'Incident')}</span>
-                <span style="font-size:0.7rem;color:${statusColor}">${inc.status}</span>
-            </div>`;
-        }).join('')
-        : '<span style="color:#71767b">No recent incidents</span>';
-
-    // Build synthetic checks section
-    const syntheticsHtml = (ctx.synthetics || []).length > 0
-        ? ctx.synthetics.map(chk => {
-            const statusColor = chk.passing ? '#00ba7c' : '#f4212e';
-            const statusText = chk.passing ? 'Passing' : 'Failing';
-            return `<div style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0;border-bottom:1px solid #2f3336;">
-                <span style="width:8px;height:8px;border-radius:50%;background:${statusColor};"></span>
-                <span style="flex:1;font-size:0.8rem;">${escapeHtml(chk.name)}</span>
-                <span style="font-size:0.7rem;color:#71767b;">${chk.check_type}</span>
-                <span style="font-size:0.7rem;color:${statusColor}">${statusText}</span>
-            </div>`;
-        }).join('')
-        : '<span style="color:#71767b">No synthetic checks</span>';
-
-    modal.innerHTML = `
-        <div class="modal" style="max-width:800px;">
-            <div class="modal-header">
-                <span class="modal-title">${escapeHtml(svc.display_name || svc.name)}</span>
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">×</button>
-            </div>
-            <div class="modal-body" style="max-height:70vh;overflow-y:auto;">
-                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1rem;">
-                    <div>
-                        <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;">Health</div>
-                        <div style="font-size:1.2rem;font-weight:600;color:${getHealthColor(svc.health)}">${formatHealth(svc.health)}</div>
-                    </div>
-                    <div>
-                        <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;">Tier</div>
-                        <div style="font-size:1.2rem;font-weight:600;">${(svc.tier || 'medium').toUpperCase()}</div>
-                    </div>
-                    <div>
-                        <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;">Uptime (30d)</div>
-                        <div style="font-size:1.2rem;font-weight:600;color:#00ba7c">${(svc.uptime_percent_30d || 100).toFixed(2)}%</div>
-                    </div>
-                    <div>
-                        <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;">Incidents (30d)</div>
-                        <div style="font-size:1.2rem;font-weight:600;color:${svc.incident_count_30d > 0 ? '#f4212e' : '#e7e9ea'}">${svc.incident_count_30d || 0}</div>
-                    </div>
-                </div>
-
-                ${svc.description ? `<p style="color:#71767b;margin-bottom:1rem;">${escapeHtml(svc.description)}</p>` : ''}
-
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem;">
-                    <div>
-                        <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;margin-bottom:0.5rem;">Ownership</div>
-                        ${ctx.team ? `<div><span class="team-badge">${escapeHtml(ctx.team.name)}</span></div>` :
-                          svc.team_name ? `<div><span class="team-badge">${escapeHtml(svc.team_name)}</span></div>` : ''}
-                        ${svc.owner_email ? `<div style="font-size:0.8rem;margin-top:0.3rem;">${escapeHtml(svc.owner_email)}</div>` : ''}
-                        ${svc.slack_channel ? `<div style="font-size:0.8rem;color:#71767b;">${escapeHtml(svc.slack_channel)}</div>` : ''}
-                    </div>
-                    <div>
-                        <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;margin-bottom:0.5rem;">Links</div>
-                        <div style="display:flex;flex-wrap:wrap;gap:0.3rem;">
-                            ${svc.repo_url ? `<a class="service-link" href="${svc.repo_url}" target="_blank">Repository</a>` : ''}
-                            ${svc.docs_url ? `<a class="service-link" href="${svc.docs_url}" target="_blank">Documentation</a>` : ''}
-                            ${svc.runbook_url ? `<a class="service-link" href="${svc.runbook_url}" target="_blank">Runbook</a>` : ''}
-                            ${svc.dashboard_id ? `<a class="service-link" href="#" onclick="event.preventDefault();">Dashboard</a>` : ''}
+                    <div class="comparison-card">
+                        <div class="card-header">
+                            <span class="provider-icon">🔍</span>
+                            <span class="provider-name">Splunk</span>
+                        </div>
+                        <div class="card-price">
+                            <span class="price-value">${this.formatCurrency(splunk.total || 0)}</span>
+                            <span class="price-period">/month</span>
+                        </div>
+                        <div class="card-breakdown">
+                            ${splunk.workload ? `<div class="breakdown-item">Workload: ${this.formatCurrency(splunk.workload)}</div>` : ''}
+                            ${splunk.ingest ? `<div class="breakdown-item">Ingest: ${this.formatCurrency(splunk.ingest)}</div>` : ''}
                         </div>
                     </div>
                 </div>
 
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem;">
-                    <div>
-                        <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;margin-bottom:0.5rem;">Depends On (Upstream)</div>
-                        <div>${upstreamHtml}</div>
-                    </div>
-                    <div>
-                        <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;margin-bottom:0.5rem;">Used By (Downstream)</div>
-                        <div>${downstreamHtml}</div>
+                <div class="usage-stats">
+                    <h3>Current Usage</h3>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <span class="stat-value">${estimate.metrics_count?.toLocaleString() || 0}</span>
+                            <span class="stat-label">Custom Metrics</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value">${this.formatBytes(estimate.logs_gb || 0)}</span>
+                            <span class="stat-label">Logs/day</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value">${(estimate.spans_million || 0).toFixed(1)}M</span>
+                            <span class="stat-label">Spans/month</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value">${estimate.hosts || 0}</span>
+                            <span class="stat-label">Hosts</span>
+                        </div>
                     </div>
                 </div>
 
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem;">
-                    <div>
-                        <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;margin-bottom:0.5rem;">Runbooks</div>
-                        <div style="display:flex;flex-wrap:wrap;gap:0.3rem;">${runbooksHtml}</div>
+                ${this.recommendations.length > 0 ? `
+                    <div class="recommendations">
+                        <h3>Optimization Recommendations</h3>
+                        <div class="recs-list">
+                            ${this.recommendations.slice(0, 3).map(r => `
+                                <div class="rec-item ${r.priority || 'medium'}">
+                                    <div class="rec-icon">${this.getRecIcon(r.type)}</div>
+                                    <div class="rec-content">
+                                        <div class="rec-title">${this.escapeHtml(r.title)}</div>
+                                        <div class="rec-desc">${this.escapeHtml(r.description)}</div>
+                                        ${r.estimated_savings ? `<div class="rec-savings">Save ~${this.formatCurrency(r.estimated_savings)}/mo</div>` : ''}
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
                     </div>
-                </div>
-
-                <div style="margin-bottom:1rem;padding:0.75rem;background:#16181c;border-radius:8px;">
-                    <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;margin-bottom:0.5rem;">Recent Incidents</div>
-                    <div>${incidentsHtml}</div>
-                </div>
-
-                <div style="margin-bottom:1rem;padding:0.75rem;background:#16181c;border-radius:8px;">
-                    <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;margin-bottom:0.5rem;">Synthetic Checks</div>
-                    <div>${syntheticsHtml}</div>
-                </div>
-
-                ${svc.k8s_namespace ? `
-                <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid #2f3336;">
-                    <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;margin-bottom:0.5rem;">Kubernetes</div>
-                    <div style="font-size:0.8rem;">
-                        <span style="color:#71767b;">Namespace:</span> ${escapeHtml(svc.k8s_namespace)}
-                        ${svc.k8s_deployment ? ` | <span style="color:#71767b;">Deployment:</span> ${escapeHtml(svc.k8s_deployment)}` : ''}
-                    </div>
-                </div>
                 ` : ''}
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Close</button>
-                <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove();editService('${svc.id}')">Edit</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-}
-
-function getHealthColor(health) {
-    switch(health) {
-        case 'healthy': return '#00ba7c';
-        case 'degraded': return '#ffd400';
-        case 'unhealthy': return '#f4212e';
-        default: return '#71767b';
-    }
-}
-
-function formatHealth(health) {
-    switch(health) {
-        case 'healthy': return 'Healthy';
-        case 'degraded': return 'Degraded';
-        case 'unhealthy': return 'Unhealthy';
-        default: return 'Unknown';
-    }
-}
-
-function editService(serviceId) {
-    alert('Edit functionality coming soon');
-}
-
-setTimeout(loadCatalog, 1300);
-setInterval(loadCatalog, 30000);
-
-// ============ Correlation Engine Functions ============
-// moved to top
-
-function loadCorrelations() {
-    const timeRange = document.getElementById('corr-timerange')?.value || '24h';
-
-    // Load deploy-incident correlations
-    fetch(`/api/correlate/deploy-incidents?since=${timeRange}`)
-        .then(r => r.ok ? r.json() : Promise.reject('API error'))
-        .then(data => {
-            // Use demo data if empty and demo mode enabled
-            if (DemoData.enabled && (!data?.correlations || data.correlations.length === 0)) {
-                data = DemoData.generateCorrelations();
-            }
-            correlationData.correlations = data.correlations || [];
-
-            const countEl = document.getElementById('corr-deploy-incidents');
-            const listEl = document.getElementById('corr-deploy-list');
-
-            if (countEl) countEl.textContent = correlationData.correlations.length;
-
-            if (listEl) {
-                if (correlationData.correlations.length === 0) {
-                    listEl.innerHTML = '<div class="empty-state" style="padding:1rem;text-align:center;color:#666;">No deploy→incident correlations detected</div>';
-                } else {
-                    listEl.innerHTML = correlationData.correlations.map(corr => renderCorrelation(corr)).join('');
-                }
-            }
-        })
-        .catch(err => {
-            if (DemoData.enabled) {
-                const data = DemoData.generateCorrelations();
-                correlationData.correlations = data.correlations || [];
-                const countEl = document.getElementById('corr-deploy-incidents');
-                const listEl = document.getElementById('corr-deploy-list');
-                if (countEl) countEl.textContent = correlationData.correlations.length;
-                if (listEl) listEl.innerHTML = correlationData.correlations.map(corr => renderCorrelation(corr)).join('');
-            } else {
-                console.error('Error loading correlations:', err);
-            }
-        });
-
-    // Load services for dropdown
-    fetch('/api/catalog/services')
-        .then(r => r.json())
-        .then(services => {
-            const select = document.getElementById('corr-service-select');
-            if (select && services && services.length > 0) {
-                const currentVal = select.value;
-                select.innerHTML = '<option value="">Select Service</option>' +
-                    services.map(s => `<option value="${s.name}">${s.display_name || s.name}</option>`).join('');
-                if (currentVal) select.value = currentVal;
-            }
-        })
-        .catch(() => {});
-
-    // Also load timeline if service selected
-    loadServiceTimeline();
-}
-
-function renderCorrelation(corr) {
-    const confidence = Math.round((corr.confidence || 0) * 100);
-    const confidenceColor = confidence >= 80 ? '#f4212e' : confidence >= 60 ? '#ffd400' : '#71767b';
-    const timeDelta = formatDuration(corr.time_delta);
-
-    return `<div style="padding:0.5rem;border-bottom:1px solid #333;cursor:pointer;" onclick="showDeployContext('${corr.deployment?.id}')">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-            <span style="font-weight:bold;color:#1d9bf0;">${escapeHtml(corr.deployment?.version || 'Unknown')}</span>
-            <span style="font-size:0.75rem;color:${confidenceColor};">${confidence}% confidence</span>
-        </div>
-        <div style="font-size:0.8rem;color:#888;">
-            ${escapeHtml(corr.deployment?.service || '')} • ${timeDelta} before incident
-        </div>
-        <div style="font-size:0.75rem;color:#71767b;margin-top:0.3rem;">
-            ${escapeHtml(corr.reason || '')}
-        </div>
-    </div>`;
-}
-
-function loadServiceTimeline() {
-    const service = document.getElementById('corr-service-select')?.value;
-    const timeRange = document.getElementById('corr-timerange')?.value || '1h';
-
-    if (!service) {
-        const listEl = document.getElementById('corr-timeline-list');
-        if (listEl) listEl.innerHTML = '<div class="empty-state" style="padding:1rem;text-align:center;color:#666;">Select a service to view timeline</div>';
-        return;
-    }
-
-    fetch(`/api/correlate/service/${encodeURIComponent(service)}/timeline?since=${timeRange}`)
-        .then(r => r.json())
-        .then(data => {
-            correlationData.timeline = data;
-
-            const totalEl = document.getElementById('corr-total-events');
-            const errorsEl = document.getElementById('corr-error-traces');
-            const listEl = document.getElementById('corr-timeline-list');
-
-            if (totalEl && data.summary) totalEl.textContent = data.summary.total_events || 0;
-            if (errorsEl && data.summary) errorsEl.textContent = data.summary.error_log_count || 0;
-
-            if (listEl) {
-                if (!data.events || data.events.length === 0) {
-                    listEl.innerHTML = '<div class="empty-state" style="padding:1rem;text-align:center;color:#666;">No events in this time range</div>';
-                } else {
-                    listEl.innerHTML = data.events.map(evt => renderTimelineEvent(evt)).join('');
-                }
-            }
-        })
-        .catch(err => {
-            console.error('Error loading timeline:', err);
-            const listEl = document.getElementById('corr-timeline-list');
-            if (listEl) listEl.innerHTML = '<div class="empty-state" style="padding:1rem;text-align:center;color:#f4212e;">Error loading timeline</div>';
-        });
-}
-
-function renderTimelineEvent(evt) {
-    const typeColors = {
-        'deploy': '#1d9bf0',
-        'incident': '#f4212e',
-        'trace': '#00ba7c',
-        'log': '#71767b',
-        'alert': '#ffd400'
-    };
-    const typeIcons = {
-        'deploy': '🚀',
-        'incident': '🚨',
-        'trace': '🔍',
-        'log': '📝',
-        'alert': '⚠️'
-    };
-    const color = typeColors[evt.type] || '#71767b';
-    const icon = typeIcons[evt.type] || '•';
-    const time = new Date(evt.timestamp).toLocaleTimeString();
-    const severityClass = evt.severity === 'error' || evt.severity === 'critical' ? 'color:#f4212e;' :
-                         evt.severity === 'warn' || evt.severity === 'high' ? 'color:#ffd400;' : '';
-
-    return `<div style="display:flex;gap:0.5rem;padding:0.4rem;border-bottom:1px solid #2f3336;cursor:pointer;" onclick="showEventDetail('${evt.type}', '${evt.id}')">
-        <div style="font-size:0.9rem;">${icon}</div>
-        <div style="flex:1;">
-            <div style="display:flex;justify-content:space-between;">
-                <span style="font-weight:bold;color:${color};font-size:0.8rem;">${evt.type.toUpperCase()}</span>
-                <span style="font-size:0.7rem;color:#71767b;">${time}</span>
-            </div>
-            <div style="font-size:0.8rem;${severityClass}">${escapeHtml(evt.summary || '')}</div>
-        </div>
-    </div>`;
-}
-
-function formatDuration(ns) {
-    if (!ns) return 'unknown';
-    const ms = ns / 1000000;
-    const secs = ms / 1000;
-    const mins = secs / 60;
-    if (mins >= 1) return Math.round(mins) + 'm';
-    if (secs >= 1) return Math.round(secs) + 's';
-    return Math.round(ms) + 'ms';
-}
-
-function showDeployContext(deployId) {
-    if (!deployId) return;
-
-    fetch(`/api/correlate/deploy/${deployId}`)
-        .then(r => r.json())
-        .then(ctx => {
-            const modal = document.createElement('div');
-            modal.className = 'modal-overlay';
-            modal.onclick = e => { if (e.target === modal) modal.remove(); };
-
-            const deploy = ctx.deployment || {};
-            const incidentsHtml = (ctx.following_incidents || []).length > 0
-                ? ctx.following_incidents.map(inc => `<div style="padding:0.3rem;border-bottom:1px solid #333;">
-                    <span class="severity-badge severity-${inc.severity}">${inc.severity}</span>
-                    ${escapeHtml(inc.title)}
-                  </div>`).join('')
-                : '<span style="color:#71767b">No incidents following this deploy</span>';
-
-            const errComp = ctx.errors_comparison || {};
-            const errChange = errComp.change_percent || 0;
-            const errColor = errChange > 50 ? '#f4212e' : errChange > 0 ? '#ffd400' : '#00ba7c';
-
-            modal.innerHTML = `
-                <div class="modal" style="max-width:600px;">
-                    <div class="modal-header">
-                        <span class="modal-title">Deploy Context: ${escapeHtml(deploy.version || deploy.id)}</span>
-                        <button class="btn" onclick="this.closest('.modal-overlay').remove()">×</button>
-                    </div>
-                    <div class="modal-body">
-                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem;">
-                            <div>
-                                <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;">Service</div>
-                                <div style="font-size:1rem;">${escapeHtml(deploy.service || 'Unknown')}</div>
-                            </div>
-                            <div>
-                                <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;">Impact</div>
-                                <div style="font-size:1rem;color:${ctx.impact === 'negative' ? '#f4212e' : ctx.impact === 'positive' ? '#00ba7c' : '#71767b'}">${ctx.impact || 'neutral'}</div>
-                            </div>
-                        </div>
-                        <div style="margin-bottom:1rem;">
-                            <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;margin-bottom:0.5rem;">Error Rate Change</div>
-                            <div style="display:flex;gap:1rem;">
-                                <div>Before: ${errComp.errors_before || 0} (${(errComp.rate_before || 0).toFixed(1)}/min)</div>
-                                <div>After: ${errComp.errors_after || 0} (${(errComp.rate_after || 0).toFixed(1)}/min)</div>
-                                <div style="color:${errColor}">${errChange > 0 ? '+' : ''}${errChange.toFixed(0)}%</div>
-                            </div>
-                        </div>
-                        <div>
-                            <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;margin-bottom:0.5rem;">Following Incidents</div>
-                            ${incidentsHtml}
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Close</button>
-                    </div>
-                </div>`;
-            document.body.appendChild(modal);
-        })
-        .catch(err => console.error('Error loading deploy context:', err));
-}
-
-function showEventDetail(type, id) {
-    if (type === 'trace') {
-        // Load trace context
-        fetch(`/api/correlate/trace/${id}`)
-            .then(r => r.json())
-            .then(ctx => {
-                showTraceContextModal(ctx);
-            })
-            .catch(err => console.error('Error loading trace context:', err));
-    } else if (type === 'incident') {
-        fetch(`/api/correlate/incident/${id}`)
-            .then(r => r.json())
-            .then(ctx => {
-                showIncidentContextModal(ctx);
-            })
-            .catch(err => console.error('Error loading incident context:', err));
-    }
-}
-
-function showTraceContextModal(ctx) {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = e => { if (e.target === modal) modal.remove(); };
-
-    const trace = ctx.trace || {};
-    const logsHtml = (ctx.logs || []).length > 0
-        ? ctx.logs.slice(0, 20).map(log => {
-            const levelColor = log.level === 'error' ? '#f4212e' : log.level === 'warn' ? '#ffd400' : '#71767b';
-            return `<div style="padding:0.2rem 0;border-bottom:1px solid #2f3336;font-size:0.75rem;">
-                <span style="color:${levelColor};font-weight:bold;">${log.level}</span>
-                <span style="color:#71767b;margin-left:0.5rem;">${new Date(log.timestamp).toLocaleTimeString()}</span>
-                <div style="color:#e7e9ea;">${escapeHtml(log.message?.substring(0, 200) || '')}</div>
-            </div>`;
-        }).join('')
-        : '<span style="color:#71767b">No logs for this trace</span>';
-
-    modal.innerHTML = `
-        <div class="modal" style="max-width:700px;">
-            <div class="modal-header">
-                <span class="modal-title">Trace Context</span>
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">×</button>
-            </div>
-            <div class="modal-body" style="max-height:70vh;overflow-y:auto;">
-                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1rem;">
-                    <div>
-                        <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;">Service</div>
-                        <div>${escapeHtml(ctx.service || trace.service_name || 'Unknown')}</div>
-                    </div>
-                    <div>
-                        <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;">Duration</div>
-                        <div>${(ctx.duration_ms || trace.duration_ms || 0).toFixed(2)}ms</div>
-                    </div>
-                    <div>
-                        <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;">Status</div>
-                        <div style="color:${ctx.status === 'ERROR' ? '#f4212e' : '#00ba7c'}">${ctx.status || trace.status || 'OK'}</div>
-                    </div>
-                    <div>
-                        <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;">Errors</div>
-                        <div style="color:${ctx.error_count > 0 ? '#f4212e' : '#00ba7c'}">${ctx.error_count || 0}</div>
-                    </div>
-                </div>
-                <div style="margin-bottom:1rem;">
-                    <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;margin-bottom:0.5rem;">Trace ID</div>
-                    <code style="font-size:0.8rem;background:#1a1a1a;padding:0.3rem;border-radius:3px;">${ctx.trace_id || ''}</code>
-                </div>
-                <div>
-                    <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;margin-bottom:0.5rem;">Correlated Logs (${(ctx.logs || []).length})</div>
-                    <div style="max-height:300px;overflow-y:auto;background:#1a1a1a;padding:0.5rem;border-radius:4px;">
-                        ${logsHtml}
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Close</button>
-            </div>
-        </div>`;
-    document.body.appendChild(modal);
-}
-
-function showIncidentContextModal(ctx) {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = e => { if (e.target === modal) modal.remove(); };
-
-    const inc = ctx.incident || {};
-    const cause = ctx.probable_cause;
-
-    const deploysHtml = (ctx.preceding_deploys || []).length > 0
-        ? ctx.preceding_deploys.map(d => `<div style="padding:0.3rem;border-bottom:1px solid #333;">
-            🚀 ${escapeHtml(d.version)} - ${escapeHtml(d.service)}
-            <span style="color:#71767b;font-size:0.75rem;">${new Date(d.timestamp).toLocaleString()}</span>
-          </div>`).join('')
-        : '<span style="color:#71767b">No recent deploys</span>';
-
-    const timelineHtml = (ctx.timeline || []).slice(0, 15).map(evt => {
-        const icon = evt.type === 'deploy' ? '🚀' : evt.type === 'incident' ? '🚨' : evt.type === 'trace' ? '🔍' : '📝';
-        return `<div style="padding:0.2rem 0;font-size:0.8rem;">
-            ${icon} <span style="color:#71767b;">${new Date(evt.timestamp).toLocaleTimeString()}</span> ${escapeHtml(evt.summary || '')}
-        </div>`;
-    }).join('');
-
-    modal.innerHTML = `
-        <div class="modal" style="max-width:700px;">
-            <div class="modal-header">
-                <span class="modal-title">Incident Context: ${escapeHtml(inc.title || '')}</span>
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">×</button>
-            </div>
-            <div class="modal-body" style="max-height:70vh;overflow-y:auto;">
-                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:1rem;">
-                    <div>
-                        <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;">Severity</div>
-                        <div class="severity-badge severity-${inc.severity}">${inc.severity || 'unknown'}</div>
-                    </div>
-                    <div>
-                        <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;">Status</div>
-                        <div>${inc.status || 'unknown'}</div>
-                    </div>
-                    <div>
-                        <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;">Service</div>
-                        <div>${escapeHtml(inc.service || 'Unknown')}</div>
-                    </div>
-                </div>
-                ${cause ? `
-                <div style="background:#2a1a1a;border:1px solid #f4212e;border-radius:4px;padding:0.75rem;margin-bottom:1rem;">
-                    <div style="color:#f4212e;font-weight:bold;margin-bottom:0.3rem;">⚠️ Probable Cause Detected</div>
-                    <div>Deploy <strong>${escapeHtml(cause.deployment?.version || '')}</strong> occurred ${formatDuration(cause.time_delta)} before incident</div>
-                    <div style="color:#71767b;font-size:0.8rem;">${escapeHtml(cause.reason || '')} (${Math.round((cause.confidence || 0) * 100)}% confidence)</div>
-                </div>
-                ` : ''}
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
-                    <div>
-                        <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;margin-bottom:0.5rem;">Preceding Deploys</div>
-                        ${deploysHtml}
-                    </div>
-                    <div>
-                        <div style="color:#71767b;font-size:0.7rem;text-transform:uppercase;margin-bottom:0.5rem;">Timeline</div>
-                        <div style="max-height:200px;overflow-y:auto;">${timelineHtml || '<span style="color:#71767b">No timeline events</span>'}</div>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Close</button>
-            </div>
-        </div>`;
-    document.body.appendChild(modal);
-}
-
-setTimeout(loadCorrelations, 1500);
-setInterval(loadCorrelations, 60000);
-
-// ============ Kubernetes Functions ============
-// moved to top
-
-function switchK8sTab(tab) {
-    currentK8sTab = tab;
-    document.querySelectorAll('.k8s-tab').forEach(t => t.classList.remove('active'));
-    document.querySelector(`.k8s-tab[data-tab="${tab}"]`).classList.add('active');
-    document.querySelectorAll('.k8s-content').forEach(c => c.classList.remove('active'));
-    document.getElementById(`k8s-${tab}-content`).classList.add('active');
-}
-
-function loadKubernetes() {
-    const nsSelect = document.getElementById('k8s-namespace-select');
-    const selectedNs = nsSelect ? nsSelect.value : '';
-    const nsParam = selectedNs ? `?namespace=${encodeURIComponent(selectedNs)}` : '';
-
-    // Load summary/cluster info
-    fetch('/api/k8s/summary')
-        .then(r => r.json())
-        .then(summary => {
-            if (!summary) return;
-
-            const podsEl = document.getElementById('k8s-pods');
-            const deploysEl = document.getElementById('k8s-deployments');
-            const servicesEl = document.getElementById('k8s-services');
-            const nodesEl = document.getElementById('k8s-nodes');
-            const clusterNameEl = document.getElementById('k8s-cluster-name');
-
-            if (podsEl) {
-                podsEl.textContent = `${summary.running_pods || 0}/${summary.total_pods || 0}`;
-                podsEl.style.color = summary.running_pods === summary.total_pods ? '#00ba7c' : '#ffd400';
-            }
-            if (deploysEl) {
-                deploysEl.textContent = `${summary.ready_deployments || 0}/${summary.total_deployments || 0}`;
-                deploysEl.style.color = summary.ready_deployments === summary.total_deployments ? '#00ba7c' : '#ffd400';
-            }
-            if (servicesEl) servicesEl.textContent = summary.total_services || 0;
-            if (nodesEl) {
-                nodesEl.textContent = `${summary.ready_nodes || 0}/${summary.total_nodes || 0}`;
-                nodesEl.style.color = summary.ready_nodes === summary.total_nodes ? '#00ba7c' : '#ffd400';
-            }
-            if (clusterNameEl) clusterNameEl.textContent = summary.cluster_name ? `Cluster: ${summary.cluster_name}` : '';
-        })
-        .catch(() => {});
-
-    // Load namespaces for dropdown
-    fetch('/api/k8s/namespaces')
-        .then(r => r.json())
-        .then(namespaces => {
-            if (!namespaces || !nsSelect) return;
-            const currentVal = nsSelect.value;
-            nsSelect.innerHTML = '<option value="">All Namespaces</option>';
-            namespaces.forEach(ns => {
-                const opt = document.createElement('option');
-                opt.value = ns.name;
-                opt.textContent = ns.name;
-                nsSelect.appendChild(opt);
-            });
-            nsSelect.value = currentVal;
-        })
-        .catch(() => {});
-
-    // Load pods
-    fetch(`/api/k8s/pods${nsParam}`)
-        .then(r => r.json())
-        .then(pods => {
-            const el = document.getElementById('k8s-pods-content');
-            if (!el) return;
-            if (!pods || pods.length === 0) {
-                el.innerHTML = '<div class="empty-state">No pods found</div>';
-                return;
-            }
-            el.innerHTML = pods.map(pod => {
-                const statusClass = (pod.phase || 'unknown').toLowerCase();
-                const readyContainers = pod.containers ? pod.containers.filter(c => c.ready).length : 0;
-                const totalContainers = pod.containers ? pod.containers.length : 0;
-                const restarts = pod.containers ? pod.containers.reduce((sum, c) => sum + (c.restarts || 0), 0) : 0;
-
-                return `<div class="k8s-item">
-                    <div class="k8s-status ${statusClass}"></div>
-                    <div class="k8s-info">
-                        <div class="k8s-name">
-                            ${pod.name}
-                            <span class="k8s-namespace">${pod.namespace}</span>
-                        </div>
-                        <div class="k8s-meta">
-                            <span>${pod.phase || 'Unknown'}</span>
-                            <span>Ready: ${readyContainers}/${totalContainers}</span>
-                            <span>Restarts: ${restarts}</span>
-                            ${pod.node_name ? `<span>Node: ${pod.node_name}</span>` : ''}
-                        </div>
-                    </div>
-                    <div class="k8s-metrics">
-                        ${pod.ip ? `<div class="k8s-metric"><span class="k8s-metric-value" style="font-size:0.65rem">${pod.ip}</span><span>IP</span></div>` : ''}
-                    </div>
-                </div>`;
-            }).join('');
-        })
-        .catch(() => {});
-
-    // Load deployments
-    fetch(`/api/k8s/deployments${nsParam}`)
-        .then(r => r.json())
-        .then(deploys => {
-            const el = document.getElementById('k8s-deploys-content');
-            if (!el) return;
-            if (!deploys || deploys.length === 0) {
-                el.innerHTML = '<div class="empty-state">No deployments found</div>';
-                return;
-            }
-            el.innerHTML = deploys.map(d => {
-                const ready = d.ready_replicas || 0;
-                const desired = d.replicas || 0;
-                const statusClass = ready === desired ? 'ready' : 'notready';
-
-                return `<div class="k8s-item">
-                    <div class="k8s-status ${statusClass}"></div>
-                    <div class="k8s-info">
-                        <div class="k8s-name">
-                            ${d.name}
-                            <span class="k8s-namespace">${d.namespace}</span>
-                        </div>
-                        <div class="k8s-meta">
-                            <span>Ready: ${ready}/${desired}</span>
-                            <span>Available: ${d.available_replicas || 0}</span>
-                            <span>Updated: ${d.updated_replicas || 0}</span>
-                        </div>
-                    </div>
-                    <div class="k8s-metrics">
-                        <div class="k8s-metric">
-                            <span class="k8s-metric-value">${d.replicas || 0}</span>
-                            <span>Replicas</span>
-                        </div>
-                    </div>
-                </div>`;
-            }).join('');
-        })
-        .catch(() => {});
-
-    // Load services
-    fetch(`/api/k8s/services${nsParam}`)
-        .then(r => r.json())
-        .then(services => {
-            const el = document.getElementById('k8s-services-content');
-            if (!el) return;
-            if (!services || services.length === 0) {
-                el.innerHTML = '<div class="empty-state">No services found</div>';
-                return;
-            }
-            el.innerHTML = services.map(svc => {
-                const ports = svc.ports ? svc.ports.map(p => `${p.port}${p.node_port ? ':' + p.node_port : ''}/${p.protocol || 'TCP'}`).join(', ') : '-';
-
-                return `<div class="k8s-item">
-                    <div class="k8s-status ready"></div>
-                    <div class="k8s-info">
-                        <div class="k8s-name">
-                            ${svc.name}
-                            <span class="k8s-namespace">${svc.namespace}</span>
-                        </div>
-                        <div class="k8s-meta">
-                            <span>${svc.type || 'ClusterIP'}</span>
-                            <span>IP: ${svc.cluster_ip || '-'}</span>
-                            <span>Ports: ${ports}</span>
-                        </div>
-                    </div>
-                </div>`;
-            }).join('');
-        })
-        .catch(() => {});
-
-    // Load nodes
-    fetch('/api/k8s/nodes')
-        .then(r => r.json())
-        .then(nodes => {
-            const el = document.getElementById('k8s-nodes-content');
-            if (!el) return;
-            if (!nodes || nodes.length === 0) {
-                el.innerHTML = '<div class="empty-state">No nodes found</div>';
-                return;
-            }
-            el.innerHTML = nodes.map(node => {
-                const statusClass = node.ready ? 'ready' : 'notready';
-                const roles = node.labels ? Object.keys(node.labels).filter(k => k.startsWith('node-role.kubernetes.io/')).map(k => k.replace('node-role.kubernetes.io/', '')).join(', ') : '-';
-
-                return `<div class="k8s-item">
-                    <div class="k8s-status ${statusClass}"></div>
-                    <div class="k8s-info">
-                        <div class="k8s-name">${node.name}</div>
-                        <div class="k8s-meta">
-                            <span>${node.ready ? 'Ready' : 'Not Ready'}</span>
-                            <span>Roles: ${roles || 'worker'}</span>
-                            <span>Version: ${node.kubelet_version || '-'}</span>
-                        </div>
-                    </div>
-                    <div class="k8s-metrics">
-                        <div class="k8s-metric">
-                            <span class="k8s-metric-value">${node.allocatable_cpu || '-'}</span>
-                            <span>CPU</span>
-                        </div>
-                        <div class="k8s-metric">
-                            <span class="k8s-metric-value">${node.allocatable_memory || '-'}</span>
-                            <span>Mem</span>
-                        </div>
-                        <div class="k8s-metric">
-                            <span class="k8s-metric-value">${node.allocatable_pods || '-'}</span>
-                            <span>Pods</span>
-                        </div>
-                    </div>
-                </div>`;
-            }).join('');
-        })
-        .catch(() => {});
-
-    // Load events
-    fetch(`/api/k8s/events${nsParam}`)
-        .then(r => r.json())
-        .then(events => {
-            const el = document.getElementById('k8s-events-content');
-            if (!el) return;
-            if (!events || events.length === 0) {
-                el.innerHTML = '<div class="empty-state">No events found</div>';
-                return;
-            }
-            el.innerHTML = events.slice(0, 50).map(evt => {
-                const typeClass = (evt.type || 'normal').toLowerCase();
-                const timeAgo = evt.last_timestamp ? formatTimeAgo(new Date(evt.last_timestamp)) : '-';
-
-                return `<div class="k8s-event">
-                    <span class="k8s-event-type ${typeClass}">${evt.type || 'Normal'}</span>
-                    <strong>${evt.reason || '-'}</strong>: ${evt.message || '-'}
-                    <span class="k8s-event-time">${timeAgo} - ${evt.involved_object_kind || ''}/${evt.involved_object_name || ''}</span>
-                </div>`;
-            }).join('');
-        })
-        .catch(() => {});
-}
-
-function formatTimeAgo(date) {
-    const seconds = Math.floor((new Date() - date) / 1000);
-    if (seconds < 60) return `${seconds}s ago`;
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes}m ago`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    return `${days}d ago`;
-}
-
-// Initialize Kubernetes
-setTimeout(loadKubernetes, 1200);
-setInterval(loadKubernetes, 15000);
-
-// Anomaly Detection functions
-function loadAnomalies() {
-    // Load stats
-    fetch('/api/anomaly/stats')
-        .then(r => r.ok ? r.json() : Promise.reject('API error'))
-        .then(stats => {
-            // Use demo stats if empty
-            if (DemoData.enabled && !stats?.total_anomalies && !stats?.metrics_tracked) {
-                stats = DemoData.generateAnomalyStats();
-            }
-            document.getElementById('anomaly-critical').textContent = stats.critical_count || 0;
-            document.getElementById('anomaly-warning').textContent = stats.warning_count || 0;
-            document.getElementById('anomaly-total').textContent = stats.total_anomalies || 0;
-            document.getElementById('anomaly-metrics').textContent = stats.metrics_tracked || 0;
-        })
-        .catch(() => {
-            if (DemoData.enabled) {
-                const stats = DemoData.generateAnomalyStats();
-                document.getElementById('anomaly-critical').textContent = stats.critical_count;
-                document.getElementById('anomaly-warning').textContent = stats.warning_count;
-                document.getElementById('anomaly-total').textContent = stats.total_anomalies;
-                document.getElementById('anomaly-metrics').textContent = stats.metrics_tracked;
-            }
-        });
-
-    // Load recent anomalies
-    fetch('/api/anomaly/recent?limit=20')
-        .then(r => r.ok ? r.json() : Promise.reject('API error'))
-        .then(anomalies => {
-            const list = document.getElementById('anomaly-list');
-            if (!list) return;
-
-            // Use demo data if empty and demo mode enabled
-            if ((!anomalies || anomalies.length === 0) && DemoData.enabled) {
-                anomalies = DemoData.generateAnomalies();
-            }
-            if (!anomalies || anomalies.length === 0) {
-                list.innerHTML = '<div class="empty-state">No anomalies detected. System is healthy!</div>';
-                return;
-            }
-
-            list.innerHTML = anomalies.map(a => {
-                const severity = a.is_critical ? 'critical' : (a.score > 0.7 ? 'warning' : 'info');
-                const scoreClass = a.score > 0.8 ? 'high' : (a.score > 0.5 ? 'medium' : 'low');
-                const time = new Date(a.timestamp).toLocaleString();
-                const relTime = formatRelativeTime(new Date(a.timestamp));
-
-                return `<div class="anomaly-item">
-                    <div class="anomaly-severity ${severity}"></div>
-                    <div class="anomaly-info">
-                        <div class="anomaly-metric">${escapeHtml(a.metric_name || 'Unknown')}</div>
-                        <div class="anomaly-meta">
-                            <span title="${time}">${relTime}</span>
-                            <span>Value: ${a.value?.toFixed(2) || '-'}</span>
-                            <span class="anomaly-score ${scoreClass}">Score: ${(a.score * 100).toFixed(0)}%</span>
-                        </div>
-                        ${a.reason ? `<div style="font-size:0.7rem;color:#71767b;margin-top:0.2rem;">${escapeHtml(a.reason)}</div>` : ''}
-                    </div>
-                </div>`;
-            }).join('');
-        })
-        .catch(() => {
-            if (DemoData.enabled) {
-                const list = document.getElementById('anomaly-list');
-                if (!list) return;
-                const anomalies = DemoData.generateAnomalies();
-                list.innerHTML = anomalies.map(a => {
-                    const severity = a.is_critical ? 'critical' : (a.score > 0.7 ? 'warning' : 'info');
-                    const relTime = formatRelativeTime(new Date(a.timestamp));
-                    return `<div class="anomaly-item"><div class="anomaly-severity ${severity}"></div><div class="anomaly-info"><div class="anomaly-metric">${escapeHtml(a.metric_name)}</div><div class="anomaly-meta"><span>${relTime}</span><span>Value: ${a.value?.toFixed(2)}</span><span class="anomaly-score">${(a.score * 100).toFixed(0)}%</span></div>${a.reason ? `<div style="font-size:0.7rem;color:#71767b;">${escapeHtml(a.reason)}</div>` : ''}</div></div>`;
-                }).join('');
-            } else {
-                const list = document.getElementById('anomaly-list');
-                if (list) list.innerHTML = '<div class="empty-state">Anomaly detection not available</div>';
-            }
-        });
-}
-
-// Alerting functions
-function loadAlerts() {
-    // Load status
-    fetch('/api/alerting/status')
-        .then(r => r.ok ? r.json() : Promise.reject('API error'))
-        .then(status => {
-            // Use demo stats if empty
-            if (DemoData.enabled && !status?.firing_alerts && !status?.total_rules) {
-                status = DemoData.generateAlertingStatus();
-            }
-            document.getElementById('alerts-firing').textContent = status.firing_alerts || 0;
-            document.getElementById('alerts-pending').textContent = status.pending_alerts || 0;
-            document.getElementById('alerts-silenced').textContent = status.active_silences || 0;
-            document.getElementById('alerts-rules').textContent = status.total_rules || 0;
-        })
-        .catch(() => {
-            if (DemoData.enabled) {
-                const status = DemoData.generateAlertingStatus();
-                document.getElementById('alerts-firing').textContent = status.firing_alerts;
-                document.getElementById('alerts-pending').textContent = status.pending_alerts;
-                document.getElementById('alerts-silenced').textContent = status.active_silences;
-                document.getElementById('alerts-rules').textContent = status.total_rules;
-            }
-        });
-
-    // Load firing alerts
-    fetch('/api/alerting/alerts?state=firing')
-        .then(r => r.ok ? r.json() : Promise.reject('API error'))
-        .then(alerts => {
-            const content = document.getElementById('alerting-alerts-content');
-            if (!content) return;
-
-            // Use demo data if empty and demo mode enabled
-            if ((!alerts || alerts.length === 0) && DemoData.enabled) {
-                alerts = DemoData.generateAlerts();
-            }
-            if (!alerts || alerts.length === 0) {
-                content.innerHTML = '<div class="empty-state">No firing alerts. All clear!</div>';
-                return;
-            }
-
-            content.innerHTML = alerts.map(alert => {
-                const time = new Date(alert.starts_at).toLocaleString();
-                const relTime = formatRelativeTime(new Date(alert.starts_at));
-                const severity = alert.severity || 'warning';
-                const labels = Object.entries(alert.labels || {}).map(([k, v]) =>
-                    `<span class="alert-label">${escapeHtml(k)}=${escapeHtml(v)}</span>`
-                ).join('');
-
-                return `<div class="alert-item" onclick="showAlertDetail('${alert.id}')">
-                    <div class="alert-severity ${severity}"></div>
-                    <div class="alert-info">
-                        <div class="alert-header">
-                            <span class="alert-name">${escapeHtml(alert.rule_name || 'Alert')}</span>
-                            <span class="alert-state ${alert.state}">${alert.state}</span>
-                        </div>
-                        <div class="alert-meta">
-                            <span title="${time}">${relTime}</span>
-                            <span class="alert-value">Value: ${alert.value?.toFixed(2) || '-'}</span>
-                        </div>
-                        ${labels ? `<div class="alert-labels">${labels}</div>` : ''}
-                    </div>
-                    <div class="alert-actions" onclick="event.stopPropagation()">
-                        <button class="btn" onclick="ackAlert('${alert.id}')" title="Acknowledge">&#10003;</button>
-                        <button class="btn" onclick="silenceAlert('${alert.id}')" title="Silence">&#128263;</button>
-                    </div>
-                </div>`;
-            }).join('');
-        })
-        .catch(() => {
-            if (DemoData.enabled) {
-                const content = document.getElementById('alerting-alerts-content');
-                if (!content) return;
-                const alerts = DemoData.generateAlerts();
-                content.innerHTML = alerts.map(alert => {
-                    const relTime = formatRelativeTime(new Date(alert.starts_at));
-                    const labels = Object.entries(alert.labels || {}).map(([k, v]) => `<span class="alert-label">${escapeHtml(k)}=${escapeHtml(v)}</span>`).join('');
-                    return `<div class="alert-item"><div class="alert-severity ${alert.severity || 'warning'}"></div><div class="alert-info"><div class="alert-name">${escapeHtml(alert.name)}</div><div class="alert-summary">${escapeHtml(alert.annotations?.summary || '')}</div><div class="alert-meta"><span>${relTime}</span></div>${labels ? `<div class="alert-labels">${labels}</div>` : ''}</div></div>`;
-                }).join('');
-            } else {
-                const content = document.getElementById('alerting-alerts-content');
-                if (content) content.innerHTML = '<div class="empty-state">Alerting not available</div>';
-            }
-        });
-
-    // Load rules
-    fetch('/api/alerting/rules')
-        .then(r => r.json())
-        .then(rules => {
-            const content = document.getElementById('alerting-rules-content');
-            if (!content) return;
-
-            if (!rules || rules.length === 0) {
-                content.innerHTML = '<div class="empty-state">No alert rules configured</div>';
-                return;
-            }
-
-            content.innerHTML = rules.map(rule => {
-                const typeLabel = rule.type || 'threshold';
-                return `<div class="alert-item">
-                    <div class="alert-severity ${rule.enabled ? 'info' : 'warning'}" style="opacity:${rule.enabled ? 1 : 0.3}"></div>
-                    <div class="alert-info">
-                        <div class="alert-header">
-                            <span class="alert-name">${escapeHtml(rule.name)}</span>
-                            <span class="alert-label">${typeLabel}</span>
-                            ${!rule.enabled ? '<span class="alert-state" style="background:#2f3336;color:#71767b">disabled</span>' : ''}
-                        </div>
-                        <div class="alert-meta">
-                            <span>${rule.condition} ${rule.threshold}</span>
-                            ${rule.query ? `<span style="font-family:monospace;color:#1d9bf0">${escapeHtml(rule.query.substring(0, 30))}...</span>` : ''}
-                        </div>
-                    </div>
-                    <div class="alert-actions" onclick="event.stopPropagation()">
-                        <button class="btn" onclick="toggleRule('${rule.id}', ${!rule.enabled})">${rule.enabled ? 'Disable' : 'Enable'}</button>
-                        <button class="btn" style="color:#f4212e" onclick="deleteRule('${rule.id}')">Delete</button>
-                    </div>
-                </div>`;
-            }).join('');
-        })
-        .catch(() => {});
-
-    // Load silences
-    fetch('/api/alerting/silences?all=true')
-        .then(r => r.json())
-        .then(silences => {
-            const content = document.getElementById('alerting-silences-content');
-            if (!content) return;
-
-            if (!silences || silences.length === 0) {
-                content.innerHTML = '<div class="empty-state">No silences configured</div>';
-                return;
-            }
-
-            content.innerHTML = silences.map(s => {
-                const matchers = (s.matchers || []).map(m => `${m.name}${m.is_equal ? '=' : '!='}${m.value}`).join(', ');
-                const endsAt = new Date(s.ends_at).toLocaleString();
-                const state = s.state || 'active';
-
-                return `<div class="silence-item">
-                    <div class="silence-info">
-                        <span class="silence-matchers">${escapeHtml(matchers) || 'All alerts'}</span>
-                        <span class="silence-state ${state}">${state}</span>
-                    </div>
-                    <div class="silence-meta">
-                        <span>Ends: ${endsAt}</span>
-                        ${s.comment ? `<span>${escapeHtml(s.comment)}</span>` : ''}
-                        ${s.created_by ? `<span>by ${escapeHtml(s.created_by)}</span>` : ''}
-                        ${state === 'active' ? `<button class="btn" style="margin-left:auto" onclick="expireSilence('${s.id}')">Expire</button>` : ''}
-                    </div>
-                </div>`;
-            }).join('');
-        })
-        .catch(() => {});
-}
-
-function switchAlertingTab(tab) {
-    document.querySelectorAll('.alerting-tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.alerting-content').forEach(c => c.classList.remove('active'));
-    document.querySelector(`.alerting-tab[data-tab="${tab}"]`)?.classList.add('active');
-    document.getElementById(`alerting-${tab}-content`)?.classList.add('active');
-}
-
-function ackAlert(alertId) {
-    fetch(`/api/alerting/alerts/${alertId}/acknowledge`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: 'dashboard' })
-    }).then(() => loadAlerts());
-}
-
-function silenceAlert(alertId) {
-    const duration = prompt('Silence duration (e.g. 1h, 30m, 2h):', '1h');
-    if (!duration) return;
-    fetch(`/api/alerting/alerts/${alertId}/silence`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ duration, created_by: 'dashboard', comment: 'Silenced from dashboard' })
-    }).then(() => loadAlerts());
-}
-
-function expireSilence(silenceId) {
-    fetch(`/api/alerting/silences/${silenceId}/expire`, { method: 'POST' })
-        .then(() => loadAlerts());
-}
-
-function toggleRule(ruleId, enabled) {
-    fetch(`/api/alerting/rules/${ruleId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled })
-    }).then(() => loadAlerts());
-}
-
-function deleteRule(ruleId) {
-    if (!confirm('Delete this alert rule?')) return;
-    fetch(`/api/alerting/rules/${ruleId}`, { method: 'DELETE' })
-        .then(() => loadAlerts());
-}
-
-function showAlertDetail(alertId) {
-    fetch(`/api/alerting/alerts/${alertId}`)
-        .then(r => r.json())
-        .then(alert => {
-            const modal = document.createElement('div');
-            modal.className = 'modal-overlay';
-            modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-            modal.innerHTML = `
-                <div class="modal">
-                    <div class="modal-header">
-                        <span class="modal-title">${escapeHtml(alert.rule_name || 'Alert')}</span>
-                        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-                    </div>
-                    <div class="modal-body">
-                        <p><strong>State:</strong> ${alert.state}</p>
-                        <p><strong>Severity:</strong> ${alert.severity}</p>
-                        <p><strong>Value:</strong> ${alert.value}</p>
-                        <p><strong>Threshold:</strong> ${alert.threshold}</p>
-                        <p><strong>Started:</strong> ${new Date(alert.starts_at).toLocaleString()}</p>
-                        <p><strong>Labels:</strong></p>
-                        <pre style="background:#2f3336;padding:0.5rem;border-radius:4px;font-size:0.75rem;overflow:auto">${JSON.stringify(alert.labels, null, 2)}</pre>
-                    </div>
-                    <div class="modal-footer">
-                        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Close</button>
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(modal);
-        });
-}
-
-function showNewAlertRuleModal() {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-    modal.innerHTML = `
-        <div class="modal">
-            <div class="modal-header">
-                <span class="modal-title">Create Alert Rule</span>
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">Name *</label>
-                    <input type="text" id="rule-name" class="form-input" placeholder="High CPU Usage">
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">Type</label>
-                        <select id="rule-type" class="form-select">
-                            <option value="threshold">Threshold</option>
-                            <option value="anomaly">Anomaly</option>
-                            <option value="absence">Absence</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Severity</label>
-                        <select id="rule-severity" class="form-select">
-                            <option value="critical">Critical</option>
-                            <option value="warning" selected>Warning</option>
-                            <option value="info">Info</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Metric or Query</label>
-                    <input type="text" id="rule-metric" class="form-input" placeholder="cpu_usage or WatchQL query">
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">Condition</label>
-                        <select id="rule-condition" class="form-select">
-                            <option value="gt">&gt; Greater than</option>
-                            <option value="gte">&gt;= Greater or equal</option>
-                            <option value="lt">&lt; Less than</option>
-                            <option value="lte">&lt;= Less or equal</option>
-                            <option value="eq">= Equal</option>
-                            <option value="neq">!= Not equal</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Threshold</label>
-                        <input type="number" id="rule-threshold" class="form-input" placeholder="80">
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">For Duration (e.g. 5m, 1h)</label>
-                    <input type="text" id="rule-duration" class="form-input" placeholder="0s (fire immediately)">
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                <button class="btn btn-primary" onclick="createAlertRule()">Create Rule</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-}
-
-function createAlertRule() {
-    const name = document.getElementById('rule-name').value;
-    const type = document.getElementById('rule-type').value;
-    const severity = document.getElementById('rule-severity').value;
-    const metric = document.getElementById('rule-metric').value;
-    const condition = document.getElementById('rule-condition').value;
-    const threshold = parseFloat(document.getElementById('rule-threshold').value) || 0;
-    const duration = document.getElementById('rule-duration').value || '0s';
-
-    if (!name) { alert('Name is required'); return; }
-
-    fetch('/api/alerting/rules', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            name,
-            type,
-            enabled: true,
-            metric: metric,
-            condition,
-            threshold,
-            labels: { severity },
-            for_duration: duration
-        })
-    })
-    .then(r => { if (!r.ok) throw new Error('Failed'); return r.json(); })
-    .then(() => {
-        document.querySelector('.modal-overlay')?.remove();
-        loadAlerts();
-    })
-    .catch(() => alert('Failed to create rule'));
-}
-
-function showNewSilenceModal() {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-    modal.innerHTML = `
-        <div class="modal">
-            <div class="modal-header">
-                <span class="modal-title">Create Silence</span>
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">Matchers (label=value, one per line)</label>
-                    <textarea id="silence-matchers" class="form-input" rows="3" placeholder="severity=warning&#10;team=platform"></textarea>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Duration</label>
-                    <select id="silence-duration" class="form-select">
-                        <option value="1h">1 hour</option>
-                        <option value="2h">2 hours</option>
-                        <option value="4h">4 hours</option>
-                        <option value="8h">8 hours</option>
-                        <option value="24h">24 hours</option>
-                        <option value="7d">7 days</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Comment</label>
-                    <input type="text" id="silence-comment" class="form-input" placeholder="Maintenance window">
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                <button class="btn btn-primary" onclick="createSilence()">Create Silence</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-}
-
-function createSilence() {
-    const matchersText = document.getElementById('silence-matchers').value;
-    const duration = document.getElementById('silence-duration').value;
-    const comment = document.getElementById('silence-comment').value;
-
-    const matchers = matchersText.split('\n').filter(l => l.trim()).map(line => {
-        const [name, value] = line.split('=');
-        return { name: name?.trim(), value: value?.trim(), is_equal: true, is_regex: false };
-    }).filter(m => m.name && m.value);
-
-    const durationMs = {
-        '1h': 3600000, '2h': 7200000, '4h': 14400000,
-        '8h': 28800000, '24h': 86400000, '7d': 604800000
-    }[duration] || 3600000;
-
-    fetch('/api/alerting/silences', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            matchers,
-            starts_at: new Date().toISOString(),
-            ends_at: new Date(Date.now() + durationMs).toISOString(),
-            created_by: 'dashboard',
-            comment
-        })
-    })
-    .then(r => { if (!r.ok) throw new Error('Failed'); return r.json(); })
-    .then(() => {
-        document.querySelector('.modal-overlay')?.remove();
-        loadAlerts();
-    })
-    .catch(() => alert('Failed to create silence'));
-}
-
-// Notifications widget functions
-function loadNotifyWidget() {
-    // Load channels
-    fetch('/api/notify/channels')
-        .then(r => r.json())
-        .then(channels => {
-            const enabledCount = channels.filter(c => c.enabled).length;
-            document.getElementById('notify-channels').textContent = channels.length;
-            document.getElementById('notify-enabled').textContent = enabledCount;
-
-            const content = document.getElementById('notify-channels-content');
-            if (!content) return;
-
-            if (!channels || channels.length === 0) {
-                content.innerHTML = '<div class="empty-state">No notification channels configured. <a href="#" onclick="showNotificationChannels();return false" style="color:#1d9bf0">Add one</a></div>';
-                return;
-            }
-
-            const typeIcons = {
-                webhook: '&#128279;', slack: '&#128172;', email: '&#9993;',
-                pagerduty: '&#128221;', opsgenie: '&#128276;', msteams: '&#128187;', discord: '&#127918;'
-            };
-
-            content.innerHTML = channels.map(ch => {
-                const icon = typeIcons[ch.type] || '&#128276;';
-                return `<div class="notify-channel" onclick="showNotificationChannels()">
-                    <div class="notify-channel-icon ${ch.type}">${icon}</div>
-                    <div class="notify-channel-info">
-                        <div class="notify-channel-name">
-                            <span class="${ch.enabled ? 'enabled' : 'disabled'}"></span>
-                            ${escapeHtml(ch.name)}
-                        </div>
-                        <div class="notify-channel-meta">${ch.type}${ch.enabled ? '' : ' (disabled)'}</div>
-                    </div>
-                    <div class="notify-channel-stats">
-                        <span class="success">&#10003; ${ch.success_count || 0}</span>
-                        <span class="failed">&#10007; ${ch.failure_count || 0}</span>
-                    </div>
-                </div>`;
-            }).join('');
-        })
-        .catch(() => {
-            const content = document.getElementById('notify-channels-content');
-            if (content) content.innerHTML = '<div class="empty-state">Notifications not available</div>';
-        });
-
-    // Load history
-    fetch('/api/notify/history')
-        .then(r => r.json())
-        .then(logs => {
-            // Count stats from logs
-            const now = Date.now();
-            const day = 24 * 60 * 60 * 1000;
-            const recent = logs.filter(l => new Date(l.sent_at).getTime() > now - day);
-            const sent = recent.filter(l => l.success).length;
-            const failed = recent.filter(l => !l.success).length;
-
-            document.getElementById('notify-sent').textContent = sent;
-            document.getElementById('notify-failed').textContent = failed;
-
-            const content = document.getElementById('notify-history-content');
-            if (!content) return;
-
-            if (!logs || logs.length === 0) {
-                content.innerHTML = '<div class="empty-state">No notifications sent yet</div>';
-                return;
-            }
-
-            content.innerHTML = logs.slice(0, 50).map(log => {
-                const time = formatRelativeTime(new Date(log.sent_at));
-                return `<div class="notify-history-item">
-                    <div class="notify-history-header">
-                        <span class="notify-history-title">${escapeHtml(log.notification_type || 'alert')}</span>
-                        <span class="notify-history-status ${log.success ? 'success' : 'failed'}">${log.success ? 'Sent' : 'Failed'}</span>
-                    </div>
-                    <div class="notify-history-meta">
-                        <span>${escapeHtml(log.channel_name || 'Unknown channel')}</span>
-                        <span>${time}</span>
-                        ${log.error ? `<span style="color:#f4212e">${escapeHtml(log.error.substring(0, 50))}</span>` : ''}
-                    </div>
-                </div>`;
-            }).join('');
-        })
-        .catch(() => {});
-}
-
-function switchNotifyTab(tab) {
-    document.querySelectorAll('.notify-tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.notify-content').forEach(c => c.classList.remove('active'));
-    document.querySelector(`.notify-tab[data-tab="${tab}"]`)?.classList.add('active');
-    document.getElementById(`notify-${tab}-content`)?.classList.add('active');
-}
-
-// On-Call widget functions
-function loadOnCallWidget() {
-    // Load schedules
-    fetch('/api/oncall/schedules')
-        .then(r => r.json())
-        .then(schedules => {
-            // Use demo data if empty and demo mode enabled
-            if ((!schedules || schedules.length === 0) && DemoData.enabled) {
-                schedules = DemoData.generateOnCallSchedules();
-            }
-
-            document.getElementById('oncall-schedules-count').textContent = schedules?.length || 0;
-
-            const list = document.getElementById('oncall-schedules-list');
-            if (!list) return;
-
-            if (!schedules || schedules.length === 0) {
-                list.innerHTML = '<div class="empty-state">No on-call schedules. <a href="#" onclick="showNewScheduleModal();return false" style="color:#1d9bf0">Create one</a></div>';
-                document.getElementById('oncall-current-person').innerHTML = '<div style="color:#71767b;font-size:0.8rem">No schedules configured</div>';
-                return;
-            }
-
-            // For each schedule, get current on-call
-            let activeCount = 0;
-            const currentPeople = [];
-
-            list.innerHTML = schedules.map(sched => {
-                const isActive = sched.users && sched.users.length > 0;
-                if (isActive) activeCount++;
-
-                const rotationUsers = (sched.users || []).slice(0, 5).map((u, i) =>
-                    `<span class="oncall-rotation-user ${i === 0 ? 'current' : ''}">${escapeHtml(u.name || u.email || u.user_id)}</span>`
-                ).join('');
-
-                if (sched.users && sched.users.length > 0) {
-                    currentPeople.push(sched.users[0]);
-                }
-
-                return `<div class="oncall-schedule-item" onclick="showScheduleDetail('${sched.id}')">
-                    <div class="oncall-schedule-status ${isActive ? 'active' : 'inactive'}"></div>
-                    <div class="oncall-schedule-info">
-                        <div class="oncall-schedule-name">${escapeHtml(sched.name)}</div>
-                        <div class="oncall-schedule-meta">
-                            ${sched.rotation_type || 'weekly'} rotation
-                            ${sched.users?.length ? ` • ${sched.users.length} users` : ''}
-                        </div>
-                        ${rotationUsers ? `<div class="oncall-rotation">${rotationUsers}</div>` : ''}
-                    </div>
-                </div>`;
-            }).join('');
-
-            document.getElementById('oncall-active-count').textContent = activeCount;
-
-            // Update current on-call display
-            const currentEl = document.getElementById('oncall-current-person');
-            if (currentPeople.length > 0) {
-                const person = currentPeople[0];
-                const initials = (person.name || person.email || 'U').substring(0, 2).toUpperCase();
-                currentEl.innerHTML = `
-                    <div class="oncall-avatar">${initials}</div>
-                    <div class="oncall-person-info">
-                        <div class="oncall-person-name">${escapeHtml(person.name || person.email || person.user_id)}</div>
-                        <div class="oncall-person-meta">${person.email || ''}</div>
-                    </div>
-                    <button class="btn btn-primary" onclick="event.stopPropagation();escalateToOnCall()">Escalate</button>
-                `;
-            } else {
-                currentEl.innerHTML = '<div style="color:#71767b;font-size:0.8rem">No one currently on-call</div>';
-            }
-        })
-        .catch(() => {
-            const list = document.getElementById('oncall-schedules-list');
-            if (list) list.innerHTML = '<div class="empty-state">On-call service not available</div>';
-        });
-
-    // Load policies count
-    fetch('/api/oncall/policies')
-        .then(r => r.json())
-        .then(policies => {
-            document.getElementById('oncall-policies-count').textContent = policies?.length || 0;
-        })
-        .catch(() => {});
-}
-
-function showScheduleDetail(schedId) {
-    fetch(`/api/oncall/schedules/${schedId}`)
-        .then(r => r.json())
-        .then(sched => {
-            const modal = document.createElement('div');
-            modal.className = 'modal-overlay';
-            modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-
-            const users = (sched.users || []).map(u =>
-                `<div style="padding:0.3rem 0;border-bottom:1px solid #2f3336">${escapeHtml(u.name || u.email || u.user_id)}</div>`
-            ).join('') || '<div style="color:#71767b">No users in rotation</div>';
-
-            modal.innerHTML = `
-                <div class="modal">
-                    <div class="modal-header">
-                        <span class="modal-title">${escapeHtml(sched.name)}</span>
-                        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-                    </div>
-                    <div class="modal-body">
-                        <p><strong>Rotation:</strong> ${sched.rotation_type || 'weekly'}</p>
-                        <p><strong>Timezone:</strong> ${sched.timezone || 'UTC'}</p>
-                        <p><strong>Users in rotation:</strong></p>
-                        <div style="margin-top:0.5rem">${users}</div>
-                    </div>
-                    <div class="modal-footer">
-                        <button class="btn" style="color:#f4212e" onclick="deleteSchedule('${sched.id}')">Delete</button>
-                        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Close</button>
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(modal);
-        });
-}
-
-function showNewScheduleModal() {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-    modal.innerHTML = `
-        <div class="modal">
-            <div class="modal-header">
-                <span class="modal-title">Create On-Call Schedule</span>
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">Name *</label>
-                    <input type="text" id="sched-name" class="form-input" placeholder="Primary On-Call">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Rotation Type</label>
-                    <select id="sched-rotation" class="form-select">
-                        <option value="weekly">Weekly</option>
-                        <option value="daily">Daily</option>
-                        <option value="custom">Custom</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Users (emails, one per line)</label>
-                    <textarea id="sched-users" class="form-input" rows="4" placeholder="alice@example.com&#10;bob@example.com"></textarea>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Timezone</label>
-                    <select id="sched-tz" class="form-select">
-                        <option value="UTC">UTC</option>
-                        <option value="America/New_York">America/New_York</option>
-                        <option value="America/Los_Angeles">America/Los_Angeles</option>
-                        <option value="Europe/London">Europe/London</option>
-                        <option value="Europe/Berlin">Europe/Berlin</option>
-                        <option value="Asia/Tokyo">Asia/Tokyo</option>
-                    </select>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                <button class="btn btn-primary" onclick="createSchedule()">Create</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-}
-
-function createSchedule() {
-    const name = document.getElementById('sched-name').value;
-    const rotation = document.getElementById('sched-rotation').value;
-    const usersText = document.getElementById('sched-users').value;
-    const timezone = document.getElementById('sched-tz').value;
-
-    if (!name) { alert('Name is required'); return; }
-
-    const users = usersText.split('\n').filter(l => l.trim()).map(email => ({
-        user_id: email.trim(),
-        email: email.trim(),
-        name: email.trim().split('@')[0]
-    }));
-
-    fetch('/api/oncall/schedules', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, rotation_type: rotation, users, timezone })
-    })
-    .then(r => { if (!r.ok) throw new Error('Failed'); return r.json(); })
-    .then(() => {
-        document.querySelector('.modal-overlay')?.remove();
-        loadOnCallWidget();
-    })
-    .catch(() => alert('Failed to create schedule'));
-}
-
-function deleteSchedule(schedId) {
-    if (!confirm('Delete this schedule?')) return;
-    fetch(`/api/oncall/schedules/${schedId}`, { method: 'DELETE' })
-        .then(() => {
-            document.querySelector('.modal-overlay')?.remove();
-            loadOnCallWidget();
-        });
-}
-
-function escalateToOnCall() {
-    const reason = prompt('Escalation reason:', 'Manual escalation from dashboard');
-    if (!reason) return;
-
-    fetch('/api/oncall/escalate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason, source: 'dashboard' })
-    })
-    .then(r => { if (!r.ok) throw new Error('Failed'); return r.json(); })
-    .then(() => alert('Escalation triggered'))
-    .catch(() => alert('Failed to escalate'));
-}
-
-// Audit log widget functions
-function loadAuditWidget() {
-    // Load stats
-    fetch('/api/audit/stats')
-        .then(r => r.json())
-        .then(stats => {
-            document.getElementById('audit-total').textContent = stats.total_logs || 0;
-            document.getElementById('audit-today').textContent = stats.logs_today || 0;
-            document.getElementById('audit-failures').textContent = stats.recent_failures || 0;
-        })
-        .catch(() => {});
-
-    // Get filter values
-    const actionFilter = document.getElementById('audit-action-filter')?.value || '';
-    const resourceFilter = document.getElementById('audit-resource-filter')?.value || '';
-
-    let url = '/api/audit/logs?limit=50';
-    if (actionFilter) url += `&action=${actionFilter}`;
-    if (resourceFilter) url += `&resource_type=${resourceFilter}`;
-
-    // Load logs
-    fetch(url)
-        .then(r => r.json())
-        .then(logs => {
-            const list = document.getElementById('audit-list');
-            if (!list) return;
-
-            if (!logs || logs.length === 0) {
-                list.innerHTML = '<div class="empty-state">No audit logs found</div>';
-                return;
-            }
-
-            list.innerHTML = logs.map(log => {
-                const time = formatRelativeTime(new Date(log.timestamp));
-                const fullTime = new Date(log.timestamp).toLocaleString();
-                const actionClass = log.action || 'read';
-
-                return `<div class="audit-item" onclick="showAuditDetail('${log.id}')">
-                    <div class="audit-item-header">
-                        <div class="audit-item-action">
-                            <span class="action-badge ${actionClass}">${log.action}</span>
-                            <span class="audit-item-resource">${log.resource_type}${log.resource_name ? ': ' + escapeHtml(log.resource_name) : ''}</span>
-                        </div>
-                        <span class="audit-item-outcome ${log.outcome}">${log.outcome}</span>
-                    </div>
-                    <div class="audit-item-meta">
-                        <span title="${fullTime}">${time}</span>
-                        ${log.user_email ? `<span>${escapeHtml(log.user_email)}</span>` : ''}
-                        ${log.user_ip ? `<span>${log.user_ip}</span>` : ''}
-                        ${log.error_message ? `<span style="color:#f4212e">${escapeHtml(log.error_message.substring(0, 50))}</span>` : ''}
-                    </div>
-                </div>`;
-            }).join('');
-        })
-        .catch(() => {
-            const list = document.getElementById('audit-list');
-            if (list) list.innerHTML = '<div class="empty-state">Audit logging not available (admin only)</div>';
-        });
-}
-
-function showAuditDetail(logId) {
-    fetch(`/api/audit/logs?limit=1`)
-        .then(r => r.json())
-        .then(logs => {
-            // Find the specific log
-            const log = logs.find(l => l.id === logId) || logs[0];
-            if (!log) return;
-
-            const modal = document.createElement('div');
-            modal.className = 'modal-overlay';
-            modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-
-            let changesHtml = '';
-            if (log.changes) {
-                changesHtml = `
-                    <p><strong>Changes:</strong></p>
-                    <pre style="background:#2f3336;padding:0.5rem;border-radius:4px;font-size:0.7rem;overflow:auto;max-height:200px">${JSON.stringify(log.changes, null, 2)}</pre>
-                `;
-            }
-
-            let detailsHtml = '';
-            if (log.details) {
-                detailsHtml = `
-                    <p><strong>Details:</strong></p>
-                    <pre style="background:#2f3336;padding:0.5rem;border-radius:4px;font-size:0.7rem;overflow:auto;max-height:200px">${JSON.stringify(log.details, null, 2)}</pre>
-                `;
-            }
-
-            modal.innerHTML = `
-                <div class="modal">
-                    <div class="modal-header">
-                        <span class="modal-title">Audit Log Details</span>
-                        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-                    </div>
-                    <div class="modal-body">
-                        <p><strong>Action:</strong> ${log.action}</p>
-                        <p><strong>Resource:</strong> ${log.resource_type} ${log.resource_id ? '(' + log.resource_id + ')' : ''}</p>
-                        <p><strong>Outcome:</strong> ${log.outcome}</p>
-                        <p><strong>Time:</strong> ${new Date(log.timestamp).toLocaleString()}</p>
-                        <p><strong>User:</strong> ${log.user_email || 'Unknown'}</p>
-                        <p><strong>IP Address:</strong> ${log.user_ip || 'Unknown'}</p>
-                        ${log.error_message ? `<p><strong>Error:</strong> <span style="color:#f4212e">${escapeHtml(log.error_message)}</span></p>` : ''}
-                        ${changesHtml}
-                        ${detailsHtml}
-                    </div>
-                    <div class="modal-footer">
-                        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Close</button>
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(modal);
-        });
-}
-
-function exportAuditLogs() {
-    const start = new Date();
-    start.setDate(start.getDate() - 30); // Last 30 days
-    const url = `/api/audit/export?start=${start.toISOString()}`;
-
-    window.open(url, '_blank');
-}
-
-// Cost Intelligence functions
-function loadCostIntel() {
-    const content = document.getElementById('cost-intel-content');
-    if (!content) return;
-
-    content.innerHTML = '<div class="empty-state">Loading cost estimates...</div>';
-
-    Promise.all([
-        fetch('/api/cost/estimate').then(r => r.ok ? r.json() : null),
-        fetch('/api/cost/usage').then(r => r.ok ? r.json() : null)
-    ]).then(([comparison, usage]) => {
-        if (!comparison || !comparison.estimates) {
-            content.innerHTML = '<div class="empty-state">Cost data not available yet. Start collecting metrics to see estimates.</div>';
-            return;
-        }
-
-        const estimates = comparison.estimates;
-        const vendors = ['Datadog', 'New Relic', 'Splunk'];
-        const savings = comparison.dogwatch_savings || {};
-
-        let vendorCards = vendors.map(v => {
-            const est = estimates[v];
-            if (!est) return '';
-            const savingsPct = savings[v] ? Math.round(savings[v]) : 100;
-            const breakdown = est.breakdown || {};
-
-            return `<div class="cost-card ${v === 'Datadog' ? 'highlight' : ''}">
-                ${savingsPct > 0 ? `<span class="cost-savings-badge">Save ${savingsPct}%</span>` : ''}
-                <div class="cost-vendor">
-                    <span>${v}</span>
-                </div>
-                <div class="cost-amount">$${formatNumber(est.total_monthly)}</div>
-                <div class="cost-period">/month</div>
-                <div class="cost-breakdown">
-                    ${Object.entries(breakdown).slice(0, 4).map(([k, val]) =>
-                        `<div class="cost-breakdown-item">
-                            <span class="cost-breakdown-label">${k}</span>
-                            <span class="cost-breakdown-value">$${formatNumber(val)}</span>
-                        </div>`
-                    ).join('')}
-                </div>
-            </div>`;
-        }).join('');
-
-        // Usage summary
-        const usageSummary = usage ? `
-            <div class="cost-summary">
-                <div class="cost-summary-stat">
-                    <span class="cost-summary-value">${usage.host_count || 0}</span>
-                    <span class="cost-summary-label">Hosts</span>
-                </div>
-                <div class="cost-summary-stat">
-                    <span class="cost-summary-value">${usage.container_count || 0}</span>
-                    <span class="cost-summary-label">Containers</span>
-                </div>
-                <div class="cost-summary-stat">
-                    <span class="cost-summary-value">${usage.custom_metrics_count || 0}</span>
-                    <span class="cost-summary-label">Custom Metrics</span>
-                </div>
-                <div class="cost-summary-stat">
-                    <span class="cost-summary-value">${formatBytes(usage.logs_gb_per_month * 1024 * 1024 * 1024)}</span>
-                    <span class="cost-summary-label">Logs/mo</span>
-                </div>
-                <div class="cost-summary-stat">
-                    <span class="cost-summary-value">${formatNumber(usage.spans_per_month || 0)}</span>
-                    <span class="cost-summary-label">Spans/mo</span>
-                </div>
-            </div>
-        ` : '';
-
-        content.innerHTML = `
-            <div class="cost-grid">${vendorCards}</div>
-            ${usageSummary}
-            <div style="text-align:center;margin-top:0.75rem;font-size:0.7rem;color:#71767b;">
-                With dogwatch: <span style="color:#00ba7c;font-weight:600;">$0/month</span> (self-hosted)
             </div>
         `;
-    }).catch(() => {
-        content.innerHTML = '<div class="empty-state">Failed to load cost data</div>';
-    });
-}
+    }
 
-function formatNumber(n) {
-    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
-    return n?.toFixed(0) || '0';
-}
+    calculateSavings() {
+        if (!this.estimate) return { total: 0 };
 
-// DB Watch functions
-// moved to top
+        const datadog = this.estimate.datadog?.total || 0;
+        const newrelic = this.estimate.newrelic?.total || 0;
+        const splunk = this.estimate.splunk?.total || 0;
 
-function switchDBWatchTab(tab) {
-    dbwatchCurrentTab = tab;
-    document.querySelectorAll('.dbwatch-tab').forEach(t => {
-        t.classList.toggle('active', t.dataset.tab === tab);
-    });
-    loadDBWatch();
-}
+        // Average of the three
+        const avg = (datadog + newrelic + splunk) / 3;
 
-function loadDBWatch() {
-    const content = document.getElementById('dbwatch-content');
-    if (!content) return;
+        return {
+            total: avg,
+            datadog,
+            newrelic,
+            splunk
+        };
+    }
 
-    const dbFilter = document.getElementById('dbwatch-db-filter')?.value || '';
-    const dbParam = dbFilter ? `&db_type=${dbFilter}` : '';
+    formatCurrency(amount) {
+        if (!amount || amount === 0) return '$0';
+        if (amount >= 1000000) return `$${(amount / 1000000).toFixed(1)}M`;
+        if (amount >= 1000) return `$${(amount / 1000).toFixed(0)}k`;
+        return `$${amount.toFixed(0)}`;
+    }
 
-    if (dbwatchCurrentTab === 'stats') {
-        loadDBWatchStats(content, dbParam);
-    } else if (dbwatchCurrentTab === 'slow') {
-        loadDBWatchQueries(content, '/api/dbwatch/slow', dbParam);
-    } else {
-        loadDBWatchQueries(content, '/api/dbwatch/queries', dbParam);
+    formatBytes(gb) {
+        if (!gb || gb === 0) return '0 GB';
+        if (gb >= 1000) return `${(gb / 1000).toFixed(1)} TB`;
+        return `${gb.toFixed(1)} GB`;
+    }
+
+    getRecIcon(type) {
+        switch (type) {
+            case 'cardinality': return '📊';
+            case 'retention': return '🗄️';
+            case 'sampling': return '🎯';
+            case 'aggregation': return '📈';
+            default: return '💡';
+        }
+    }
+
+    escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    getStyles() {
+        return `
+            .cost-dashboard {
+                background: var(--bg-card, #16181c);
+                border-radius: 8px;
+                overflow: hidden;
+                height: 100%;
+                display: flex;
+                flex-direction: column;
+            }
+
+            .cost-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 0.75rem 1rem;
+                background: var(--bg-elevated, #1e2128);
+                border-bottom: 1px solid var(--border, #2f3336);
+            }
+
+            .header-title {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                font-weight: 600;
+            }
+
+            .btn-refresh {
+                background: var(--bg-card, #16181c);
+                border: 1px solid var(--border, #2f3336);
+                border-radius: 4px;
+                color: var(--text, #e7e9ea);
+                padding: 0.25rem 0.5rem;
+                cursor: pointer;
+            }
+
+            .loading {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 3rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .savings-banner {
+                background: linear-gradient(135deg, #00ba7c 0%, #00a36c 100%);
+                padding: 1.25rem;
+                text-align: center;
+                color: white;
+            }
+
+            .savings-label {
+                display: block;
+                font-size: 0.85rem;
+                opacity: 0.9;
+                margin-bottom: 0.25rem;
+            }
+
+            .savings-value {
+                font-size: 2.5rem;
+                font-weight: 700;
+            }
+
+            .savings-value .period {
+                font-size: 1rem;
+                font-weight: 400;
+                opacity: 0.8;
+            }
+
+            .savings-subtext {
+                font-size: 0.8rem;
+                opacity: 0.8;
+                margin-top: 0.25rem;
+            }
+
+            .comparison-grid {
+                display: grid;
+                grid-template-columns: repeat(4, 1fr);
+                gap: 0.5rem;
+                padding: 1rem;
+            }
+
+            .comparison-card {
+                background: var(--bg-elevated, #1e2128);
+                border-radius: 8px;
+                padding: 0.75rem;
+                border: 1px solid var(--border, #2f3336);
+            }
+
+            .comparison-card.dogwatch {
+                background: linear-gradient(135deg, rgba(0, 186, 124, 0.1) 0%, rgba(0, 163, 108, 0.1) 100%);
+                border-color: var(--success, #00ba7c);
+            }
+
+            .card-header {
+                display: flex;
+                align-items: center;
+                gap: 0.4rem;
+                margin-bottom: 0.5rem;
+            }
+
+            .provider-icon { font-size: 1rem; }
+            .provider-name { font-size: 0.8rem; font-weight: 500; }
+
+            .card-price {
+                margin-bottom: 0.25rem;
+            }
+
+            .price-value {
+                font-size: 1.25rem;
+                font-weight: 600;
+            }
+
+            .price-period {
+                font-size: 0.7rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .card-subtitle {
+                font-size: 0.7rem;
+                color: var(--success, #00ba7c);
+            }
+
+            .card-breakdown {
+                font-size: 0.7rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .breakdown-item {
+                padding: 0.1rem 0;
+            }
+
+            .usage-stats {
+                padding: 1rem;
+                border-top: 1px solid var(--border, #2f3336);
+            }
+
+            .usage-stats h3 {
+                font-size: 0.85rem;
+                color: var(--text-muted, #71767b);
+                margin: 0 0 0.75rem 0;
+            }
+
+            .stats-grid {
+                display: grid;
+                grid-template-columns: repeat(4, 1fr);
+                gap: 0.75rem;
+            }
+
+            .stat-item {
+                text-align: center;
+            }
+
+            .stat-value {
+                display: block;
+                font-size: 1.25rem;
+                font-weight: 600;
+                color: var(--accent, #1d9bf0);
+            }
+
+            .stat-label {
+                font-size: 0.7rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .recommendations {
+                padding: 1rem;
+                border-top: 1px solid var(--border, #2f3336);
+                flex: 1;
+                overflow-y: auto;
+            }
+
+            .recommendations h3 {
+                font-size: 0.85rem;
+                color: var(--text-muted, #71767b);
+                margin: 0 0 0.75rem 0;
+            }
+
+            .recs-list {
+                display: flex;
+                flex-direction: column;
+                gap: 0.5rem;
+            }
+
+            .rec-item {
+                display: flex;
+                gap: 0.75rem;
+                padding: 0.75rem;
+                background: var(--bg-elevated, #1e2128);
+                border-radius: 6px;
+                border-left: 3px solid var(--border, #2f3336);
+            }
+
+            .rec-item.high { border-left-color: var(--error, #f4212e); }
+            .rec-item.medium { border-left-color: var(--warning, #ffd400); }
+            .rec-item.low { border-left-color: var(--success, #00ba7c); }
+
+            .rec-icon { font-size: 1.25rem; }
+
+            .rec-content { flex: 1; }
+
+            .rec-title {
+                font-weight: 500;
+                font-size: 0.85rem;
+                margin-bottom: 0.25rem;
+            }
+
+            .rec-desc {
+                font-size: 0.75rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .rec-savings {
+                font-size: 0.75rem;
+                color: var(--success, #00ba7c);
+                margin-top: 0.25rem;
+            }
+
+            @media (max-width: 800px) {
+                .comparison-grid, .stats-grid {
+                    grid-template-columns: repeat(2, 1fr);
+                }
+            }
+        `;
     }
 }
 
-function loadDBWatchQueries(content, endpoint, dbParam) {
-    fetch(`${endpoint}?limit=50&since=1h${dbParam}`)
-        .then(r => r.ok ? r.json() : Promise.reject('API error'))
-        .then(queries => {
-            if (!queries || queries.length === 0) {
-                content.innerHTML = '<div class="empty-state">No database queries captured yet. Start your application to see queries.</div>';
-                return;
+customElements.define('cost-dashboard', CostDashboard);
+
+/**
+ * CPU Flamegraph Component
+ * Interactive flamegraph visualization for CPU profiling data
+ */
+class CpuFlamegraph extends HTMLElement {
+    constructor() {
+        super();
+        this.data = null;
+        this.chart = null;
+        this.resizeObserver = null;
+    }
+
+    connectedCallback() {
+        this.render();
+        this.loadData();
+
+        // Handle resize
+        this.resizeObserver = new ResizeObserver(() => this.updateChart());
+        this.resizeObserver.observe(this);
+    }
+
+    disconnectedCallback() {
+        if (this.resizeObserver) {
+            this.resizeObserver.disconnect();
+        }
+    }
+
+    static get observedAttributes() {
+        return ['service', 'time-range', 'profile-type'];
+    }
+
+    attributeChangedCallback(name, oldValue, newValue) {
+        if (oldValue !== newValue) {
+            this.loadData();
+        }
+    }
+
+    get service() {
+        return this.getAttribute('service') || '';
+    }
+
+    get timeRange() {
+        return this.getAttribute('time-range') || '5m';
+    }
+
+    get profileType() {
+        return this.getAttribute('profile-type') || 'cpu';
+    }
+
+    render() {
+        this.innerHTML = `
+            <style>
+                .flamegraph-container {
+                    display: flex;
+                    flex-direction: column;
+                    height: 100%;
+                    background: var(--bg-card, #16181c);
+                    border-radius: 8px;
+                    overflow: hidden;
+                }
+                .flamegraph-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 0.75rem 1rem;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border-bottom: 1px solid var(--border-color, #2f3336);
+                }
+                .flamegraph-title {
+                    font-weight: 600;
+                    font-size: 0.9rem;
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                }
+                .flamegraph-controls {
+                    display: flex;
+                    gap: 0.5rem;
+                    align-items: center;
+                }
+                .flamegraph-controls input {
+                    background: var(--bg-primary, #0f1419);
+                    border: 1px solid var(--border-color, #2f3336);
+                    border-radius: 4px;
+                    padding: 0.4rem 0.75rem;
+                    color: var(--text-primary, #e7e9ea);
+                    font-size: 0.8rem;
+                    width: 200px;
+                }
+                .flamegraph-controls select {
+                    background: var(--bg-primary, #0f1419);
+                    border: 1px solid var(--border-color, #2f3336);
+                    border-radius: 4px;
+                    padding: 0.4rem 0.5rem;
+                    color: var(--text-primary, #e7e9ea);
+                    font-size: 0.8rem;
+                }
+                .flamegraph-controls button {
+                    background: var(--bg-primary, #0f1419);
+                    border: 1px solid var(--border-color, #2f3336);
+                    border-radius: 4px;
+                    padding: 0.4rem 0.75rem;
+                    color: var(--text-primary, #e7e9ea);
+                    cursor: pointer;
+                    font-size: 0.8rem;
+                }
+                .flamegraph-controls button:hover {
+                    border-color: var(--color-info, #1d9bf0);
+                }
+                .flamegraph-body {
+                    flex: 1;
+                    overflow: auto;
+                    padding: 1rem;
+                    min-height: 300px;
+                }
+                .flamegraph-chart {
+                    width: 100%;
+                    min-height: 280px;
+                }
+                .flamegraph-loading, .flamegraph-empty {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    height: 100%;
+                    color: var(--text-muted, #71767b);
+                    flex-direction: column;
+                    gap: 1rem;
+                }
+                .flamegraph-loading .spinner {
+                    width: 32px;
+                    height: 32px;
+                    border: 3px solid var(--border-color, #2f3336);
+                    border-top-color: var(--color-info, #1d9bf0);
+                    border-radius: 50%;
+                    animation: spin 0.8s linear infinite;
+                }
+                @keyframes spin { to { transform: rotate(360deg); } }
+
+                /* D3 Flamegraph overrides */
+                .d3-flame-graph rect {
+                    stroke: var(--bg-primary, #0f1419);
+                    stroke-width: 1px;
+                }
+                .d3-flame-graph-tip {
+                    background: var(--bg-elevated, #1a1f2e) !important;
+                    border: 1px solid var(--border-color, #2f3336) !important;
+                    color: var(--text-primary, #e7e9ea) !important;
+                    padding: 0.5rem 0.75rem !important;
+                    border-radius: 6px !important;
+                    font-size: 0.8rem !important;
+                }
+                .flamegraph-stats {
+                    display: flex;
+                    gap: 1.5rem;
+                    padding: 0.75rem 1rem;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border-top: 1px solid var(--border-color, #2f3336);
+                    font-size: 0.8rem;
+                }
+                .flamegraph-stat {
+                    display: flex;
+                    gap: 0.5rem;
+                }
+                .flamegraph-stat-label {
+                    color: var(--text-muted, #71767b);
+                }
+                .flamegraph-stat-value {
+                    font-weight: 600;
+                    color: var(--text-primary, #e7e9ea);
+                }
+            </style>
+            <div class="flamegraph-container">
+                <div class="flamegraph-header">
+                    <div class="flamegraph-title">
+                        <span>&#128293;</span>
+                        <span>CPU Flamegraph</span>
+                    </div>
+                    <div class="flamegraph-controls">
+                        <input type="text" id="search-input" placeholder="Search functions...">
+                        <select id="profile-select">
+                            <option value="cpu">CPU</option>
+                            <option value="alloc">Allocations</option>
+                            <option value="wall">Wall Time</option>
+                        </select>
+                        <button id="reset-btn">Reset Zoom</button>
+                        <button id="refresh-btn">Refresh</button>
+                    </div>
+                </div>
+                <div class="flamegraph-body">
+                    <div class="flamegraph-chart" id="chart"></div>
+                </div>
+                <div class="flamegraph-stats" id="stats" style="display: none;">
+                    <div class="flamegraph-stat">
+                        <span class="flamegraph-stat-label">Samples:</span>
+                        <span class="flamegraph-stat-value" id="stat-samples">0</span>
+                    </div>
+                    <div class="flamegraph-stat">
+                        <span class="flamegraph-stat-label">Duration:</span>
+                        <span class="flamegraph-stat-value" id="stat-duration">0s</span>
+                    </div>
+                    <div class="flamegraph-stat">
+                        <span class="flamegraph-stat-label">Top Function:</span>
+                        <span class="flamegraph-stat-value" id="stat-top">-</span>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        this.setupEventListeners();
+    }
+
+    setupEventListeners() {
+        const searchInput = this.querySelector('#search-input');
+        const profileSelect = this.querySelector('#profile-select');
+        const resetBtn = this.querySelector('#reset-btn');
+        const refreshBtn = this.querySelector('#refresh-btn');
+
+        searchInput?.addEventListener('input', (e) => {
+            if (this.chart) {
+                this.chart.search(e.target.value);
+            }
+        });
+
+        profileSelect?.addEventListener('change', (e) => {
+            this.setAttribute('profile-type', e.target.value);
+        });
+
+        resetBtn?.addEventListener('click', () => {
+            if (this.chart) {
+                this.chart.resetZoom();
+            }
+        });
+
+        refreshBtn?.addEventListener('click', () => {
+            this.loadData();
+        });
+    }
+
+    async loadData() {
+        const chartEl = this.querySelector('#chart');
+        if (!chartEl) return;
+
+        chartEl.innerHTML = `
+            <div class="flamegraph-loading">
+                <div class="spinner"></div>
+                <span>Loading profile data...</span>
+            </div>
+        `;
+
+        try {
+            const params = new URLSearchParams({
+                type: this.profileType,
+                range: this.timeRange
+            });
+            if (this.service) {
+                params.append('service', this.service);
             }
 
-            content.innerHTML = queries.map(q => {
-                const dbType = (q.db_type || 'unknown').toLowerCase();
-                const latencyMs = q.latency_ms || 0;
-                const latencyClass = latencyMs > 100 ? 'slow' : 'fast';
-                const opType = q.operation || 'QUERY';
-                const queryText = q.query || q.command || '-';
-                const time = new Date(q.timestamp).toLocaleTimeString();
+            const resp = await fetch(`/api/profile/flamegraph?${params}`);
 
-                return `<div class="dbwatch-query">
-                    <div class="dbwatch-query-header">
-                        <div class="dbwatch-query-type">
-                            <span class="dbwatch-db-badge ${dbType}">${dbType}</span>
-                            <span class="dbwatch-op-badge">${opType}</span>
-                        </div>
-                        <span class="dbwatch-query-latency ${latencyClass}">${latencyMs.toFixed(2)}ms</span>
+            if (!resp.ok) {
+                // Generate demo data if API not available
+                this.data = this.generateDemoData();
+            } else {
+                this.data = await resp.json();
+            }
+
+            await this.renderChart();
+        } catch (e) {
+            console.error('Failed to load flamegraph:', e);
+            // Use demo data on error
+            this.data = this.generateDemoData();
+            await this.renderChart();
+        }
+    }
+
+    generateDemoData() {
+        // Generate realistic-looking flamegraph data
+        const functions = [
+            { name: 'main', children: ['runtime.main', 'http.ListenAndServe'] },
+            { name: 'runtime.main', children: ['main.main'] },
+            { name: 'main.main', children: ['http.handleRequest', 'db.Query', 'json.Marshal'] },
+            { name: 'http.handleRequest', children: ['auth.Validate', 'router.Match', 'handler.Process'] },
+            { name: 'handler.Process', children: ['db.Query', 'cache.Get', 'response.Write'] },
+            { name: 'db.Query', children: ['sql.Query', 'driver.Exec'] },
+            { name: 'sql.Query', children: ['driver.Prepare', 'driver.Exec', 'rows.Scan'] },
+            { name: 'driver.Exec', children: ['net.Write', 'net.Read', 'protocol.Parse'] },
+            { name: 'cache.Get', children: ['redis.Get', 'lru.Lookup'] },
+            { name: 'json.Marshal', children: ['reflect.ValueOf', 'encoding.Write'] },
+            { name: 'auth.Validate', children: ['jwt.Parse', 'crypto.Verify'] },
+            { name: 'runtime.gcBgMarkWorker', children: ['runtime.gcDrain', 'runtime.scanobject'] },
+            { name: 'runtime.gcDrain', children: ['runtime.markroot', 'runtime.scanobject'] },
+        ];
+
+        const buildNode = (name, depth = 0) => {
+            const baseValue = Math.floor(Math.random() * 1000) + 100;
+            const funcDef = functions.find(f => f.name === name);
+
+            const node = {
+                name: name,
+                value: baseValue,
+                children: []
+            };
+
+            if (depth < 6 && funcDef && funcDef.children) {
+                node.children = funcDef.children
+                    .filter(() => Math.random() > 0.3)
+                    .map(childName => buildNode(childName, depth + 1));
+            } else if (depth < 6 && Math.random() > 0.5) {
+                const randomFuncs = ['syscall.Read', 'syscall.Write', 'runtime.mallocgc',
+                    'sync.Lock', 'sync.Unlock', 'channel.send', 'channel.recv'];
+                const numChildren = Math.floor(Math.random() * 3);
+                for (let i = 0; i < numChildren; i++) {
+                    const childName = randomFuncs[Math.floor(Math.random() * randomFuncs.length)];
+                    node.children.push({
+                        name: `${childName}.${Math.floor(Math.random() * 100)}`,
+                        value: Math.floor(Math.random() * baseValue * 0.5),
+                        children: []
+                    });
+                }
+            }
+
+            return node;
+        };
+
+        return {
+            name: 'root',
+            value: 10000,
+            children: [
+                buildNode('main'),
+                buildNode('runtime.gcBgMarkWorker'),
+                { name: 'runtime.sysmon', value: 500, children: [] }
+            ]
+        };
+    }
+
+    async renderChart() {
+        const chartEl = this.querySelector('#chart');
+        if (!chartEl || !this.data) return;
+
+        // Ensure d3 and flamegraph are loaded
+        if (!window.d3 || !window.flamegraph) {
+            if (window.LibLoader) {
+                await window.LibLoader.loadAll(['d3', 'flamegraph', 'flamegraph-css']);
+            } else {
+                chartEl.innerHTML = `
+                    <div class="flamegraph-empty">
+                        <span>D3/Flamegraph libraries not loaded</span>
                     </div>
-                    <div class="dbwatch-query-text" title="${escapeHtml(queryText)}">${escapeHtml(queryText.substring(0, 200))}</div>
-                    <div class="dbwatch-query-meta">
-                        <span>${time}</span>
-                        ${q.table ? `<span>Table: ${escapeHtml(q.table)}</span>` : ''}
-                        ${q.rows_affected ? `<span>Rows: ${q.rows_affected}</span>` : ''}
-                    </div>
-                </div>`;
-            }).join('');
-        })
-        .catch(() => {
-            content.innerHTML = '<div class="empty-state">Database watch not available</div>';
-        });
+                `;
+                return;
+            }
+        }
+
+        chartEl.innerHTML = '';
+
+        const width = chartEl.clientWidth || 800;
+        const cellHeight = 18;
+
+        try {
+            this.chart = flamegraph()
+                .width(width)
+                .cellHeight(cellHeight)
+                .transitionDuration(300)
+                .minFrameSize(2)
+                .transitionEase(d3.easeCubic)
+                .sort(true)
+                .title('')
+                .onClick((d) => {
+                    this.dispatchEvent(new CustomEvent('frame-click', {
+                        detail: { name: d.data.name, value: d.data.value }
+                    }));
+                })
+                .setColorMapper((d, originalColor) => {
+                    // Color based on function type
+                    const name = d.data.name.toLowerCase();
+                    if (name.includes('runtime.gc') || name.includes('runtime.malloc')) {
+                        return '#e74c3c'; // Red for GC
+                    } else if (name.includes('syscall') || name.includes('net.')) {
+                        return '#3498db'; // Blue for syscalls/network
+                    } else if (name.includes('sql') || name.includes('db.') || name.includes('redis')) {
+                        return '#9b59b6'; // Purple for database
+                    } else if (name.includes('http') || name.includes('handler')) {
+                        return '#2ecc71'; // Green for HTTP
+                    } else if (name.includes('json') || name.includes('encoding')) {
+                        return '#f39c12'; // Orange for serialization
+                    }
+                    return originalColor;
+                });
+
+            d3.select(chartEl)
+                .datum(this.data)
+                .call(this.chart);
+
+            // Update stats
+            this.updateStats();
+        } catch (e) {
+            console.error('Failed to render flamegraph:', e);
+            chartEl.innerHTML = `
+                <div class="flamegraph-empty">
+                    <span>Failed to render flamegraph</span>
+                </div>
+            `;
+        }
+    }
+
+    updateStats() {
+        const statsEl = this.querySelector('#stats');
+        if (!statsEl || !this.data) return;
+
+        statsEl.style.display = 'flex';
+
+        const countSamples = (node) => {
+            let count = node.value || 0;
+            if (node.children) {
+                for (const child of node.children) {
+                    count += countSamples(child);
+                }
+            }
+            return count;
+        };
+
+        const findTop = (node, top = null) => {
+            if (!top || node.value > top.value) {
+                top = node;
+            }
+            if (node.children) {
+                for (const child of node.children) {
+                    top = findTop(child, top);
+                }
+            }
+            return top;
+        };
+
+        const samples = countSamples(this.data);
+        const topFunc = findTop(this.data);
+
+        this.querySelector('#stat-samples').textContent = samples.toLocaleString();
+        this.querySelector('#stat-duration').textContent = this.timeRange;
+        this.querySelector('#stat-top').textContent = topFunc.name || '-';
+    }
+
+    updateChart() {
+        if (this.chart && this.data) {
+            const chartEl = this.querySelector('#chart');
+            if (chartEl) {
+                const width = chartEl.clientWidth || 800;
+                this.chart.width(width);
+                d3.select(chartEl).datum(this.data).call(this.chart);
+            }
+        }
+    }
 }
 
-function loadDBWatchStats(content, dbParam) {
-    Promise.all([
-        fetch(`/api/dbwatch/stats?since=1h${dbParam}`).then(r => r.ok ? r.json() : null),
-        fetch(`/api/dbwatch/operations?since=1h${dbParam}`).then(r => r.ok ? r.json() : null)
-    ]).then(([stats, operations]) => {
-        if (!stats || stats.length === 0) {
-            content.innerHTML = '<div class="empty-state">No database statistics available</div>';
+customElements.define('cpu-flamegraph', CpuFlamegraph);
+
+/**
+ * Dependency Graph Widget
+ * Interactive force-directed graph of service relationships
+ */
+class DependencyGraph extends HTMLElement {
+    constructor() {
+        super();
+        this.nodes = [];
+        this.links = [];
+        this.simulation = null;
+        this.svg = null;
+        this.selectedNode = null;
+    }
+
+    connectedCallback() {
+        this.render();
+        this.loadDependencies();
+    }
+
+    disconnectedCallback() {
+        if (this.simulation) {
+            this.simulation.stop();
+        }
+    }
+
+    async loadDependencies() {
+        try {
+            const resp = await fetch('/api/trace/dependencies');
+            if (resp.ok) {
+                const data = await resp.json();
+                this.processDependencies(data);
+                this.renderGraph();
+            }
+        } catch (e) {
+            console.error('Failed to load dependencies:', e);
+            this.showError('Failed to load dependency data');
+        }
+    }
+
+    processDependencies(data) {
+        // Build nodes and links from dependency data
+        const nodeMap = new Map();
+        const links = [];
+
+        if (Array.isArray(data)) {
+            data.forEach(dep => {
+                const parent = dep.parent || dep.source || dep.from;
+                const child = dep.child || dep.target || dep.to;
+                const count = dep.call_count || dep.count || 1;
+
+                if (parent && !nodeMap.has(parent)) {
+                    nodeMap.set(parent, { id: parent, name: parent, calls: 0, errors: 0 });
+                }
+                if (child && !nodeMap.has(child)) {
+                    nodeMap.set(child, { id: child, name: child, calls: 0, errors: 0 });
+                }
+
+                if (parent && child) {
+                    nodeMap.get(parent).calls += count;
+                    links.push({
+                        source: parent,
+                        target: child,
+                        value: count,
+                        errorRate: dep.error_rate || 0
+                    });
+                }
+            });
+        }
+
+        this.nodes = Array.from(nodeMap.values());
+        this.links = links;
+    }
+
+    render() {
+        this.innerHTML = `
+            <style>${this.getStyles()}</style>
+            <div class="dependency-graph">
+                <div class="graph-header">
+                    <div class="graph-title">
+                        <span class="title-icon">🕸️</span>
+                        <span>Service Dependencies</span>
+                    </div>
+                    <div class="graph-controls">
+                        <button class="btn-control" onclick="this.getRootNode().host.resetZoom()" title="Reset view">⟲</button>
+                        <button class="btn-control" onclick="this.getRootNode().host.loadDependencies()" title="Refresh">↻</button>
+                    </div>
+                </div>
+                <div class="graph-container" id="graph-container">
+                    <div class="loading">Loading dependencies...</div>
+                </div>
+                <div class="graph-legend">
+                    <div class="legend-item">
+                        <span class="legend-dot healthy"></span>
+                        <span>Healthy</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-dot warning"></span>
+                        <span>Degraded</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-dot error"></span>
+                        <span>Errors</span>
+                    </div>
+                </div>
+                <div class="node-details" id="node-details" style="display: none;"></div>
+            </div>
+        `;
+    }
+
+    renderGraph() {
+        const container = this.querySelector('#graph-container');
+        if (!container) return;
+
+        if (this.nodes.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <span class="icon">🕸️</span>
+                    <p>No dependency data available</p>
+                    <p class="hint">Send traces with parent-child relationships to see the graph</p>
+                </div>
+            `;
             return;
         }
 
-        const statsHtml = stats.map(s => `
-            <div class="dbwatch-stats" style="margin:0.5rem;">
-                <div class="dbwatch-stat">
-                    <span class="dbwatch-stat-value">${s.db_type || 'Unknown'}</span>
-                    <span class="dbwatch-stat-label">Database</span>
+        container.innerHTML = '';
+
+        const width = container.clientWidth || 600;
+        const height = container.clientHeight || 400;
+
+        // Create SVG
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('width', '100%');
+        svg.setAttribute('height', '100%');
+        svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+        container.appendChild(svg);
+
+        this.svg = svg;
+
+        // Create defs for arrow markers
+        const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+        defs.innerHTML = `
+            <marker id="arrowhead" viewBox="0 -5 10 10" refX="20" refY="0" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M0,-5L10,0L0,5" fill="#71767b"/>
+            </marker>
+        `;
+        svg.appendChild(defs);
+
+        // Create groups for links and nodes
+        const linkGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        linkGroup.setAttribute('class', 'links');
+        svg.appendChild(linkGroup);
+
+        const nodeGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        nodeGroup.setAttribute('class', 'nodes');
+        svg.appendChild(nodeGroup);
+
+        // Simple force simulation (no D3 required)
+        this.simulateForces(width, height);
+
+        // Render links
+        this.links.forEach(link => {
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('class', 'link');
+            line.setAttribute('marker-end', 'url(#arrowhead)');
+            line.setAttribute('stroke-width', Math.min(Math.max(link.value / 100, 1), 5));
+            if (link.errorRate > 0.05) {
+                line.setAttribute('class', 'link error');
+            }
+            line.dataset.source = link.source;
+            line.dataset.target = link.target;
+            linkGroup.appendChild(line);
+        });
+
+        // Render nodes
+        this.nodes.forEach(node => {
+            const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            g.setAttribute('class', 'node');
+            g.setAttribute('data-id', node.id);
+
+            const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            circle.setAttribute('r', Math.min(20 + node.calls / 50, 40));
+            circle.setAttribute('class', this.getNodeClass(node));
+
+            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            text.setAttribute('dy', '0.35em');
+            text.setAttribute('text-anchor', 'middle');
+            text.textContent = node.name.length > 12 ? node.name.substring(0, 12) + '...' : node.name;
+
+            g.appendChild(circle);
+            g.appendChild(text);
+
+            g.addEventListener('click', () => this.selectNode(node));
+            g.addEventListener('mouseenter', () => this.highlightConnections(node));
+            g.addEventListener('mouseleave', () => this.clearHighlight());
+
+            nodeGroup.appendChild(g);
+        });
+
+        // Start animation
+        this.animate();
+    }
+
+    simulateForces(width, height) {
+        // Initialize positions
+        this.nodes.forEach((node, i) => {
+            node.x = width / 2 + (Math.random() - 0.5) * width * 0.5;
+            node.y = height / 2 + (Math.random() - 0.5) * height * 0.5;
+            node.vx = 0;
+            node.vy = 0;
+        });
+
+        // Create node lookup
+        const nodeById = new Map(this.nodes.map(n => [n.id, n]));
+
+        // Link sources and targets
+        this.links.forEach(link => {
+            link.sourceNode = nodeById.get(link.source);
+            link.targetNode = nodeById.get(link.target);
+        });
+
+        this.width = width;
+        this.height = height;
+        this.alpha = 1;
+    }
+
+    animate() {
+        if (this.alpha < 0.001) return;
+
+        this.alpha *= 0.99;
+
+        // Apply forces
+        this.applyForces();
+
+        // Update positions in SVG
+        this.updatePositions();
+
+        requestAnimationFrame(() => this.animate());
+    }
+
+    applyForces() {
+        const centerX = this.width / 2;
+        const centerY = this.height / 2;
+
+        // Center force
+        this.nodes.forEach(node => {
+            node.vx += (centerX - node.x) * 0.01 * this.alpha;
+            node.vy += (centerY - node.y) * 0.01 * this.alpha;
+        });
+
+        // Repulsion between nodes
+        for (let i = 0; i < this.nodes.length; i++) {
+            for (let j = i + 1; j < this.nodes.length; j++) {
+                const a = this.nodes[i];
+                const b = this.nodes[j];
+                const dx = b.x - a.x;
+                const dy = b.y - a.y;
+                const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                const force = 1000 / (dist * dist) * this.alpha;
+
+                a.vx -= dx / dist * force;
+                a.vy -= dy / dist * force;
+                b.vx += dx / dist * force;
+                b.vy += dy / dist * force;
+            }
+        }
+
+        // Link attraction
+        this.links.forEach(link => {
+            if (!link.sourceNode || !link.targetNode) return;
+            const dx = link.targetNode.x - link.sourceNode.x;
+            const dy = link.targetNode.y - link.sourceNode.y;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            const force = (dist - 150) * 0.01 * this.alpha;
+
+            link.sourceNode.vx += dx / dist * force;
+            link.sourceNode.vy += dy / dist * force;
+            link.targetNode.vx -= dx / dist * force;
+            link.targetNode.vy -= dy / dist * force;
+        });
+
+        // Apply velocity with damping
+        this.nodes.forEach(node => {
+            node.vx *= 0.9;
+            node.vy *= 0.9;
+            node.x += node.vx;
+            node.y += node.vy;
+
+            // Bounds
+            node.x = Math.max(50, Math.min(this.width - 50, node.x));
+            node.y = Math.max(50, Math.min(this.height - 50, node.y));
+        });
+    }
+
+    updatePositions() {
+        // Update node positions
+        this.querySelectorAll('.node').forEach(g => {
+            const node = this.nodes.find(n => n.id === g.dataset.id);
+            if (node) {
+                g.setAttribute('transform', `translate(${node.x}, ${node.y})`);
+            }
+        });
+
+        // Update link positions
+        this.querySelectorAll('.link').forEach(line => {
+            const source = this.nodes.find(n => n.id === line.dataset.source);
+            const target = this.nodes.find(n => n.id === line.dataset.target);
+            if (source && target) {
+                line.setAttribute('x1', source.x);
+                line.setAttribute('y1', source.y);
+                line.setAttribute('x2', target.x);
+                line.setAttribute('y2', target.y);
+            }
+        });
+    }
+
+    getNodeClass(node) {
+        if (node.errors > 0) return 'node-circle error';
+        if (node.calls > 1000) return 'node-circle warning';
+        return 'node-circle healthy';
+    }
+
+    selectNode(node) {
+        this.selectedNode = node;
+        const details = this.querySelector('#node-details');
+
+        const incoming = this.links.filter(l => l.target === node.id);
+        const outgoing = this.links.filter(l => l.source === node.id);
+
+        details.style.display = 'block';
+        details.innerHTML = `
+            <div class="details-header">
+                <span class="details-title">${this.escapeHtml(node.name)}</span>
+                <button class="btn-close" onclick="this.parentElement.parentElement.style.display='none'">×</button>
+            </div>
+            <div class="details-body">
+                <div class="detail-row">
+                    <span class="detail-label">Total Calls</span>
+                    <span class="detail-value">${node.calls}</span>
                 </div>
-                <div class="dbwatch-stat">
-                    <span class="dbwatch-stat-value">${s.total_queries || 0}</span>
-                    <span class="dbwatch-stat-label">Total Queries</span>
+                <div class="detail-row">
+                    <span class="detail-label">Incoming</span>
+                    <span class="detail-value">${incoming.length} services</span>
                 </div>
-                <div class="dbwatch-stat">
-                    <span class="dbwatch-stat-value ${s.avg_latency_ms > 50 ? 'slow' : ''}">${(s.avg_latency_ms || 0).toFixed(1)}ms</span>
-                    <span class="dbwatch-stat-label">Avg Latency</span>
+                <div class="detail-row">
+                    <span class="detail-label">Outgoing</span>
+                    <span class="detail-value">${outgoing.length} services</span>
                 </div>
-                <div class="dbwatch-stat">
-                    <span class="dbwatch-stat-value slow">${s.slow_queries || 0}</span>
-                    <span class="dbwatch-stat-label">Slow Queries</span>
+                ${outgoing.length > 0 ? `
+                    <div class="detail-section">
+                        <span class="section-title">Depends On</span>
+                        ${outgoing.map(l => `<span class="dep-tag">${this.escapeHtml(l.target)}</span>`).join('')}
+                    </div>
+                ` : ''}
+                ${incoming.length > 0 ? `
+                    <div class="detail-section">
+                        <span class="section-title">Called By</span>
+                        ${incoming.map(l => `<span class="dep-tag">${this.escapeHtml(l.source)}</span>`).join('')}
+                    </div>
+                ` : ''}
+            </div>
+            <div class="details-actions">
+                <a href="/traces.html?service=${encodeURIComponent(node.name)}" class="btn-link">View Traces</a>
+            </div>
+        `;
+    }
+
+    highlightConnections(node) {
+        const connectedIds = new Set([node.id]);
+        this.links.forEach(l => {
+            if (l.source === node.id) connectedIds.add(l.target);
+            if (l.target === node.id) connectedIds.add(l.source);
+        });
+
+        this.querySelectorAll('.node').forEach(g => {
+            g.classList.toggle('dimmed', !connectedIds.has(g.dataset.id));
+        });
+
+        this.querySelectorAll('.link').forEach(line => {
+            const connected = line.dataset.source === node.id || line.dataset.target === node.id;
+            line.classList.toggle('dimmed', !connected);
+            line.classList.toggle('highlighted', connected);
+        });
+    }
+
+    clearHighlight() {
+        this.querySelectorAll('.node, .link').forEach(el => {
+            el.classList.remove('dimmed', 'highlighted');
+        });
+    }
+
+    resetZoom() {
+        this.alpha = 1;
+        this.animate();
+    }
+
+    showError(message) {
+        const container = this.querySelector('#graph-container');
+        if (container) {
+            container.innerHTML = `<div class="error">${message}</div>`;
+        }
+    }
+
+    escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    getStyles() {
+        return `
+            .dependency-graph {
+                background: var(--bg-card, #16181c);
+                border-radius: 8px;
+                overflow: hidden;
+                height: 100%;
+                display: flex;
+                flex-direction: column;
+                position: relative;
+            }
+
+            .graph-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 0.75rem 1rem;
+                background: var(--bg-elevated, #1e2128);
+                border-bottom: 1px solid var(--border, #2f3336);
+            }
+
+            .graph-title {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                font-weight: 600;
+            }
+
+            .graph-controls { display: flex; gap: 0.25rem; }
+
+            .btn-control {
+                width: 28px;
+                height: 28px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: var(--bg-card, #16181c);
+                border: 1px solid var(--border, #2f3336);
+                border-radius: 4px;
+                color: var(--text, #e7e9ea);
+                cursor: pointer;
+            }
+
+            .btn-control:hover { border-color: var(--accent, #1d9bf0); }
+
+            .graph-container {
+                flex: 1;
+                overflow: hidden;
+            }
+
+            .loading, .empty-state, .error {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                height: 100%;
+                color: var(--text-muted, #71767b);
+            }
+
+            .empty-state .icon { font-size: 2rem; margin-bottom: 0.5rem; }
+            .empty-state .hint { font-size: 0.8rem; }
+
+            .graph-legend {
+                display: flex;
+                gap: 1rem;
+                padding: 0.5rem 1rem;
+                background: var(--bg-elevated, #1e2128);
+                border-top: 1px solid var(--border, #2f3336);
+                font-size: 0.75rem;
+            }
+
+            .legend-item { display: flex; align-items: center; gap: 0.4rem; }
+
+            .legend-dot {
+                width: 10px;
+                height: 10px;
+                border-radius: 50%;
+            }
+
+            .legend-dot.healthy { background: var(--success, #00ba7c); }
+            .legend-dot.warning { background: var(--warning, #ffd400); }
+            .legend-dot.error { background: var(--error, #f4212e); }
+
+            /* SVG Styles */
+            .link {
+                stroke: var(--border, #2f3336);
+                stroke-opacity: 0.6;
+                fill: none;
+            }
+
+            .link.error { stroke: var(--error, #f4212e); }
+            .link.dimmed { stroke-opacity: 0.1; }
+            .link.highlighted { stroke-opacity: 1; stroke-width: 3px !important; }
+
+            .node { cursor: pointer; }
+            .node.dimmed { opacity: 0.2; }
+
+            .node-circle {
+                fill: var(--success, #00ba7c);
+                stroke: var(--bg-card, #16181c);
+                stroke-width: 2px;
+            }
+
+            .node-circle.warning { fill: var(--warning, #ffd400); }
+            .node-circle.error { fill: var(--error, #f4212e); }
+
+            .node text {
+                fill: var(--text, #e7e9ea);
+                font-size: 10px;
+                pointer-events: none;
+            }
+
+            .node-details {
+                position: absolute;
+                top: 60px;
+                right: 10px;
+                width: 250px;
+                background: var(--bg-card, #16181c);
+                border: 1px solid var(--border, #2f3336);
+                border-radius: 8px;
+                z-index: 10;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            }
+
+            .details-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 0.75rem;
+                background: var(--bg-elevated, #1e2128);
+                border-bottom: 1px solid var(--border, #2f3336);
+            }
+
+            .details-title { font-weight: 600; }
+
+            .btn-close {
+                background: none;
+                border: none;
+                color: var(--text-muted, #71767b);
+                cursor: pointer;
+                font-size: 1.25rem;
+            }
+
+            .details-body { padding: 0.75rem; }
+
+            .detail-row {
+                display: flex;
+                justify-content: space-between;
+                padding: 0.3rem 0;
+                font-size: 0.85rem;
+            }
+
+            .detail-label { color: var(--text-muted, #71767b); }
+
+            .detail-section {
+                margin-top: 0.75rem;
+                padding-top: 0.75rem;
+                border-top: 1px solid var(--border, #2f3336);
+            }
+
+            .section-title {
+                display: block;
+                font-size: 0.75rem;
+                color: var(--text-muted, #71767b);
+                margin-bottom: 0.5rem;
+            }
+
+            .dep-tag {
+                display: inline-block;
+                background: var(--bg-elevated, #1e2128);
+                padding: 0.2rem 0.5rem;
+                border-radius: 4px;
+                font-size: 0.75rem;
+                margin: 0.2rem;
+            }
+
+            .details-actions {
+                padding: 0.75rem;
+                border-top: 1px solid var(--border, #2f3336);
+            }
+
+            .btn-link {
+                color: var(--accent, #1d9bf0);
+                text-decoration: none;
+                font-size: 0.85rem;
+            }
+        `;
+    }
+}
+
+customElements.define('dependency-graph', DependencyGraph);
+
+/**
+ * Deploy Timeline Widget
+ * Shows recent deployments with correlation to incidents/metrics
+ */
+class DeployTimeline extends HTMLElement {
+    constructor() {
+        super();
+        this.deploys = [];
+        this.loading = true;
+        this.selectedDeploy = null;
+    }
+
+    connectedCallback() {
+        this.render();
+        this.loadData();
+    }
+
+    async loadData() {
+        this.loading = true;
+        this.render();
+
+        try {
+            const resp = await fetch('/api/deploys?limit=50');
+            if (resp.ok) {
+                this.deploys = await resp.json() || [];
+            }
+        } catch (e) {
+            console.error('Failed to load deploy data:', e);
+        } finally {
+            this.loading = false;
+            this.render();
+        }
+    }
+
+    selectDeploy(deployId) {
+        this.selectedDeploy = this.deploys.find(d => d.id === deployId) || null;
+        this.render();
+    }
+
+    closeDetail() {
+        this.selectedDeploy = null;
+        this.render();
+    }
+
+    render() {
+        if (this.loading) {
+            this.innerHTML = `
+                <style>${this.getStyles()}</style>
+                <div class="deploy-timeline">
+                    <div class="deploy-header">
+                        <span class="title-icon">🚀</span>
+                        <span>Deployments</span>
+                    </div>
+                    <div class="loading">Loading deployments...</div>
                 </div>
-                <div class="dbwatch-stat">
-                    <span class="dbwatch-stat-value error">${s.errors || 0}</span>
-                    <span class="dbwatch-stat-label">Errors</span>
+            `;
+            return;
+        }
+
+        const grouped = this.groupByDate();
+
+        this.innerHTML = `
+            <style>${this.getStyles()}</style>
+            <div class="deploy-timeline">
+                <div class="deploy-header">
+                    <div class="header-title">
+                        <span class="title-icon">🚀</span>
+                        <span>Deployments</span>
+                    </div>
+                    <button class="btn-refresh" onclick="this.getRootNode().host.loadData()">↻</button>
+                </div>
+
+                ${this.selectedDeploy ? this.renderDetail() : ''}
+
+                <div class="timeline-content ${this.selectedDeploy ? 'with-detail' : ''}">
+                    ${this.deploys.length === 0 ? `
+                        <div class="empty-state">No deployments recorded</div>
+                    ` : Object.entries(grouped).map(([date, deploys]) => `
+                        <div class="date-group">
+                            <div class="date-header">${date}</div>
+                            <div class="deploys-list">
+                                ${deploys.map(d => this.renderDeploy(d)).join('')}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    renderDeploy(deploy) {
+        const statusClass = deploy.status === 'success' ? 'success' :
+                           deploy.status === 'failed' ? 'failed' :
+                           deploy.status === 'rolled_back' ? 'rolled-back' : 'pending';
+        const statusIcon = deploy.status === 'success' ? '✓' :
+                          deploy.status === 'failed' ? '✗' :
+                          deploy.status === 'rolled_back' ? '↩' : '○';
+
+        const hasIncident = deploy.incident_count > 0;
+        const time = deploy.timestamp ? new Date(deploy.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '';
+
+        return `
+            <div class="deploy-item ${statusClass} ${hasIncident ? 'has-incident' : ''}"
+                 onclick="this.getRootNode().host.selectDeploy('${deploy.id}')">
+                <div class="deploy-time">${time}</div>
+                <div class="deploy-line">
+                    <div class="deploy-dot">
+                        <span class="dot-icon">${statusIcon}</span>
+                    </div>
+                    <div class="deploy-connector"></div>
+                </div>
+                <div class="deploy-info">
+                    <div class="deploy-service">${this.escapeHtml(deploy.service)}</div>
+                    <div class="deploy-version">
+                        ${deploy.from_version ? `${this.escapeHtml(deploy.from_version)} → ` : ''}${this.escapeHtml(deploy.version || deploy.to_version || 'unknown')}
+                    </div>
+                    <div class="deploy-meta">
+                        ${deploy.author ? `<span class="author">by ${this.escapeHtml(deploy.author)}</span>` : ''}
+                        ${hasIncident ? `<span class="incident-badge">⚠ ${deploy.incident_count} incident${deploy.incident_count > 1 ? 's' : ''}</span>` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    renderDetail() {
+        const d = this.selectedDeploy;
+        const time = d.timestamp ? new Date(d.timestamp).toLocaleString() : 'Unknown';
+
+        return `
+            <div class="detail-panel">
+                <div class="detail-header">
+                    <h3>Deploy Details</h3>
+                    <button class="btn-close" onclick="this.getRootNode().host.closeDetail()">×</button>
+                </div>
+                <div class="detail-body">
+                    <div class="detail-row">
+                        <span class="detail-label">Service</span>
+                        <span class="detail-value">${this.escapeHtml(d.service)}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Version</span>
+                        <span class="detail-value">${this.escapeHtml(d.version || d.to_version || 'unknown')}</span>
+                    </div>
+                    ${d.from_version ? `
+                        <div class="detail-row">
+                            <span class="detail-label">Previous</span>
+                            <span class="detail-value">${this.escapeHtml(d.from_version)}</span>
+                        </div>
+                    ` : ''}
+                    <div class="detail-row">
+                        <span class="detail-label">Status</span>
+                        <span class="detail-value status-${d.status}">${d.status}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Time</span>
+                        <span class="detail-value">${time}</span>
+                    </div>
+                    ${d.author ? `
+                        <div class="detail-row">
+                            <span class="detail-label">Author</span>
+                            <span class="detail-value">${this.escapeHtml(d.author)}</span>
+                        </div>
+                    ` : ''}
+                    ${d.commit ? `
+                        <div class="detail-row">
+                            <span class="detail-label">Commit</span>
+                            <span class="detail-value code">${this.escapeHtml(d.commit.substring(0, 8))}</span>
+                        </div>
+                    ` : ''}
+                    ${d.duration_seconds ? `
+                        <div class="detail-row">
+                            <span class="detail-label">Duration</span>
+                            <span class="detail-value">${d.duration_seconds}s</span>
+                        </div>
+                    ` : ''}
+
+                    ${d.changes && d.changes.length > 0 ? `
+                        <div class="detail-section">
+                            <h4>Changes</h4>
+                            <ul class="changes-list">
+                                ${d.changes.slice(0, 5).map(c => `<li>${this.escapeHtml(c)}</li>`).join('')}
+                            </ul>
+                        </div>
+                    ` : ''}
+
+                    ${d.incident_count > 0 ? `
+                        <div class="detail-section incidents">
+                            <h4>⚠ Related Incidents</h4>
+                            <p>This deploy may have caused ${d.incident_count} incident${d.incident_count > 1 ? 's' : ''}</p>
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+    }
+
+    groupByDate() {
+        const groups = {};
+        const today = new Date().toDateString();
+        const yesterday = new Date(Date.now() - 86400000).toDateString();
+
+        for (const deploy of this.deploys) {
+            const date = deploy.timestamp ? new Date(deploy.timestamp).toDateString() : 'Unknown';
+            let label = date;
+            if (date === today) label = 'Today';
+            else if (date === yesterday) label = 'Yesterday';
+
+            if (!groups[label]) groups[label] = [];
+            groups[label].push(deploy);
+        }
+
+        return groups;
+    }
+
+    escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    getStyles() {
+        return `
+            .deploy-timeline {
+                background: var(--bg-card, #16181c);
+                border-radius: 8px;
+                overflow: hidden;
+                height: 100%;
+                display: flex;
+                flex-direction: column;
+            }
+
+            .deploy-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 0.75rem 1rem;
+                background: var(--bg-elevated, #1e2128);
+                border-bottom: 1px solid var(--border, #2f3336);
+            }
+
+            .header-title {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                font-weight: 600;
+            }
+
+            .btn-refresh {
+                background: var(--bg-card, #16181c);
+                border: 1px solid var(--border, #2f3336);
+                border-radius: 4px;
+                color: var(--text, #e7e9ea);
+                padding: 0.25rem 0.5rem;
+                cursor: pointer;
+            }
+
+            .loading, .empty-state {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 2rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .timeline-content {
+                flex: 1;
+                overflow-y: auto;
+                padding: 1rem;
+            }
+
+            .timeline-content.with-detail {
+                max-height: 40%;
+            }
+
+            .date-group {
+                margin-bottom: 1.5rem;
+            }
+
+            .date-header {
+                font-size: 0.75rem;
+                font-weight: 600;
+                color: var(--text-muted, #71767b);
+                text-transform: uppercase;
+                margin-bottom: 0.75rem;
+                padding-left: 3.5rem;
+            }
+
+            .deploys-list {
+                display: flex;
+                flex-direction: column;
+            }
+
+            .deploy-item {
+                display: grid;
+                grid-template-columns: 3rem 1.5rem 1fr;
+                gap: 0.5rem;
+                padding: 0.5rem 0;
+                cursor: pointer;
+                transition: background 0.15s;
+                border-radius: 4px;
+            }
+
+            .deploy-item:hover {
+                background: var(--bg-elevated, #1e2128);
+            }
+
+            .deploy-time {
+                font-size: 0.75rem;
+                color: var(--text-muted, #71767b);
+                text-align: right;
+                padding-top: 0.2rem;
+            }
+
+            .deploy-line {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .deploy-dot {
+                width: 20px;
+                height: 20px;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 0.7rem;
+                font-weight: bold;
+                flex-shrink: 0;
+            }
+
+            .deploy-item.success .deploy-dot {
+                background: rgba(0, 186, 124, 0.2);
+                color: var(--success, #00ba7c);
+            }
+
+            .deploy-item.failed .deploy-dot {
+                background: rgba(244, 33, 46, 0.2);
+                color: var(--error, #f4212e);
+            }
+
+            .deploy-item.rolled-back .deploy-dot {
+                background: rgba(255, 212, 0, 0.2);
+                color: var(--warning, #ffd400);
+            }
+
+            .deploy-item.pending .deploy-dot {
+                background: var(--bg-elevated, #1e2128);
+                color: var(--text-muted, #71767b);
+                border: 1px solid var(--border, #2f3336);
+            }
+
+            .deploy-connector {
+                width: 2px;
+                flex: 1;
+                min-height: 20px;
+                background: var(--border, #2f3336);
+            }
+
+            .deploy-item:last-child .deploy-connector {
+                display: none;
+            }
+
+            .deploy-info {
+                padding-top: 0.1rem;
+            }
+
+            .deploy-service {
+                font-weight: 500;
+                font-size: 0.9rem;
+            }
+
+            .deploy-version {
+                font-size: 0.75rem;
+                color: var(--text-muted, #71767b);
+                font-family: monospace;
+            }
+
+            .deploy-meta {
+                display: flex;
+                gap: 0.75rem;
+                margin-top: 0.25rem;
+                font-size: 0.7rem;
+            }
+
+            .author {
+                color: var(--text-muted, #71767b);
+            }
+
+            .incident-badge {
+                color: var(--warning, #ffd400);
+            }
+
+            .deploy-item.has-incident {
+                background: rgba(255, 212, 0, 0.05);
+            }
+
+            /* Detail panel */
+            .detail-panel {
+                border-bottom: 1px solid var(--border, #2f3336);
+                background: var(--bg-elevated, #1e2128);
+            }
+
+            .detail-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 0.75rem 1rem;
+                border-bottom: 1px solid var(--border, #2f3336);
+            }
+
+            .detail-header h3 {
+                margin: 0;
+                font-size: 0.9rem;
+            }
+
+            .btn-close {
+                background: none;
+                border: none;
+                color: var(--text-muted, #71767b);
+                font-size: 1.25rem;
+                cursor: pointer;
+                padding: 0 0.25rem;
+            }
+
+            .detail-body {
+                padding: 1rem;
+                max-height: 250px;
+                overflow-y: auto;
+            }
+
+            .detail-row {
+                display: flex;
+                justify-content: space-between;
+                padding: 0.4rem 0;
+                border-bottom: 1px solid var(--border, #2f3336);
+            }
+
+            .detail-label {
+                font-size: 0.8rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .detail-value {
+                font-size: 0.8rem;
+                font-weight: 500;
+            }
+
+            .detail-value.code {
+                font-family: monospace;
+            }
+
+            .detail-value.status-success { color: var(--success, #00ba7c); }
+            .detail-value.status-failed { color: var(--error, #f4212e); }
+            .detail-value.status-rolled_back { color: var(--warning, #ffd400); }
+
+            .detail-section {
+                margin-top: 1rem;
+                padding-top: 0.75rem;
+                border-top: 1px solid var(--border, #2f3336);
+            }
+
+            .detail-section h4 {
+                margin: 0 0 0.5rem 0;
+                font-size: 0.8rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .detail-section.incidents {
+                background: rgba(255, 212, 0, 0.1);
+                margin: 1rem -1rem -1rem -1rem;
+                padding: 1rem;
+            }
+
+            .detail-section.incidents h4 {
+                color: var(--warning, #ffd400);
+            }
+
+            .detail-section.incidents p {
+                margin: 0;
+                font-size: 0.8rem;
+            }
+
+            .changes-list {
+                margin: 0;
+                padding-left: 1.25rem;
+                font-size: 0.75rem;
+            }
+
+            .changes-list li {
+                margin-bottom: 0.25rem;
+            }
+        `;
+    }
+}
+
+customElements.define('deploy-timeline', DeployTimeline);
+
+/**
+ * Diff View Component
+ * Side-by-side comparison of two time periods
+ */
+class DiffView extends HTMLElement {
+    constructor() {
+        super();
+        this.data = null;
+        this.charts = [];
+    }
+
+    connectedCallback() {
+        this.render();
+        this.loadData();
+    }
+
+    disconnectedCallback() {
+        this.charts.forEach(c => c.destroy());
+    }
+
+    static get observedAttributes() {
+        return ['metric', 'period1', 'period2'];
+    }
+
+    get metric() { return this.getAttribute('metric') || 'latency'; }
+    get period1() { return this.getAttribute('period1') || 'today'; }
+    get period2() { return this.getAttribute('period2') || 'yesterday'; }
+
+    render() {
+        this.innerHTML = `
+            <style>
+                .diff-container {
+                    display: flex;
+                    flex-direction: column;
+                    height: 100%;
+                    background: var(--bg-card, #16181c);
+                    border-radius: 8px;
+                    overflow: hidden;
+                }
+                .diff-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 0.75rem 1rem;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border-bottom: 1px solid var(--border-color, #2f3336);
+                }
+                .diff-title {
+                    font-weight: 600;
+                    font-size: 0.9rem;
+                }
+                .diff-controls {
+                    display: flex;
+                    gap: 0.5rem;
+                }
+                .diff-controls select {
+                    background: var(--bg-primary, #0f1419);
+                    border: 1px solid var(--border-color, #2f3336);
+                    border-radius: 4px;
+                    padding: 0.4rem 0.5rem;
+                    color: var(--text-primary, #e7e9ea);
+                    font-size: 0.8rem;
+                }
+                .diff-summary {
+                    display: flex;
+                    gap: 2rem;
+                    padding: 1rem;
+                    border-bottom: 1px solid var(--border-color, #2f3336);
+                }
+                .diff-stat {
+                    flex: 1;
+                    text-align: center;
+                    padding: 0.75rem;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border-radius: 6px;
+                }
+                .diff-stat-label {
+                    font-size: 0.75rem;
+                    color: var(--text-muted, #71767b);
+                }
+                .diff-stat-value {
+                    font-size: 1.25rem;
+                    font-weight: 700;
+                    margin-top: 0.25rem;
+                }
+                .diff-stat-change {
+                    font-size: 0.8rem;
+                    margin-top: 0.25rem;
+                }
+                .diff-stat-change.positive { color: #22c55e; }
+                .diff-stat-change.negative { color: #f43f5e; }
+                .diff-stat-change.neutral { color: var(--text-muted, #71767b); }
+                .diff-charts {
+                    flex: 1;
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 1px;
+                    background: var(--border-color, #2f3336);
+                    min-height: 200px;
+                }
+                .diff-chart-panel {
+                    background: var(--bg-card, #16181c);
+                    padding: 1rem;
+                    display: flex;
+                    flex-direction: column;
+                }
+                .diff-chart-title {
+                    font-size: 0.8rem;
+                    color: var(--text-muted, #71767b);
+                    margin-bottom: 0.5rem;
+                    text-align: center;
+                }
+                .diff-chart {
+                    flex: 1;
+                }
+            </style>
+            <div class="diff-container">
+                <div class="diff-header">
+                    <div class="diff-title">Period Comparison</div>
+                    <div class="diff-controls">
+                        <select id="period1-select">
+                            <option value="today">Today</option>
+                            <option value="this-week">This Week</option>
+                            <option value="this-month">This Month</option>
+                        </select>
+                        <span style="color: var(--text-muted)">vs</span>
+                        <select id="period2-select">
+                            <option value="yesterday">Yesterday</option>
+                            <option value="last-week">Last Week</option>
+                            <option value="last-month">Last Month</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="diff-summary">
+                    <div class="diff-stat">
+                        <div class="diff-stat-label">Average Latency</div>
+                        <div class="diff-stat-value" id="stat-latency">-</div>
+                        <div class="diff-stat-change" id="stat-latency-change">-</div>
+                    </div>
+                    <div class="diff-stat">
+                        <div class="diff-stat-label">Error Rate</div>
+                        <div class="diff-stat-value" id="stat-errors">-</div>
+                        <div class="diff-stat-change" id="stat-errors-change">-</div>
+                    </div>
+                    <div class="diff-stat">
+                        <div class="diff-stat-label">Throughput</div>
+                        <div class="diff-stat-value" id="stat-throughput">-</div>
+                        <div class="diff-stat-change" id="stat-throughput-change">-</div>
+                    </div>
+                </div>
+                <div class="diff-charts">
+                    <div class="diff-chart-panel">
+                        <div class="diff-chart-title" id="title1">Period 1</div>
+                        <canvas class="diff-chart" id="chart1"></canvas>
+                    </div>
+                    <div class="diff-chart-panel">
+                        <div class="diff-chart-title" id="title2">Period 2</div>
+                        <canvas class="diff-chart" id="chart2"></canvas>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        this.querySelector('#period1-select')?.addEventListener('change', (e) => {
+            this.setAttribute('period1', e.target.value);
+            this.loadData();
+        });
+
+        this.querySelector('#period2-select')?.addEventListener('change', (e) => {
+            this.setAttribute('period2', e.target.value);
+            this.loadData();
+        });
+    }
+
+    async loadData() {
+        try {
+            const resp = await fetch(`/api/metrics/compare?period1=${this.period1}&period2=${this.period2}&metric=${this.metric}`);
+            if (!resp.ok) {
+                this.data = this.generateDemoData();
+            } else {
+                this.data = await resp.json();
+            }
+            this.updateDisplay();
+        } catch (e) {
+            this.data = this.generateDemoData();
+            this.updateDisplay();
+        }
+    }
+
+    generateDemoData() {
+        const generateSeries = (baseValue, variance) => {
+            const points = 24;
+            return Array.from({ length: points }, (_, i) => ({
+                timestamp: Date.now() - (points - i) * 3600000,
+                value: baseValue + (Math.random() - 0.5) * variance
+            }));
+        };
+
+        return {
+            period1: {
+                label: 'Today',
+                series: generateSeries(65, 30),
+                stats: { latency: 65, errors: 0.8, throughput: 1250 }
+            },
+            period2: {
+                label: 'Yesterday',
+                series: generateSeries(55, 25),
+                stats: { latency: 55, errors: 0.5, throughput: 1100 }
+            }
+        };
+    }
+
+    async updateDisplay() {
+        if (!this.data) return;
+
+        const { period1, period2 } = this.data;
+
+        // Update titles
+        this.querySelector('#title1').textContent = period1.label;
+        this.querySelector('#title2').textContent = period2.label;
+
+        // Update stats with diff
+        this.updateStat('latency', period1.stats.latency, period2.stats.latency, 'ms', true);
+        this.updateStat('errors', period1.stats.errors, period2.stats.errors, '%', true);
+        this.updateStat('throughput', period1.stats.throughput, period2.stats.throughput, '/s', false);
+
+        // Render charts
+        await this.renderCharts();
+    }
+
+    updateStat(name, current, previous, unit, lowerIsBetter) {
+        const valueEl = this.querySelector(`#stat-${name}`);
+        const changeEl = this.querySelector(`#stat-${name}-change`);
+
+        valueEl.textContent = current.toFixed(1) + unit;
+
+        const diff = current - previous;
+        const pct = ((diff / previous) * 100).toFixed(1);
+
+        if (Math.abs(diff) < 0.1) {
+            changeEl.textContent = 'No change';
+            changeEl.className = 'diff-stat-change neutral';
+        } else if (diff > 0) {
+            changeEl.textContent = `+${pct}% vs previous`;
+            changeEl.className = `diff-stat-change ${lowerIsBetter ? 'negative' : 'positive'}`;
+        } else {
+            changeEl.textContent = `${pct}% vs previous`;
+            changeEl.className = `diff-stat-change ${lowerIsBetter ? 'positive' : 'negative'}`;
+        }
+    }
+
+    async renderCharts() {
+        if (!window.Chart && window.LibLoader) {
+            await window.LibLoader.loadAll(['chart', 'chart-date']);
+        }
+
+        this.charts.forEach(c => c.destroy());
+        this.charts = [];
+
+        const { period1, period2 } = this.data;
+
+        [
+            { canvas: '#chart1', data: period1, color: '#3b82f6' },
+            { canvas: '#chart2', data: period2, color: '#22c55e' }
+        ].forEach(({ canvas, data, color }) => {
+            const el = this.querySelector(canvas);
+            if (!el) return;
+
+            const chart = new Chart(el.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: data.series.map(d => new Date(d.timestamp)),
+                    datasets: [{
+                        data: data.series.map(d => d.value),
+                        borderColor: color,
+                        backgroundColor: color + '20',
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 0,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            display: false,
+                        },
+                        y: {
+                            grid: { color: 'rgba(255,255,255,0.05)' },
+                            ticks: { color: '#71767b' }
+                        }
+                    }
+                }
+            });
+
+            this.charts.push(chart);
+        });
+    }
+}
+
+customElements.define('diff-view', DiffView);
+
+/**
+ * Error Budget Burndown Component
+ * SLO visualization showing budget remaining over time
+ */
+class ErrorBudget extends HTMLElement {
+    constructor() {
+        super();
+        this.data = null;
+        this.chart = null;
+    }
+
+    connectedCallback() {
+        this.render();
+        this.loadData();
+    }
+
+    disconnectedCallback() {
+        if (this.chart) this.chart.destroy();
+    }
+
+    static get observedAttributes() {
+        return ['slo-id', 'window'];
+    }
+
+    get sloId() { return this.getAttribute('slo-id') || ''; }
+    get window() { return this.getAttribute('window') || '30d'; }
+
+    render() {
+        this.innerHTML = `
+            <style>
+                .budget-container {
+                    display: flex;
+                    flex-direction: column;
+                    height: 100%;
+                    background: var(--bg-card, #16181c);
+                    border-radius: 8px;
+                    overflow: hidden;
+                }
+                .budget-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 0.75rem 1rem;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border-bottom: 1px solid var(--border-color, #2f3336);
+                }
+                .budget-title {
+                    font-weight: 600;
+                    font-size: 0.9rem;
+                }
+                .budget-summary {
+                    display: flex;
+                    gap: 2rem;
+                    padding: 1rem;
+                    border-bottom: 1px solid var(--border-color, #2f3336);
+                }
+                .budget-stat {
+                    text-align: center;
+                }
+                .budget-stat-label {
+                    font-size: 0.75rem;
+                    color: var(--text-muted, #71767b);
+                    margin-bottom: 0.25rem;
+                }
+                .budget-stat-value {
+                    font-size: 1.5rem;
+                    font-weight: 700;
+                }
+                .budget-stat-value.good { color: #22c55e; }
+                .budget-stat-value.warning { color: #f59e0b; }
+                .budget-stat-value.critical { color: #f43f5e; }
+                .budget-progress {
+                    padding: 0.75rem 1rem;
+                    border-bottom: 1px solid var(--border-color, #2f3336);
+                }
+                .budget-progress-bar {
+                    height: 8px;
+                    background: var(--border-color, #2f3336);
+                    border-radius: 4px;
+                    overflow: hidden;
+                }
+                .budget-progress-fill {
+                    height: 100%;
+                    border-radius: 4px;
+                    transition: width 0.5s ease;
+                }
+                .budget-progress-labels {
+                    display: flex;
+                    justify-content: space-between;
+                    margin-top: 0.5rem;
+                    font-size: 0.75rem;
+                    color: var(--text-muted, #71767b);
+                }
+                .budget-chart {
+                    flex: 1;
+                    padding: 1rem;
+                    min-height: 150px;
+                }
+                .budget-chart canvas {
+                    width: 100%;
+                    height: 100%;
+                }
+                .budget-footer {
+                    display: flex;
+                    gap: 1.5rem;
+                    padding: 0.75rem 1rem;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border-top: 1px solid var(--border-color, #2f3336);
+                    font-size: 0.8rem;
+                }
+                .budget-footer-item {
+                    display: flex;
+                    gap: 0.5rem;
+                }
+                .budget-footer-label {
+                    color: var(--text-muted, #71767b);
+                }
+            </style>
+            <div class="budget-container">
+                <div class="budget-header">
+                    <div class="budget-title">Error Budget - <span id="slo-name">SLO</span></div>
+                </div>
+                <div class="budget-summary">
+                    <div class="budget-stat">
+                        <div class="budget-stat-label">Budget Remaining</div>
+                        <div class="budget-stat-value" id="remaining">--</div>
+                    </div>
+                    <div class="budget-stat">
+                        <div class="budget-stat-label">Burn Rate</div>
+                        <div class="budget-stat-value" id="burn-rate">--</div>
+                    </div>
+                    <div class="budget-stat">
+                        <div class="budget-stat-label">Time Left</div>
+                        <div class="budget-stat-value" id="time-left">--</div>
+                    </div>
+                </div>
+                <div class="budget-progress">
+                    <div class="budget-progress-bar">
+                        <div class="budget-progress-fill" id="progress-fill"></div>
+                    </div>
+                    <div class="budget-progress-labels">
+                        <span>0%</span>
+                        <span>Budget consumed</span>
+                        <span>100%</span>
+                    </div>
+                </div>
+                <div class="budget-chart">
+                    <canvas id="chart"></canvas>
+                </div>
+                <div class="budget-footer">
+                    <div class="budget-footer-item">
+                        <span class="budget-footer-label">Target:</span>
+                        <span id="target">99.9%</span>
+                    </div>
+                    <div class="budget-footer-item">
+                        <span class="budget-footer-label">Current:</span>
+                        <span id="current">99.85%</span>
+                    </div>
+                    <div class="budget-footer-item">
+                        <span class="budget-footer-label">Window:</span>
+                        <span id="window">30 days</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    async loadData() {
+        try {
+            const resp = await fetch(`/api/slos/${this.sloId}/budget?window=${this.window}`);
+            if (!resp.ok) {
+                this.data = this.generateDemoData();
+            } else {
+                this.data = await resp.json();
+            }
+            this.updateDisplay();
+        } catch (e) {
+            this.data = this.generateDemoData();
+            this.updateDisplay();
+        }
+    }
+
+    generateDemoData() {
+        const days = 30;
+        const burndown = [];
+        let budget = 100;
+
+        for (let i = 0; i < days; i++) {
+            const dailyBurn = Math.random() * 5;
+            budget = Math.max(0, budget - dailyBurn);
+            burndown.push({
+                date: Date.now() - (days - i) * 86400000,
+                remaining: budget
+            });
+        }
+
+        return {
+            name: 'API Availability',
+            target: 99.9,
+            current: 99.85,
+            budgetRemaining: budget,
+            budgetConsumed: 100 - budget,
+            burnRate: 1.2,
+            timeToExhaustion: budget / 1.2,
+            burndown,
+            window: '30d'
+        };
+    }
+
+    async updateDisplay() {
+        if (!this.data) return;
+
+        const { name, target, current, budgetRemaining, budgetConsumed, burnRate, timeToExhaustion, burndown } = this.data;
+
+        // Update text
+        this.querySelector('#slo-name').textContent = name;
+        this.querySelector('#target').textContent = target + '%';
+        this.querySelector('#current').textContent = current + '%';
+        this.querySelector('#window').textContent = this.window;
+
+        // Budget remaining with color
+        const remainingEl = this.querySelector('#remaining');
+        remainingEl.textContent = budgetRemaining.toFixed(1) + '%';
+        remainingEl.className = 'budget-stat-value ' +
+            (budgetRemaining > 50 ? 'good' : budgetRemaining > 20 ? 'warning' : 'critical');
+
+        // Burn rate
+        const burnRateEl = this.querySelector('#burn-rate');
+        burnRateEl.textContent = burnRate.toFixed(1) + 'x';
+        burnRateEl.className = 'budget-stat-value ' +
+            (burnRate < 1 ? 'good' : burnRate < 2 ? 'warning' : 'critical');
+
+        // Time left
+        const timeLeftEl = this.querySelector('#time-left');
+        if (timeToExhaustion > 30) {
+            timeLeftEl.textContent = '>30d';
+            timeLeftEl.className = 'budget-stat-value good';
+        } else {
+            timeLeftEl.textContent = timeToExhaustion.toFixed(0) + 'd';
+            timeLeftEl.className = 'budget-stat-value ' +
+                (timeToExhaustion > 10 ? 'warning' : 'critical');
+        }
+
+        // Progress bar
+        const progressFill = this.querySelector('#progress-fill');
+        progressFill.style.width = budgetConsumed + '%';
+        progressFill.style.background = budgetConsumed < 50 ? '#22c55e' :
+            budgetConsumed < 80 ? '#f59e0b' : '#f43f5e';
+
+        // Chart
+        await this.renderChart(burndown);
+    }
+
+    async renderChart(burndown) {
+        const canvas = this.querySelector('#chart');
+        if (!canvas) return;
+
+        if (!window.Chart && window.LibLoader) {
+            await window.LibLoader.loadAll(['chart', 'chart-date']);
+        }
+
+        if (this.chart) this.chart.destroy();
+
+        const ctx = canvas.getContext('2d');
+
+        // Ideal burndown line
+        const idealLine = burndown.map((_, i) =>
+            100 - (100 / burndown.length) * i
+        );
+
+        this.chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: burndown.map(d => new Date(d.date)),
+                datasets: [
+                    {
+                        label: 'Actual',
+                        data: burndown.map(d => d.remaining),
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        fill: true,
+                        tension: 0.3,
+                    },
+                    {
+                        label: 'Ideal',
+                        data: idealLine,
+                        borderColor: '#71767b',
+                        borderDash: [5, 5],
+                        fill: false,
+                        pointRadius: 0,
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: { color: '#71767b', boxWidth: 12 }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'time',
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: { color: '#71767b', maxTicksLimit: 5 }
+                    },
+                    y: {
+                        min: 0,
+                        max: 100,
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: {
+                            color: '#71767b',
+                            callback: v => v + '%'
+                        }
+                    }
+                }
+            }
+        });
+    }
+}
+
+customElements.define('error-budget', ErrorBudget);
+
+/**
+ * Geo Map Component
+ * Geographic visualization of traffic/errors by region
+ */
+class GeoMap extends HTMLElement {
+    constructor() {
+        super();
+        this.data = null;
+    }
+
+    connectedCallback() {
+        this.render();
+        this.loadData();
+    }
+
+    static get observedAttributes() {
+        return ['metric', 'time-range'];
+    }
+
+    get metric() { return this.getAttribute('metric') || 'requests'; }
+    get timeRange() { return this.getAttribute('time-range') || '1h'; }
+
+    render() {
+        this.innerHTML = `
+            <style>
+                .geomap-container {
+                    display: flex;
+                    flex-direction: column;
+                    height: 100%;
+                    background: var(--bg-card, #16181c);
+                    border-radius: 8px;
+                    overflow: hidden;
+                }
+                .geomap-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 0.75rem 1rem;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border-bottom: 1px solid var(--border-color, #2f3336);
+                }
+                .geomap-title {
+                    font-weight: 600;
+                    font-size: 0.9rem;
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                }
+                .geomap-body {
+                    flex: 1;
+                    position: relative;
+                    min-height: 300px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                }
+                .geomap-svg {
+                    width: 100%;
+                    height: 100%;
+                }
+                .geomap-region {
+                    fill: var(--bg-elevated, #1a1f2e);
+                    stroke: var(--border-color, #2f3336);
+                    stroke-width: 0.5;
+                    transition: fill 0.2s ease;
+                }
+                .geomap-region:hover {
+                    stroke: var(--color-info, #1d9bf0);
+                    stroke-width: 1;
+                }
+                .geomap-dot {
+                    cursor: pointer;
+                    transition: r 0.2s ease;
+                }
+                .geomap-dot:hover {
+                    r: 12;
+                }
+                .geomap-tooltip {
+                    position: fixed;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border: 1px solid var(--border-color, #2f3336);
+                    border-radius: 6px;
+                    padding: 0.75rem;
+                    font-size: 0.8rem;
+                    pointer-events: none;
+                    z-index: 1000;
+                    display: none;
+                }
+                .geomap-legend {
+                    position: absolute;
+                    bottom: 1rem;
+                    left: 1rem;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border: 1px solid var(--border-color, #2f3336);
+                    border-radius: 6px;
+                    padding: 0.75rem;
+                    font-size: 0.75rem;
+                }
+                .geomap-legend-gradient {
+                    width: 100px;
+                    height: 8px;
+                    background: linear-gradient(to right, #22c55e, #f59e0b, #f43f5e);
+                    border-radius: 4px;
+                    margin-bottom: 0.5rem;
+                }
+                .geomap-legend-labels {
+                    display: flex;
+                    justify-content: space-between;
+                    color: var(--text-muted, #71767b);
+                }
+                .geomap-stats {
+                    display: flex;
+                    gap: 1.5rem;
+                    padding: 0.75rem 1rem;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border-top: 1px solid var(--border-color, #2f3336);
+                    font-size: 0.8rem;
+                }
+                .geomap-stat {
+                    display: flex;
+                    gap: 0.5rem;
+                }
+                .geomap-stat-label {
+                    color: var(--text-muted, #71767b);
+                }
+            </style>
+            <div class="geomap-container">
+                <div class="geomap-header">
+                    <div class="geomap-title">
+                        <span>&#127758;</span>
+                        <span>Geographic Distribution</span>
+                    </div>
+                </div>
+                <div class="geomap-body" id="body">
+                    <svg class="geomap-svg" id="svg" viewBox="0 0 800 400"></svg>
+                    <div class="geomap-legend">
+                        <div class="geomap-legend-gradient"></div>
+                        <div class="geomap-legend-labels">
+                            <span>Low</span>
+                            <span>High</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="geomap-stats">
+                    <div class="geomap-stat">
+                        <span class="geomap-stat-label">Total Requests:</span>
+                        <span id="stat-total">0</span>
+                    </div>
+                    <div class="geomap-stat">
+                        <span class="geomap-stat-label">Regions:</span>
+                        <span id="stat-regions">0</span>
+                    </div>
+                    <div class="geomap-stat">
+                        <span class="geomap-stat-label">Top Region:</span>
+                        <span id="stat-top">-</span>
+                    </div>
+                </div>
+                <div class="geomap-tooltip" id="tooltip"></div>
+            </div>
+        `;
+
+        this.renderMap();
+    }
+
+    async loadData() {
+        try {
+            const resp = await fetch(`/api/geo/distribution?metric=${this.metric}&range=${this.timeRange}`);
+            if (!resp.ok) {
+                this.data = this.generateDemoData();
+            } else {
+                this.data = await resp.json();
+            }
+            this.updateMap();
+        } catch (e) {
+            this.data = this.generateDemoData();
+            this.updateMap();
+        }
+    }
+
+    generateDemoData() {
+        return {
+            regions: [
+                { code: 'US-W', name: 'US West', lat: 37.7749, lng: -122.4194, requests: 45000, errors: 120, latency: 45 },
+                { code: 'US-E', name: 'US East', lat: 40.7128, lng: -74.0060, requests: 38000, errors: 95, latency: 52 },
+                { code: 'EU-W', name: 'EU West', lat: 51.5074, lng: -0.1278, requests: 28000, errors: 85, latency: 120 },
+                { code: 'EU-C', name: 'EU Central', lat: 52.5200, lng: 13.4050, requests: 22000, errors: 65, latency: 115 },
+                { code: 'APAC', name: 'Asia Pacific', lat: 35.6762, lng: 139.6503, requests: 18000, errors: 45, latency: 180 },
+                { code: 'SA', name: 'South America', lat: -23.5505, lng: -46.6333, requests: 8000, errors: 25, latency: 200 },
+                { code: 'AU', name: 'Australia', lat: -33.8688, lng: 151.2093, requests: 5000, errors: 12, latency: 220 },
+            ],
+            total: 164000
+        };
+    }
+
+    renderMap() {
+        const svg = this.querySelector('#svg');
+        if (!svg) return;
+
+        // Simple world map outline (simplified paths)
+        svg.innerHTML = `
+            <defs>
+                <radialGradient id="dotGradient">
+                    <stop offset="0%" stop-color="rgba(59, 130, 246, 0.8)"/>
+                    <stop offset="100%" stop-color="rgba(59, 130, 246, 0.2)"/>
+                </radialGradient>
+            </defs>
+            <g id="regions"></g>
+            <g id="dots"></g>
+        `;
+    }
+
+    updateMap() {
+        if (!this.data) return;
+
+        const svg = this.querySelector('#svg');
+        const dotsGroup = svg.querySelector('#dots');
+        const tooltip = this.querySelector('#tooltip');
+
+        if (!dotsGroup) return;
+
+        const { regions, total } = this.data;
+        const maxRequests = Math.max(...regions.map(r => r.requests));
+
+        // Convert lat/lng to SVG coordinates (simple equirectangular projection)
+        const toX = lng => ((lng + 180) / 360) * 800;
+        const toY = lat => ((90 - lat) / 180) * 400;
+
+        dotsGroup.innerHTML = regions.map(r => {
+            const x = toX(r.lng);
+            const y = toY(r.lat);
+            const radius = 5 + (r.requests / maxRequests) * 15;
+            const color = this.getHeatColor(r.requests / maxRequests);
+
+            return `
+                <circle class="geomap-dot" cx="${x}" cy="${y}" r="${radius}"
+                        fill="${color}" fill-opacity="0.7"
+                        data-region="${r.code}"/>
+            `;
+        }).join('');
+
+        // Tooltip events
+        dotsGroup.querySelectorAll('.geomap-dot').forEach((dot, i) => {
+            const r = regions[i];
+
+            dot.addEventListener('mouseenter', (e) => {
+                tooltip.innerHTML = `
+                    <div style="font-weight:600;margin-bottom:0.5rem">${r.name}</div>
+                    <div>Requests: ${r.requests.toLocaleString()}</div>
+                    <div>Errors: ${r.errors} (${(r.errors/r.requests*100).toFixed(2)}%)</div>
+                    <div>Avg Latency: ${r.latency}ms</div>
+                `;
+                tooltip.style.display = 'block';
+            });
+
+            dot.addEventListener('mousemove', (e) => {
+                tooltip.style.left = (e.clientX + 10) + 'px';
+                tooltip.style.top = (e.clientY + 10) + 'px';
+            });
+
+            dot.addEventListener('mouseleave', () => {
+                tooltip.style.display = 'none';
+            });
+        });
+
+        // Update stats
+        const topRegion = regions.reduce((a, b) => a.requests > b.requests ? a : b);
+        this.querySelector('#stat-total').textContent = total.toLocaleString();
+        this.querySelector('#stat-regions').textContent = regions.length;
+        this.querySelector('#stat-top').textContent = `${topRegion.name} (${(topRegion.requests/total*100).toFixed(0)}%)`;
+    }
+
+    getHeatColor(intensity) {
+        if (intensity < 0.3) return '#22c55e';
+        if (intensity < 0.6) return '#f59e0b';
+        return '#f43f5e';
+    }
+}
+
+customElements.define('geo-map', GeoMap);
+
+/**
+ * Histogram Chart Component
+ * Shows latency distribution as a bar chart with percentile markers
+ */
+class HistogramChart extends HTMLElement {
+    constructor() {
+        super();
+        this.data = null;
+        this.chart = null;
+    }
+
+    connectedCallback() {
+        this.render();
+        this.loadData();
+    }
+
+    disconnectedCallback() {
+        if (this.chart) this.chart.destroy();
+    }
+
+    static get observedAttributes() {
+        return ['metric', 'service', 'time-range'];
+    }
+
+    attributeChangedCallback(name, oldValue, newValue) {
+        if (oldValue !== newValue) this.loadData();
+    }
+
+    get metric() { return this.getAttribute('metric') || 'latency'; }
+    get service() { return this.getAttribute('service') || ''; }
+    get timeRange() { return this.getAttribute('time-range') || '1h'; }
+
+    render() {
+        this.innerHTML = `
+            <style>
+                .histogram-container {
+                    display: flex;
+                    flex-direction: column;
+                    height: 100%;
+                    background: var(--bg-card, #16181c);
+                    border-radius: 8px;
+                    overflow: hidden;
+                }
+                .histogram-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 0.75rem 1rem;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border-bottom: 1px solid var(--border-color, #2f3336);
+                }
+                .histogram-title {
+                    font-weight: 600;
+                    font-size: 0.9rem;
+                }
+                .histogram-body {
+                    flex: 1;
+                    padding: 1rem;
+                    min-height: 200px;
+                }
+                .histogram-canvas {
+                    width: 100%;
+                    height: 100%;
+                }
+                .histogram-percentiles {
+                    display: flex;
+                    justify-content: space-around;
+                    padding: 0.75rem 1rem;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border-top: 1px solid var(--border-color, #2f3336);
+                }
+                .histogram-percentile {
+                    text-align: center;
+                }
+                .histogram-percentile-label {
+                    font-size: 0.7rem;
+                    color: var(--text-muted, #71767b);
+                    text-transform: uppercase;
+                }
+                .histogram-percentile-value {
+                    font-size: 1.1rem;
+                    font-weight: 600;
+                    margin-top: 0.25rem;
+                }
+                .histogram-percentile-value.p50 { color: #22c55e; }
+                .histogram-percentile-value.p90 { color: #3b82f6; }
+                .histogram-percentile-value.p95 { color: #f59e0b; }
+                .histogram-percentile-value.p99 { color: #f43f5e; }
+            </style>
+            <div class="histogram-container">
+                <div class="histogram-header">
+                    <div class="histogram-title">Latency Distribution</div>
+                </div>
+                <div class="histogram-body">
+                    <canvas class="histogram-canvas" id="chart"></canvas>
+                </div>
+                <div class="histogram-percentiles">
+                    <div class="histogram-percentile">
+                        <div class="histogram-percentile-label">P50</div>
+                        <div class="histogram-percentile-value p50" id="p50">-</div>
+                    </div>
+                    <div class="histogram-percentile">
+                        <div class="histogram-percentile-label">P90</div>
+                        <div class="histogram-percentile-value p90" id="p90">-</div>
+                    </div>
+                    <div class="histogram-percentile">
+                        <div class="histogram-percentile-label">P95</div>
+                        <div class="histogram-percentile-value p95" id="p95">-</div>
+                    </div>
+                    <div class="histogram-percentile">
+                        <div class="histogram-percentile-label">P99</div>
+                        <div class="histogram-percentile-value p99" id="p99">-</div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    async loadData() {
+        try {
+            const resp = await fetch(`/api/metrics/histogram?metric=${this.metric}&range=${this.timeRange}`);
+            if (!resp.ok) {
+                this.data = this.generateDemoData();
+            } else {
+                this.data = await resp.json();
+            }
+            this.renderChart();
+        } catch (e) {
+            this.data = this.generateDemoData();
+            this.renderChart();
+        }
+    }
+
+    generateDemoData() {
+        // Generate log-normal distribution (realistic for latency)
+        const buckets = ['0-5ms', '5-10ms', '10-25ms', '25-50ms', '50-100ms', '100-250ms', '250-500ms', '500ms-1s', '1s+'];
+        const counts = [1200, 2800, 4500, 3200, 1800, 800, 300, 100, 50];
+
+        return {
+            buckets,
+            counts,
+            percentiles: { p50: 22, p90: 85, p95: 145, p99: 380 },
+            total: counts.reduce((a, b) => a + b, 0)
+        };
+    }
+
+    async renderChart() {
+        const canvas = this.querySelector('#chart');
+        if (!canvas || !this.data) return;
+
+        if (!window.Chart && window.LibLoader) {
+            await window.LibLoader.load('chart');
+        }
+
+        if (this.chart) this.chart.destroy();
+
+        const ctx = canvas.getContext('2d');
+        const { buckets, counts, percentiles } = this.data;
+
+        // Create gradient colors
+        const colors = counts.map((_, i) => {
+            const ratio = i / (counts.length - 1);
+            if (ratio < 0.5) return `rgba(34, 197, 94, ${0.6 + ratio * 0.4})`;
+            if (ratio < 0.75) return `rgba(59, 130, 246, ${0.6 + (ratio - 0.5) * 0.8})`;
+            if (ratio < 0.9) return `rgba(245, 158, 11, ${0.7 + (ratio - 0.75) * 0.6})`;
+            return `rgba(244, 63, 94, ${0.8 + (ratio - 0.9) * 0.4})`;
+        });
+
+        this.chart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: buckets,
+                datasets: [{
+                    data: counts,
+                    backgroundColor: colors,
+                    borderRadius: 4,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: (ctx) => {
+                                const pct = ((ctx.raw / this.data.total) * 100).toFixed(1);
+                                return `${ctx.raw.toLocaleString()} requests (${pct}%)`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { display: false },
+                        ticks: { color: '#71767b', font: { size: 10 } }
+                    },
+                    y: {
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: { color: '#71767b' }
+                    }
+                }
+            }
+        });
+
+        // Update percentiles
+        const formatMs = (ms) => ms < 1000 ? `${ms}ms` : `${(ms/1000).toFixed(1)}s`;
+        this.querySelector('#p50').textContent = formatMs(percentiles.p50);
+        this.querySelector('#p90').textContent = formatMs(percentiles.p90);
+        this.querySelector('#p95').textContent = formatMs(percentiles.p95);
+        this.querySelector('#p99').textContent = formatMs(percentiles.p99);
+    }
+}
+
+customElements.define('histogram-chart', HistogramChart);
+
+/**
+ * Incidents Timeline Widget
+ * Active incidents, timeline, and war room view
+ */
+class IncidentsTimeline extends HTMLElement {
+    constructor() {
+        super();
+        this.incidents = [];
+        this.selectedIncident = null;
+        this.filter = 'active'; // active, resolved, all
+    }
+
+    connectedCallback() {
+        this.render();
+        this.loadIncidents();
+        this.refreshInterval = setInterval(() => this.loadIncidents(), 30000);
+    }
+
+    disconnectedCallback() {
+        if (this.refreshInterval) clearInterval(this.refreshInterval);
+    }
+
+    async loadIncidents() {
+        try {
+            const status = this.filter === 'all' ? '' : this.filter;
+            const resp = await fetch(`/api/incidents?status=${status}&limit=50`);
+            if (resp.ok) {
+                this.incidents = await resp.json() || [];
+                this.renderContent();
+            }
+        } catch (e) {
+            console.error('Failed to load incidents:', e);
+        }
+    }
+
+    setFilter(filter) {
+        this.filter = filter;
+        this.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.filter === filter);
+        });
+        this.loadIncidents();
+    }
+
+    render() {
+        this.innerHTML = `
+            <style>${this.getStyles()}</style>
+            <div class="incidents-timeline">
+                <div class="incidents-header">
+                    <div class="incidents-title">
+                        <span class="title-icon">🚨</span>
+                        <span>Incidents</span>
+                    </div>
+                    <div class="incidents-filters">
+                        <button class="filter-btn active" data-filter="active" onclick="this.getRootNode().host.setFilter('active')">Active</button>
+                        <button class="filter-btn" data-filter="resolved" onclick="this.getRootNode().host.setFilter('resolved')">Resolved</button>
+                        <button class="filter-btn" data-filter="all" onclick="this.getRootNode().host.setFilter('all')">All</button>
+                    </div>
+                    <button class="btn-create" onclick="this.getRootNode().host.showCreateIncident()">+ Declare</button>
+                </div>
+                <div class="incidents-content" id="incidents-content">
+                    <div class="loading">Loading...</div>
+                </div>
+                <div class="incident-detail" id="incident-detail" style="display: none;"></div>
+            </div>
+        `;
+    }
+
+    renderContent() {
+        const container = this.querySelector('#incidents-content');
+
+        const active = this.incidents.filter(i => i.status === 'active' || i.status === 'investigating' || i.status === 'identified');
+        const headerEl = this.querySelector('.incidents-title');
+        if (headerEl && active.length > 0) {
+            headerEl.innerHTML = `<span class="title-icon">🚨</span><span>Incidents</span><span class="active-badge">${active.length}</span>`;
+        }
+
+        if (this.incidents.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <span class="icon">✓</span>
+                    <p>${this.filter === 'active' ? 'No active incidents' : 'No incidents found'}</p>
+                </div>
+            `;
+            return;
+        }
+
+        container.innerHTML = `
+            <div class="incidents-list">
+                ${this.incidents.map(i => this.renderIncidentCard(i)).join('')}
+            </div>
+        `;
+    }
+
+    renderIncidentCard(incident) {
+        const severity = incident.severity || 'medium';
+        const status = incident.status || 'active';
+        const duration = this.getDuration(incident.created_at, incident.resolved_at);
+
+        return `
+            <div class="incident-card severity-${severity}" onclick="this.getRootNode().host.showIncidentDetail('${incident.id}')">
+                <div class="incident-severity">
+                    <span class="severity-badge ${severity}">${this.getSeverityIcon(severity)}</span>
+                </div>
+                <div class="incident-main">
+                    <div class="incident-header">
+                        <span class="incident-title">${this.escapeHtml(incident.title)}</span>
+                        <span class="incident-status status-${status}">${status}</span>
+                    </div>
+                    <div class="incident-meta">
+                        ${incident.service ? `<span class="meta-service">${this.escapeHtml(incident.service)}</span>` : ''}
+                        <span class="meta-time">${this.formatTime(incident.created_at)}</span>
+                        <span class="meta-duration">${duration}</span>
+                    </div>
+                    ${incident.description ? `<div class="incident-desc">${this.escapeHtml(incident.description.substring(0, 100))}${incident.description.length > 100 ? '...' : ''}</div>` : ''}
+                </div>
+                <div class="incident-actions">
+                    ${status !== 'resolved' ? `
+                        <button class="btn-action" onclick="event.stopPropagation(); this.getRootNode().host.updateStatus('${incident.id}', 'investigating')" title="Investigate">🔍</button>
+                        <button class="btn-action" onclick="event.stopPropagation(); this.getRootNode().host.resolveIncident('${incident.id}')" title="Resolve">✓</button>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+    }
+
+    async showIncidentDetail(id) {
+        const incident = this.incidents.find(i => i.id === id);
+        if (!incident) return;
+
+        this.selectedIncident = incident;
+
+        // Try to load timeline
+        let timeline = [];
+        try {
+            const resp = await fetch(`/api/incidents/${id}/timeline`);
+            if (resp.ok) timeline = await resp.json() || [];
+        } catch (e) {}
+
+        const detail = this.querySelector('#incident-detail');
+        const content = this.querySelector('#incidents-content');
+
+        content.style.display = 'none';
+        detail.style.display = 'block';
+        detail.innerHTML = this.renderIncidentDetail(incident, timeline);
+    }
+
+    renderIncidentDetail(incident, timeline) {
+        return `
+            <div class="detail-header">
+                <button class="btn-back" onclick="this.getRootNode().host.hideDetail()">← Back</button>
+                <span class="severity-badge ${incident.severity}">${incident.severity?.toUpperCase()}</span>
+                <span class="incident-status status-${incident.status}">${incident.status}</span>
+            </div>
+            <div class="detail-body">
+                <h2 class="detail-title">${this.escapeHtml(incident.title)}</h2>
+                <div class="detail-meta">
+                    <div class="meta-item">
+                        <span class="meta-label">Created</span>
+                        <span class="meta-value">${new Date(incident.created_at).toLocaleString()}</span>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Service</span>
+                        <span class="meta-value">${incident.service || '—'}</span>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Duration</span>
+                        <span class="meta-value">${this.getDuration(incident.created_at, incident.resolved_at)}</span>
+                    </div>
+                    ${incident.commander ? `
+                        <div class="meta-item">
+                            <span class="meta-label">Commander</span>
+                            <span class="meta-value">${this.escapeHtml(incident.commander)}</span>
+                        </div>
+                    ` : ''}
+                </div>
+                ${incident.description ? `
+                    <div class="detail-section">
+                        <h3>Description</h3>
+                        <p>${this.escapeHtml(incident.description)}</p>
+                    </div>
+                ` : ''}
+                <div class="detail-section">
+                    <h3>Timeline</h3>
+                    <div class="timeline">
+                        ${timeline.length > 0 ? timeline.map(t => `
+                            <div class="timeline-item">
+                                <div class="timeline-marker"></div>
+                                <div class="timeline-content">
+                                    <div class="timeline-time">${this.formatTime(t.timestamp)}</div>
+                                    <div class="timeline-text">${this.escapeHtml(t.message)}</div>
+                                </div>
+                            </div>
+                        `).join('') : `
+                            <div class="timeline-item">
+                                <div class="timeline-marker"></div>
+                                <div class="timeline-content">
+                                    <div class="timeline-time">${this.formatTime(incident.created_at)}</div>
+                                    <div class="timeline-text">Incident created</div>
+                                </div>
+                            </div>
+                        `}
+                    </div>
+                </div>
+                <div class="detail-actions">
+                    ${incident.status !== 'resolved' ? `
+                        <button class="btn-primary" onclick="this.getRootNode().host.resolveIncident('${incident.id}')">Resolve Incident</button>
+                    ` : ''}
+                    <button class="btn-secondary" onclick="this.getRootNode().host.addTimelineEntry('${incident.id}')">Add Update</button>
+                </div>
+            </div>
+        `;
+    }
+
+    hideDetail() {
+        const detail = this.querySelector('#incident-detail');
+        const content = this.querySelector('#incidents-content');
+        detail.style.display = 'none';
+        content.style.display = 'block';
+    }
+
+    async updateStatus(id, status) {
+        try {
+            const resp = await fetch(`/api/incidents/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status })
+            });
+            if (resp.ok) this.loadIncidents();
+        } catch (e) {
+            console.error('Failed to update status:', e);
+        }
+    }
+
+    async resolveIncident(id) {
+        if (!confirm('Resolve this incident?')) return;
+
+        try {
+            const resp = await fetch(`/api/incidents/${id}/resolve`, {
+                method: 'POST'
+            });
+            if (resp.ok) {
+                this.hideDetail();
+                this.loadIncidents();
+            }
+        } catch (e) {
+            console.error('Failed to resolve:', e);
+        }
+    }
+
+    async addTimelineEntry(id) {
+        const message = prompt('Add timeline update:');
+        if (!message) return;
+
+        try {
+            await fetch(`/api/incidents/${id}/timeline`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message })
+            });
+            this.showIncidentDetail(id);
+        } catch (e) {
+            console.error('Failed to add entry:', e);
+        }
+    }
+
+    showCreateIncident() {
+        const title = prompt('Incident title:');
+        if (!title) return;
+
+        const severity = prompt('Severity (critical/high/medium/low):', 'high');
+        const description = prompt('Description (optional):');
+
+        this.createIncident({ title, severity, description });
+    }
+
+    async createIncident(data) {
+        try {
+            const resp = await fetch('/api/incidents', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (resp.ok) this.loadIncidents();
+        } catch (e) {
+            console.error('Failed to create incident:', e);
+        }
+    }
+
+    getSeverityIcon(severity) {
+        switch (severity) {
+            case 'critical': return '🔴';
+            case 'high': return '🟠';
+            case 'medium': return '🟡';
+            case 'low': return '🟢';
+            default: return '⚪';
+        }
+    }
+
+    getDuration(start, end) {
+        const startTime = new Date(start).getTime();
+        const endTime = end ? new Date(end).getTime() : Date.now();
+        const ms = endTime - startTime;
+
+        const minutes = Math.floor(ms / 60000);
+        if (minutes < 60) return `${minutes}m`;
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return `${hours}h ${minutes % 60}m`;
+        const days = Math.floor(hours / 24);
+        return `${days}d ${hours % 24}h`;
+    }
+
+    formatTime(timestamp) {
+        if (!timestamp) return '—';
+        const d = new Date(timestamp);
+        const now = new Date();
+        const diffMs = now - d;
+
+        if (diffMs < 60000) return 'just now';
+        if (diffMs < 3600000) return `${Math.floor(diffMs / 60000)}m ago`;
+        if (diffMs < 86400000) return `${Math.floor(diffMs / 3600000)}h ago`;
+
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    }
+
+    escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    getStyles() {
+        return `
+            .incidents-timeline {
+                background: var(--bg-card, #16181c);
+                border-radius: 8px;
+                overflow: hidden;
+                height: 100%;
+                display: flex;
+                flex-direction: column;
+            }
+
+            .incidents-header {
+                display: flex;
+                align-items: center;
+                gap: 1rem;
+                padding: 0.75rem 1rem;
+                background: var(--bg-elevated, #1e2128);
+                border-bottom: 1px solid var(--border, #2f3336);
+            }
+
+            .incidents-title {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                font-weight: 600;
+            }
+
+            .active-badge {
+                background: var(--error, #f4212e);
+                color: white;
+                padding: 0.1rem 0.5rem;
+                border-radius: 10px;
+                font-size: 0.75rem;
+            }
+
+            .incidents-filters {
+                display: flex;
+                gap: 0.25rem;
+                margin-left: auto;
+            }
+
+            .filter-btn {
+                background: transparent;
+                border: none;
+                color: var(--text-muted, #71767b);
+                padding: 0.4rem 0.6rem;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 0.8rem;
+            }
+
+            .filter-btn:hover { background: var(--bg-card, #16181c); }
+            .filter-btn.active { background: var(--bg-card, #16181c); color: var(--text, #e7e9ea); }
+
+            .btn-create {
+                background: var(--error, #f4212e);
+                border: none;
+                color: white;
+                padding: 0.4rem 0.75rem;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 0.8rem;
+            }
+
+            .incidents-content, .incident-detail {
+                flex: 1;
+                overflow-y: auto;
+                padding: 1rem;
+            }
+
+            .loading, .empty-state {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                padding: 3rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .empty-state .icon { font-size: 2.5rem; margin-bottom: 1rem; }
+
+            .incidents-list { display: flex; flex-direction: column; gap: 0.75rem; }
+
+            .incident-card {
+                display: flex;
+                align-items: flex-start;
+                gap: 0.75rem;
+                padding: 1rem;
+                background: var(--bg-elevated, #1e2128);
+                border-radius: 8px;
+                cursor: pointer;
+                border-left: 4px solid var(--border, #2f3336);
+                transition: background 0.15s;
+            }
+
+            .incident-card:hover { background: var(--bg-card, #16181c); }
+
+            .incident-card.severity-critical { border-left-color: var(--error, #f4212e); }
+            .incident-card.severity-high { border-left-color: #ff7a00; }
+            .incident-card.severity-medium { border-left-color: var(--warning, #ffd400); }
+            .incident-card.severity-low { border-left-color: var(--success, #00ba7c); }
+
+            .severity-badge {
+                font-size: 1.25rem;
+            }
+
+            .incident-main { flex: 1; }
+
+            .incident-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 0.25rem;
+            }
+
+            .incident-title { font-weight: 600; font-size: 0.9rem; }
+
+            .incident-status {
+                font-size: 0.7rem;
+                padding: 0.15rem 0.5rem;
+                border-radius: 10px;
+                background: var(--bg-card, #16181c);
+            }
+
+            .status-active, .status-investigating { color: var(--error, #f4212e); }
+            .status-identified { color: var(--warning, #ffd400); }
+            .status-resolved { color: var(--success, #00ba7c); }
+
+            .incident-meta {
+                display: flex;
+                gap: 1rem;
+                font-size: 0.75rem;
+                color: var(--text-muted, #71767b);
+                margin-bottom: 0.25rem;
+            }
+
+            .incident-desc {
+                font-size: 0.8rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .incident-actions { display: flex; gap: 0.25rem; }
+
+            .btn-action {
+                width: 28px;
+                height: 28px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: transparent;
+                border: 1px solid var(--border, #2f3336);
+                border-radius: 4px;
+                cursor: pointer;
+            }
+
+            .btn-action:hover { background: var(--bg-card, #16181c); }
+
+            .detail-header {
+                display: flex;
+                align-items: center;
+                gap: 0.75rem;
+                margin-bottom: 1rem;
+            }
+
+            .btn-back {
+                background: transparent;
+                border: none;
+                color: var(--accent, #1d9bf0);
+                cursor: pointer;
+                font-size: 0.85rem;
+            }
+
+            .detail-title {
+                font-size: 1.25rem;
+                margin-bottom: 1rem;
+            }
+
+            .detail-meta {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+                gap: 1rem;
+                margin-bottom: 1.5rem;
+            }
+
+            .meta-item { display: flex; flex-direction: column; gap: 0.2rem; }
+            .meta-label { font-size: 0.7rem; color: var(--text-muted, #71767b); text-transform: uppercase; }
+            .meta-value { font-size: 0.85rem; }
+
+            .detail-section {
+                margin-bottom: 1.5rem;
+            }
+
+            .detail-section h3 {
+                font-size: 0.85rem;
+                color: var(--text-muted, #71767b);
+                margin-bottom: 0.75rem;
+            }
+
+            .timeline {
+                position: relative;
+                padding-left: 1.5rem;
+            }
+
+            .timeline::before {
+                content: '';
+                position: absolute;
+                left: 5px;
+                top: 0;
+                bottom: 0;
+                width: 2px;
+                background: var(--border, #2f3336);
+            }
+
+            .timeline-item {
+                position: relative;
+                padding-bottom: 1rem;
+            }
+
+            .timeline-marker {
+                position: absolute;
+                left: -1.5rem;
+                width: 12px;
+                height: 12px;
+                background: var(--accent, #1d9bf0);
+                border-radius: 50%;
+                margin-top: 3px;
+            }
+
+            .timeline-time {
+                font-size: 0.7rem;
+                color: var(--text-muted, #71767b);
+                margin-bottom: 0.25rem;
+            }
+
+            .timeline-text { font-size: 0.85rem; }
+
+            .detail-actions {
+                display: flex;
+                gap: 0.75rem;
+                padding-top: 1rem;
+                border-top: 1px solid var(--border, #2f3336);
+            }
+
+            .btn-primary {
+                background: var(--success, #00ba7c);
+                border: none;
+                color: white;
+                padding: 0.5rem 1rem;
+                border-radius: 6px;
+                cursor: pointer;
+            }
+
+            .btn-secondary {
+                background: var(--bg-elevated, #1e2128);
+                border: 1px solid var(--border, #2f3336);
+                color: var(--text, #e7e9ea);
+                padding: 0.5rem 1rem;
+                border-radius: 6px;
+                cursor: pointer;
+            }
+        `;
+    }
+}
+
+customElements.define('incidents-timeline', IncidentsTimeline);
+
+/**
+ * Latency Heatmap Component
+ * Shows latency distribution over time with color intensity
+ */
+class LatencyHeatmap extends HTMLElement {
+    constructor() {
+        super();
+        this.data = null;
+        this.canvas = null;
+        this.ctx = null;
+        this.resizeObserver = null;
+        this.tooltip = null;
+    }
+
+    connectedCallback() {
+        this.render();
+        this.loadData();
+
+        this.resizeObserver = new ResizeObserver(() => this.drawHeatmap());
+        this.resizeObserver.observe(this);
+    }
+
+    disconnectedCallback() {
+        if (this.resizeObserver) {
+            this.resizeObserver.disconnect();
+        }
+    }
+
+    static get observedAttributes() {
+        return ['service', 'endpoint', 'time-range'];
+    }
+
+    attributeChangedCallback(name, oldValue, newValue) {
+        if (oldValue !== newValue) {
+            this.loadData();
+        }
+    }
+
+    get service() { return this.getAttribute('service') || ''; }
+    get endpoint() { return this.getAttribute('endpoint') || ''; }
+    get timeRange() { return this.getAttribute('time-range') || '1h'; }
+
+    render() {
+        this.innerHTML = `
+            <style>
+                .heatmap-container {
+                    display: flex;
+                    flex-direction: column;
+                    height: 100%;
+                    background: var(--bg-card, #16181c);
+                    border-radius: 8px;
+                    overflow: hidden;
+                }
+                .heatmap-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 0.75rem 1rem;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border-bottom: 1px solid var(--border-color, #2f3336);
+                }
+                .heatmap-title {
+                    font-weight: 600;
+                    font-size: 0.9rem;
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                }
+                .heatmap-controls {
+                    display: flex;
+                    gap: 0.5rem;
+                }
+                .heatmap-controls select {
+                    background: var(--bg-primary, #0f1419);
+                    border: 1px solid var(--border-color, #2f3336);
+                    border-radius: 4px;
+                    padding: 0.4rem 0.5rem;
+                    color: var(--text-primary, #e7e9ea);
+                    font-size: 0.8rem;
+                }
+                .heatmap-body {
+                    flex: 1;
+                    display: flex;
+                    position: relative;
+                    min-height: 200px;
+                }
+                .heatmap-y-axis {
+                    width: 60px;
+                    display: flex;
+                    flex-direction: column;
+                    justify-content: space-between;
+                    padding: 1rem 0.5rem 2rem 0.5rem;
+                    font-size: 0.7rem;
+                    color: var(--text-muted, #71767b);
+                    text-align: right;
+                }
+                .heatmap-canvas-wrapper {
+                    flex: 1;
+                    position: relative;
+                    padding: 1rem 1rem 2rem 0;
+                }
+                .heatmap-canvas {
+                    width: 100%;
+                    height: 100%;
+                    cursor: crosshair;
+                }
+                .heatmap-x-axis {
+                    position: absolute;
+                    bottom: 0.5rem;
+                    left: 60px;
+                    right: 1rem;
+                    display: flex;
+                    justify-content: space-between;
+                    font-size: 0.7rem;
+                    color: var(--text-muted, #71767b);
+                }
+                .heatmap-tooltip {
+                    position: fixed;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border: 1px solid var(--border-color, #2f3336);
+                    border-radius: 6px;
+                    padding: 0.5rem 0.75rem;
+                    font-size: 0.8rem;
+                    pointer-events: none;
+                    z-index: 1000;
+                    display: none;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                }
+                .heatmap-tooltip-row {
+                    display: flex;
+                    justify-content: space-between;
+                    gap: 1rem;
+                }
+                .heatmap-tooltip-label {
+                    color: var(--text-muted, #71767b);
+                }
+                .heatmap-tooltip-value {
+                    font-weight: 600;
+                }
+                .heatmap-legend {
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                    padding: 0.5rem 1rem;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border-top: 1px solid var(--border-color, #2f3336);
+                    font-size: 0.75rem;
+                }
+                .heatmap-legend-label {
+                    color: var(--text-muted, #71767b);
+                }
+                .heatmap-legend-gradient {
+                    width: 120px;
+                    height: 12px;
+                    border-radius: 2px;
+                    background: linear-gradient(to right, #1a1f2e, #1d4ed8, #7c3aed, #ec4899, #f43f5e);
+                }
+                .heatmap-loading {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    height: 100%;
+                    color: var(--text-muted, #71767b);
+                }
+                .heatmap-percentiles {
+                    display: flex;
+                    gap: 1.5rem;
+                    padding: 0.5rem 1rem;
+                    font-size: 0.8rem;
+                }
+                .heatmap-percentile {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                }
+                .heatmap-percentile-label {
+                    color: var(--text-muted, #71767b);
+                    font-size: 0.7rem;
+                }
+                .heatmap-percentile-value {
+                    font-weight: 600;
+                    font-size: 1rem;
+                }
+            </style>
+            <div class="heatmap-container">
+                <div class="heatmap-header">
+                    <div class="heatmap-title">
+                        <span>&#128200;</span>
+                        <span>Latency Heatmap</span>
+                    </div>
+                    <div class="heatmap-controls">
+                        <select id="time-select">
+                            <option value="15m">15 min</option>
+                            <option value="1h" selected>1 hour</option>
+                            <option value="6h">6 hours</option>
+                            <option value="24h">24 hours</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="heatmap-percentiles" id="percentiles">
+                    <div class="heatmap-percentile">
+                        <span class="heatmap-percentile-label">P50</span>
+                        <span class="heatmap-percentile-value" id="p50">-</span>
+                    </div>
+                    <div class="heatmap-percentile">
+                        <span class="heatmap-percentile-label">P90</span>
+                        <span class="heatmap-percentile-value" id="p90">-</span>
+                    </div>
+                    <div class="heatmap-percentile">
+                        <span class="heatmap-percentile-label">P95</span>
+                        <span class="heatmap-percentile-value" id="p95">-</span>
+                    </div>
+                    <div class="heatmap-percentile">
+                        <span class="heatmap-percentile-label">P99</span>
+                        <span class="heatmap-percentile-value" id="p99">-</span>
+                    </div>
+                </div>
+                <div class="heatmap-body">
+                    <div class="heatmap-y-axis" id="y-axis"></div>
+                    <div class="heatmap-canvas-wrapper">
+                        <canvas class="heatmap-canvas" id="canvas"></canvas>
+                    </div>
+                    <div class="heatmap-x-axis" id="x-axis"></div>
+                </div>
+                <div class="heatmap-legend">
+                    <span class="heatmap-legend-label">Requests:</span>
+                    <span>Low</span>
+                    <div class="heatmap-legend-gradient"></div>
+                    <span>High</span>
+                </div>
+                <div class="heatmap-tooltip" id="tooltip"></div>
+            </div>
+        `;
+
+        this.canvas = this.querySelector('#canvas');
+        this.ctx = this.canvas?.getContext('2d');
+        this.tooltip = this.querySelector('#tooltip');
+
+        this.setupEventListeners();
+    }
+
+    setupEventListeners() {
+        const timeSelect = this.querySelector('#time-select');
+        timeSelect?.addEventListener('change', (e) => {
+            this.setAttribute('time-range', e.target.value);
+        });
+
+        this.canvas?.addEventListener('mousemove', (e) => this.showTooltip(e));
+        this.canvas?.addEventListener('mouseleave', () => this.hideTooltip());
+    }
+
+    async loadData() {
+        try {
+            const params = new URLSearchParams({ range: this.timeRange });
+            if (this.service) params.append('service', this.service);
+            if (this.endpoint) params.append('endpoint', this.endpoint);
+
+            const resp = await fetch(`/api/metrics/latency-heatmap?${params}`);
+
+            if (!resp.ok) {
+                this.data = this.generateDemoData();
+            } else {
+                this.data = await resp.json();
+            }
+
+            this.drawHeatmap();
+            this.updatePercentiles();
+        } catch (e) {
+            console.error('Failed to load heatmap data:', e);
+            this.data = this.generateDemoData();
+            this.drawHeatmap();
+            this.updatePercentiles();
+        }
+    }
+
+    generateDemoData() {
+        // Generate realistic latency heatmap data
+        const buckets = ['0-10ms', '10-25ms', '25-50ms', '50-100ms', '100-250ms', '250-500ms', '500ms-1s', '1s+'];
+        const numTimeSlots = 60; // 60 time buckets
+        const data = {
+            buckets: buckets,
+            timeSlots: [],
+            matrix: [],
+            percentiles: { p50: 45, p90: 120, p95: 180, p99: 350 }
+        };
+
+        const now = Date.now();
+        const slotDuration = 60000; // 1 minute per slot
+
+        for (let t = 0; t < numTimeSlots; t++) {
+            data.timeSlots.push(now - (numTimeSlots - t) * slotDuration);
+            const row = [];
+
+            // Create a realistic distribution - most requests are fast
+            const baseDistribution = [0.3, 0.35, 0.2, 0.08, 0.04, 0.02, 0.008, 0.002];
+
+            // Add some variation and occasional spikes
+            const hasSpike = Math.random() > 0.9;
+            const spikeMultiplier = hasSpike ? 3 : 1;
+
+            for (let b = 0; b < buckets.length; b++) {
+                let count = Math.floor(1000 * baseDistribution[b] * (0.5 + Math.random()));
+
+                // Spikes affect slower buckets more
+                if (hasSpike && b >= 3) {
+                    count *= spikeMultiplier;
+                }
+
+                row.push(count);
+            }
+            data.matrix.push(row);
+        }
+
+        return data;
+    }
+
+    drawHeatmap() {
+        if (!this.canvas || !this.ctx || !this.data) return;
+
+        const wrapper = this.querySelector('.heatmap-canvas-wrapper');
+        if (!wrapper) return;
+
+        const rect = wrapper.getBoundingClientRect();
+        const width = rect.width - 16; // padding
+        const height = rect.height - 32; // padding
+
+        // Set canvas size
+        this.canvas.width = width * window.devicePixelRatio;
+        this.canvas.height = height * window.devicePixelRatio;
+        this.canvas.style.width = width + 'px';
+        this.canvas.style.height = height + 'px';
+        this.ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+
+        const { matrix, buckets, timeSlots } = this.data;
+        if (!matrix || !matrix.length) return;
+
+        const numRows = buckets.length;
+        const numCols = matrix.length;
+        const cellWidth = width / numCols;
+        const cellHeight = height / numRows;
+
+        // Find max value for color scaling
+        let maxVal = 0;
+        for (const row of matrix) {
+            for (const val of row) {
+                if (val > maxVal) maxVal = val;
+            }
+        }
+
+        // Draw cells
+        for (let col = 0; col < numCols; col++) {
+            for (let row = 0; row < numRows; row++) {
+                const value = matrix[col][row];
+                const intensity = maxVal > 0 ? value / maxVal : 0;
+
+                const x = col * cellWidth;
+                const y = (numRows - 1 - row) * cellHeight; // Flip Y axis
+
+                this.ctx.fillStyle = this.getHeatColor(intensity);
+                this.ctx.fillRect(x, y, cellWidth + 0.5, cellHeight + 0.5);
+            }
+        }
+
+        // Update axes
+        this.updateAxes();
+    }
+
+    getHeatColor(intensity) {
+        // Gradient from dark blue -> purple -> pink -> red
+        if (intensity < 0.01) return '#1a1f2e';
+        if (intensity < 0.1) return '#1e3a5f';
+        if (intensity < 0.25) return '#1d4ed8';
+        if (intensity < 0.5) return '#6366f1';
+        if (intensity < 0.75) return '#a855f7';
+        if (intensity < 0.9) return '#ec4899';
+        return '#f43f5e';
+    }
+
+    updateAxes() {
+        const yAxis = this.querySelector('#y-axis');
+        const xAxis = this.querySelector('#x-axis');
+
+        if (yAxis && this.data?.buckets) {
+            yAxis.innerHTML = this.data.buckets
+                .slice().reverse()
+                .map(b => `<span>${b}</span>`)
+                .join('');
+        }
+
+        if (xAxis && this.data?.timeSlots) {
+            const slots = this.data.timeSlots;
+            const formatTime = (ts) => {
+                const d = new Date(ts);
+                return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+            };
+
+            xAxis.innerHTML = `
+                <span>${formatTime(slots[0])}</span>
+                <span>${formatTime(slots[Math.floor(slots.length / 2)])}</span>
+                <span>${formatTime(slots[slots.length - 1])}</span>
+            `;
+        }
+    }
+
+    updatePercentiles() {
+        if (!this.data?.percentiles) return;
+
+        const formatMs = (ms) => {
+            if (ms < 1000) return `${ms}ms`;
+            return `${(ms / 1000).toFixed(2)}s`;
+        };
+
+        const p = this.data.percentiles;
+        this.querySelector('#p50').textContent = formatMs(p.p50);
+        this.querySelector('#p90').textContent = formatMs(p.p90);
+        this.querySelector('#p95').textContent = formatMs(p.p95);
+        this.querySelector('#p99').textContent = formatMs(p.p99);
+    }
+
+    showTooltip(e) {
+        if (!this.canvas || !this.data || !this.tooltip) return;
+
+        const rect = this.canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        const { matrix, buckets, timeSlots } = this.data;
+        const cellWidth = rect.width / matrix.length;
+        const cellHeight = rect.height / buckets.length;
+
+        const col = Math.floor(x / cellWidth);
+        const row = buckets.length - 1 - Math.floor(y / cellHeight);
+
+        if (col < 0 || col >= matrix.length || row < 0 || row >= buckets.length) {
+            this.hideTooltip();
+            return;
+        }
+
+        const value = matrix[col][row];
+        const bucket = buckets[row];
+        const time = new Date(timeSlots[col]).toLocaleTimeString('en-US', {
+            hour: '2-digit', minute: '2-digit', hour12: false
+        });
+
+        this.tooltip.innerHTML = `
+            <div class="heatmap-tooltip-row">
+                <span class="heatmap-tooltip-label">Time:</span>
+                <span class="heatmap-tooltip-value">${time}</span>
+            </div>
+            <div class="heatmap-tooltip-row">
+                <span class="heatmap-tooltip-label">Latency:</span>
+                <span class="heatmap-tooltip-value">${bucket}</span>
+            </div>
+            <div class="heatmap-tooltip-row">
+                <span class="heatmap-tooltip-label">Requests:</span>
+                <span class="heatmap-tooltip-value">${value.toLocaleString()}</span>
+            </div>
+        `;
+
+        this.tooltip.style.display = 'block';
+        this.tooltip.style.left = (e.clientX + 10) + 'px';
+        this.tooltip.style.top = (e.clientY + 10) + 'px';
+    }
+
+    hideTooltip() {
+        if (this.tooltip) {
+            this.tooltip.style.display = 'none';
+        }
+    }
+}
+
+customElements.define('latency-heatmap', LatencyHeatmap);
+
+/**
+ * Log Explorer Widget
+ * Full-featured log search with filters, facets, and live tail
+ */
+class LogExplorer extends HTMLElement {
+    constructor() {
+        super();
+        this.logs = [];
+        this.services = [];
+        this.filters = {
+            query: '',
+            level: '',
+            service: '',
+            timeRange: '1h'
+        };
+        this.liveTail = false;
+        this.liveTailInterval = null;
+        this.expandedRows = new Set();
+        this.loading = false;
+    }
+
+    connectedCallback() {
+        this.render();
+        this.loadServices();
+        this.search();
+    }
+
+    disconnectedCallback() {
+        this.stopLiveTail();
+    }
+
+    async loadServices() {
+        try {
+            const resp = await fetch('/api/logs/services');
+            if (resp.ok) {
+                this.services = await resp.json();
+                this.updateServiceFilter();
+            }
+        } catch (e) {
+            console.error('Failed to load services:', e);
+        }
+    }
+
+    updateServiceFilter() {
+        const select = this.querySelector('#service-filter');
+        if (select && this.services.length > 0) {
+            select.innerHTML = `
+                <option value="">All Services</option>
+                ${this.services.map(s => `<option value="${s}">${s}</option>`).join('')}
+            `;
+        }
+    }
+
+    async search() {
+        if (this.loading) return;
+        this.loading = true;
+        this.showLoading();
+
+        try {
+            const params = new URLSearchParams({
+                limit: '500'
+            });
+
+            if (this.filters.query) params.append('q', this.filters.query);
+            if (this.filters.level) params.append('level', this.filters.level);
+            if (this.filters.service) params.append('service', this.filters.service);
+
+            // Time range
+            const duration = this.parseTimeRange(this.filters.timeRange);
+            const endTime = new Date();
+            const startTime = new Date(endTime.getTime() - duration);
+            params.append('start', startTime.toISOString());
+            params.append('end', endTime.toISOString());
+
+            const resp = await fetch(`/api/logs?${params}`);
+            if (!resp.ok) throw new Error('Search failed');
+
+            const data = await resp.json();
+            this.logs = data.data || data.entries || [];
+            this.renderResults();
+        } catch (e) {
+            this.showError(e.message);
+        } finally {
+            this.loading = false;
+        }
+    }
+
+    parseTimeRange(range) {
+        const match = range.match(/^(\d+)([mhd])$/);
+        if (!match) return 15 * 60 * 1000; // default 15m
+
+        const value = parseInt(match[1]);
+        const unit = match[2];
+
+        switch (unit) {
+            case 'm': return value * 60 * 1000;
+            case 'h': return value * 60 * 60 * 1000;
+            case 'd': return value * 24 * 60 * 60 * 1000;
+            default: return 15 * 60 * 1000;
+        }
+    }
+
+    toggleLiveTail() {
+        this.liveTail = !this.liveTail;
+
+        const btn = this.querySelector('#live-tail-btn');
+        if (btn) {
+            btn.classList.toggle('active', this.liveTail);
+            btn.innerHTML = this.liveTail ? '⏹ Stop' : '▶ Live Tail';
+        }
+
+        if (this.liveTail) {
+            this.startLiveTail();
+        } else {
+            this.stopLiveTail();
+        }
+    }
+
+    startLiveTail() {
+        // Use WebSocket for real-time log streaming if available
+        if (typeof dwSocket !== 'undefined' && dwSocket.subscribe) {
+            this.liveTailUnsubscribe = dwSocket.subscribe('logs', (msg) => {
+                if (msg.payload) {
+                    // Add new log to the top
+                    const newLog = {
+                        id: Date.now().toString(),
+                        timestamp: msg.payload.timestamp || new Date().toISOString(),
+                        level: msg.payload.level || 'info',
+                        message: msg.payload.message || '',
+                        service: msg.payload.service || '',
+                        host: msg.payload.host || ''
+                    };
+                    // Check if log matches current filters
+                    if (this.matchesFilters(newLog)) {
+                        this.logs.unshift(newLog);
+                        if (this.logs.length > 500) this.logs.pop();
+                        this.renderResults();
+                    }
+                }
+            });
+        } else {
+            // Fallback to polling
+            this.liveTailInterval = setInterval(() => {
+                this.search();
+            }, 2000);
+        }
+    }
+
+    stopLiveTail() {
+        if (this.liveTailUnsubscribe) {
+            this.liveTailUnsubscribe();
+            this.liveTailUnsubscribe = null;
+        }
+        if (this.liveTailInterval) {
+            clearInterval(this.liveTailInterval);
+            this.liveTailInterval = null;
+        }
+    }
+
+    matchesFilters(log) {
+        if (this.filters.level && log.level !== this.filters.level) return false;
+        if (this.filters.service && log.service !== this.filters.service) return false;
+        if (this.filters.query) {
+            const q = this.filters.query.toLowerCase();
+            if (!log.message.toLowerCase().includes(q)) return false;
+        }
+        return true;
+    }
+
+    setFilter(key, value) {
+        this.filters[key] = value;
+        this.search();
+    }
+
+    toggleRow(index) {
+        if (this.expandedRows.has(index)) {
+            this.expandedRows.delete(index);
+        } else {
+            this.expandedRows.add(index);
+        }
+        this.renderResults();
+    }
+
+    showLoading() {
+        const container = this.querySelector('#log-results');
+        if (container && this.logs.length === 0) {
+            container.innerHTML = `
+                <div class="log-loading">
+                    <div class="spinner"></div>
+                    <span>Searching logs...</span>
+                </div>
+            `;
+        }
+    }
+
+    showError(message) {
+        const container = this.querySelector('#log-results');
+        if (container) {
+            container.innerHTML = `
+                <div class="log-error">
+                    <span class="icon">⚠️</span>
+                    <span>${message}</span>
+                </div>
+            `;
+        }
+    }
+
+    render() {
+        this.innerHTML = `
+            <style>${this.getStyles()}</style>
+            <div class="log-explorer">
+                <div class="log-toolbar">
+                    <div class="search-bar">
+                        <input type="text"
+                               id="search-input"
+                               placeholder="Search logs... (supports regex)"
+                               value="${this.escapeHtml(this.filters.query)}"
+                               onkeydown="if(event.key==='Enter') this.getRootNode().host.setFilter('query', this.value)">
+                        <button class="btn-search" onclick="this.getRootNode().host.setFilter('query', this.getRootNode().host.querySelector('#search-input').value)">
+                            🔍
+                        </button>
+                    </div>
+                    <div class="filters">
+                        <select id="level-filter" onchange="this.getRootNode().host.setFilter('level', this.value)">
+                            <option value="">All Levels</option>
+                            <option value="debug" ${this.filters.level === 'debug' ? 'selected' : ''}>Debug</option>
+                            <option value="info" ${this.filters.level === 'info' ? 'selected' : ''}>Info</option>
+                            <option value="warn" ${this.filters.level === 'warn' ? 'selected' : ''}>Warn</option>
+                            <option value="error" ${this.filters.level === 'error' ? 'selected' : ''}>Error</option>
+                        </select>
+                        <select id="service-filter" onchange="this.getRootNode().host.setFilter('service', this.value)">
+                            <option value="">All Services</option>
+                        </select>
+                        <select id="time-filter" onchange="this.getRootNode().host.setFilter('timeRange', this.value)">
+                            <option value="5m" ${this.filters.timeRange === '5m' ? 'selected' : ''}>Last 5m</option>
+                            <option value="15m" ${this.filters.timeRange === '15m' ? 'selected' : ''}>Last 15m</option>
+                            <option value="1h" ${this.filters.timeRange === '1h' ? 'selected' : ''}>Last 1h</option>
+                            <option value="6h" ${this.filters.timeRange === '6h' ? 'selected' : ''}>Last 6h</option>
+                            <option value="24h" ${this.filters.timeRange === '24h' ? 'selected' : ''}>Last 24h</option>
+                            <option value="7d" ${this.filters.timeRange === '7d' ? 'selected' : ''}>Last 7d</option>
+                        </select>
+                    </div>
+                    <div class="actions">
+                        <button id="live-tail-btn" class="btn-live ${this.liveTail ? 'active' : ''}" onclick="this.getRootNode().host.toggleLiveTail()">
+                            ${this.liveTail ? '⏹ Stop' : '▶ Live Tail'}
+                        </button>
+                        <button class="btn-refresh" onclick="this.getRootNode().host.search()">
+                            ⟲ Refresh
+                        </button>
+                    </div>
+                </div>
+                <div class="log-stats" id="log-stats">
+                    <span class="stat">
+                        <span class="stat-value" id="log-count">0</span> logs
+                    </span>
+                    <span class="stat">
+                        <span class="level-badge level-error" id="error-count">0</span> errors
+                    </span>
+                    <span class="stat">
+                        <span class="level-badge level-warn" id="warn-count">0</span> warnings
+                    </span>
+                </div>
+                <div class="log-results" id="log-results">
+                    <div class="log-empty">
+                        <span class="icon">📋</span>
+                        <p>No logs found</p>
+                    </div>
+                </div>
+            </div>
+        `;
+        this.updateServiceFilter();
+    }
+
+    renderResults() {
+        const container = this.querySelector('#log-results');
+        if (!container) return;
+
+        // Update stats
+        const errorCount = this.logs.filter(l => l.level === 'error').length;
+        const warnCount = this.logs.filter(l => l.level === 'warn' || l.level === 'warning').length;
+
+        const countEl = this.querySelector('#log-count');
+        const errorEl = this.querySelector('#error-count');
+        const warnEl = this.querySelector('#warn-count');
+
+        if (countEl) countEl.textContent = this.logs.length;
+        if (errorEl) errorEl.textContent = errorCount;
+        if (warnEl) warnEl.textContent = warnCount;
+
+        if (this.logs.length === 0) {
+            container.innerHTML = `
+                <div class="log-empty">
+                    <span class="icon">📋</span>
+                    <p>No logs found</p>
+                    <p class="hint">Try adjusting your search or time range</p>
+                </div>
+            `;
+            return;
+        }
+
+        container.innerHTML = `
+            <div class="log-table">
+                <div class="log-header">
+                    <div class="col-time">Time</div>
+                    <div class="col-level">Level</div>
+                    <div class="col-service">Service</div>
+                    <div class="col-message">Message</div>
+                </div>
+                <div class="log-body">
+                    ${this.logs.map((log, i) => this.renderLogRow(log, i)).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    renderLogRow(log, index) {
+        const isExpanded = this.expandedRows.has(index);
+        const level = (log.level || 'info').toLowerCase();
+        const timestamp = new Date(log.timestamp);
+        const timeStr = timestamp.toLocaleTimeString('en-US', {
+            hour12: false,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        }) + '.' + String(timestamp.getMilliseconds()).padStart(3, '0');
+
+        const message = this.highlightSearch(log.message || '');
+
+        return `
+            <div class="log-row ${isExpanded ? 'expanded' : ''}" onclick="this.getRootNode().host.toggleRow(${index})">
+                <div class="log-main">
+                    <div class="col-time">${timeStr}</div>
+                    <div class="col-level">
+                        <span class="level-badge level-${level}">${level.toUpperCase()}</span>
+                    </div>
+                    <div class="col-service">${this.escapeHtml(log.service || '—')}</div>
+                    <div class="col-message">${message}</div>
+                </div>
+                ${isExpanded ? this.renderExpandedDetails(log) : ''}
+            </div>
+        `;
+    }
+
+    renderExpandedDetails(log) {
+        const attrs = log.attributes || {};
+        const hasAttrs = Object.keys(attrs).length > 0;
+
+        return `
+            <div class="log-details">
+                <div class="log-details-section">
+                    <div class="log-full-message">${this.escapeHtml(log.message || '')}</div>
+                </div>
+                <div class="log-details-grid">
+                    ${log.trace_id ? `
+                        <div class="detail-item">
+                            <span class="detail-label">Trace ID</span>
+                            <span class="detail-value mono">${log.trace_id}</span>
+                        </div>
+                    ` : ''}
+                    ${log.span_id ? `
+                        <div class="detail-item">
+                            <span class="detail-label">Span ID</span>
+                            <span class="detail-value mono">${log.span_id}</span>
+                        </div>
+                    ` : ''}
+                    ${log.host ? `
+                        <div class="detail-item">
+                            <span class="detail-label">Host</span>
+                            <span class="detail-value">${this.escapeHtml(log.host)}</span>
+                        </div>
+                    ` : ''}
+                    ${log.logger ? `
+                        <div class="detail-item">
+                            <span class="detail-label">Logger</span>
+                            <span class="detail-value">${this.escapeHtml(log.logger)}</span>
+                        </div>
+                    ` : ''}
+                </div>
+                ${hasAttrs ? `
+                    <div class="log-details-section">
+                        <h4>Attributes</h4>
+                        <table class="attrs-table">
+                            ${Object.entries(attrs).map(([k, v]) => `
+                                <tr>
+                                    <td class="attr-key">${this.escapeHtml(k)}</td>
+                                    <td class="attr-value">${this.escapeHtml(JSON.stringify(v))}</td>
+                                </tr>
+                            `).join('')}
+                        </table>
+                    </div>
+                ` : ''}
+                <div class="log-details-actions">
+                    ${log.trace_id ? `
+                        <a href="#" onclick="event.stopPropagation(); window.open('/traces/${log.trace_id}', '_blank')" class="action-link">
+                            View Trace →
+                        </a>
+                    ` : ''}
+                    <button onclick="event.stopPropagation(); navigator.clipboard.writeText(JSON.stringify(${this.escapeHtml(JSON.stringify(log))}, null, 2))" class="action-btn">
+                        Copy JSON
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    highlightSearch(text) {
+        if (!this.filters.query || !text) return this.escapeHtml(text);
+
+        try {
+            const escaped = this.escapeHtml(text);
+            const regex = new RegExp(`(${this.escapeRegex(this.filters.query)})`, 'gi');
+            return escaped.replace(regex, '<mark>$1</mark>');
+        } catch (e) {
+            return this.escapeHtml(text);
+        }
+    }
+
+    escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    escapeRegex(str) {
+        return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    getStyles() {
+        return `
+            .log-explorer {
+                background: var(--bg-card, #16181c);
+                border-radius: 8px;
+                overflow: hidden;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                color: var(--text, #e7e9ea);
+                display: flex;
+                flex-direction: column;
+                height: 100%;
+            }
+
+            .log-toolbar {
+                display: flex;
+                align-items: center;
+                gap: 1rem;
+                padding: 0.75rem 1rem;
+                background: var(--bg-elevated, #1e2128);
+                border-bottom: 1px solid var(--border, #2f3336);
+                flex-wrap: wrap;
+            }
+
+            .search-bar {
+                display: flex;
+                flex: 1;
+                min-width: 200px;
+            }
+
+            .search-bar input {
+                flex: 1;
+                background: var(--bg-card, #16181c);
+                border: 1px solid var(--border, #2f3336);
+                border-right: none;
+                border-radius: 6px 0 0 6px;
+                color: var(--text, #e7e9ea);
+                padding: 0.5rem 0.75rem;
+                font-size: 0.85rem;
+            }
+
+            .search-bar input:focus {
+                outline: none;
+                border-color: var(--accent, #1d9bf0);
+            }
+
+            .btn-search {
+                background: var(--accent, #1d9bf0);
+                border: 1px solid var(--accent, #1d9bf0);
+                border-radius: 0 6px 6px 0;
+                color: white;
+                padding: 0.5rem 0.75rem;
+                cursor: pointer;
+            }
+
+            .filters {
+                display: flex;
+                gap: 0.5rem;
+            }
+
+            .filters select {
+                background: var(--bg-card, #16181c);
+                border: 1px solid var(--border, #2f3336);
+                border-radius: 6px;
+                color: var(--text, #e7e9ea);
+                padding: 0.5rem 0.75rem;
+                font-size: 0.8rem;
+                cursor: pointer;
+            }
+
+            .filters select:focus {
+                outline: none;
+                border-color: var(--accent, #1d9bf0);
+            }
+
+            .actions {
+                display: flex;
+                gap: 0.5rem;
+            }
+
+            .btn-live, .btn-refresh {
+                background: var(--bg-card, #16181c);
+                border: 1px solid var(--border, #2f3336);
+                border-radius: 6px;
+                color: var(--text, #e7e9ea);
+                padding: 0.5rem 0.75rem;
+                font-size: 0.8rem;
+                cursor: pointer;
+                transition: all 0.15s;
+            }
+
+            .btn-live:hover, .btn-refresh:hover {
+                border-color: var(--accent, #1d9bf0);
+            }
+
+            .btn-live.active {
+                background: var(--error, #f4212e);
+                border-color: var(--error, #f4212e);
+                animation: pulse 1.5s ease-in-out infinite;
+            }
+
+            @keyframes pulse {
+                0%, 100% { opacity: 1; }
+                50% { opacity: 0.7; }
+            }
+
+            .log-stats {
+                display: flex;
+                gap: 1.5rem;
+                padding: 0.5rem 1rem;
+                background: var(--bg-elevated, #1e2128);
+                border-bottom: 1px solid var(--border, #2f3336);
+                font-size: 0.8rem;
+            }
+
+            .stat {
+                display: flex;
+                align-items: center;
+                gap: 0.4rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .stat-value {
+                font-weight: 600;
+                color: var(--text, #e7e9ea);
+            }
+
+            .log-results {
+                flex: 1;
+                overflow-y: auto;
+            }
+
+            .log-loading, .log-error, .log-empty {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                padding: 3rem;
+                color: var(--text-muted, #71767b);
+                gap: 0.75rem;
+            }
+
+            .log-empty .icon { font-size: 2rem; }
+            .log-empty .hint { font-size: 0.8rem; }
+
+            .spinner {
+                width: 24px;
+                height: 24px;
+                border: 3px solid var(--border, #2f3336);
+                border-top-color: var(--accent, #1d9bf0);
+                border-radius: 50%;
+                animation: spin 0.8s linear infinite;
+            }
+
+            @keyframes spin { to { transform: rotate(360deg); } }
+
+            .log-table {
+                font-size: 0.8rem;
+            }
+
+            .log-header {
+                display: flex;
+                padding: 0.5rem 1rem;
+                background: var(--bg-elevated, #1e2128);
+                border-bottom: 1px solid var(--border, #2f3336);
+                font-weight: 600;
+                color: var(--text-muted, #71767b);
+                position: sticky;
+                top: 0;
+                z-index: 1;
+            }
+
+            .col-time { width: 100px; flex-shrink: 0; }
+            .col-level { width: 70px; flex-shrink: 0; }
+            .col-service { width: 120px; flex-shrink: 0; }
+            .col-message { flex: 1; overflow: hidden; }
+
+            .log-row {
+                border-bottom: 1px solid var(--border, #2f3336);
+                cursor: pointer;
+                transition: background 0.15s;
+            }
+
+            .log-row:hover {
+                background: var(--bg-elevated, #1e2128);
+            }
+
+            .log-row.expanded {
+                background: rgba(29, 155, 240, 0.05);
+            }
+
+            .log-main {
+                display: flex;
+                padding: 0.6rem 1rem;
+                align-items: center;
+            }
+
+            .col-message {
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                font-family: 'Monaco', 'Menlo', monospace;
+                font-size: 0.75rem;
+            }
+
+            .log-row.expanded .col-message {
+                white-space: normal;
+                word-break: break-word;
+            }
+
+            .level-badge {
+                display: inline-block;
+                padding: 0.15rem 0.4rem;
+                border-radius: 3px;
+                font-size: 0.65rem;
+                font-weight: 600;
+                text-transform: uppercase;
+            }
+
+            .level-debug { background: #3d5a80; color: white; }
+            .level-info { background: #1d9bf0; color: white; }
+            .level-warn, .level-warning { background: #ffd400; color: #1a1a1a; }
+            .level-error { background: #f4212e; color: white; }
+
+            .log-details {
+                padding: 1rem;
+                background: var(--bg-card, #16181c);
+                border-top: 1px solid var(--border, #2f3336);
+            }
+
+            .log-details-section {
+                margin-bottom: 1rem;
+            }
+
+            .log-details-section h4 {
+                font-size: 0.75rem;
+                color: var(--text-muted, #71767b);
+                margin-bottom: 0.5rem;
+                text-transform: uppercase;
+            }
+
+            .log-full-message {
+                font-family: 'Monaco', 'Menlo', monospace;
+                font-size: 0.8rem;
+                white-space: pre-wrap;
+                word-break: break-word;
+                background: var(--bg-elevated, #1e2128);
+                padding: 0.75rem;
+                border-radius: 6px;
+                max-height: 200px;
+                overflow-y: auto;
+            }
+
+            .log-details-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+                gap: 0.75rem;
+                margin-bottom: 1rem;
+            }
+
+            .detail-item {
+                display: flex;
+                flex-direction: column;
+                gap: 0.2rem;
+            }
+
+            .detail-label {
+                font-size: 0.7rem;
+                color: var(--text-muted, #71767b);
+                text-transform: uppercase;
+            }
+
+            .detail-value {
+                font-size: 0.8rem;
+            }
+
+            .detail-value.mono {
+                font-family: 'Monaco', 'Menlo', monospace;
+                font-size: 0.75rem;
+            }
+
+            .attrs-table {
+                width: 100%;
+                font-size: 0.8rem;
+                border-collapse: collapse;
+            }
+
+            .attrs-table tr {
+                border-bottom: 1px solid var(--border, #2f3336);
+            }
+
+            .attrs-table td {
+                padding: 0.4rem 0;
+            }
+
+            .attr-key {
+                color: var(--text-muted, #71767b);
+                width: 30%;
+            }
+
+            .attr-value {
+                font-family: monospace;
+                font-size: 0.75rem;
+                word-break: break-all;
+            }
+
+            .log-details-actions {
+                display: flex;
+                gap: 0.75rem;
+                padding-top: 0.75rem;
+                border-top: 1px solid var(--border, #2f3336);
+            }
+
+            .action-link, .action-btn {
+                font-size: 0.8rem;
+                color: var(--accent, #1d9bf0);
+                background: none;
+                border: none;
+                cursor: pointer;
+                text-decoration: none;
+            }
+
+            .action-link:hover, .action-btn:hover {
+                text-decoration: underline;
+            }
+
+            mark {
+                background: rgba(255, 212, 0, 0.3);
+                color: inherit;
+                padding: 0 2px;
+                border-radius: 2px;
+            }
+        `;
+    }
+}
+
+customElements.define('log-explorer', LogExplorer);
+
+// Export for module systems
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = LogExplorer;
+}
+
+/**
+ * Log Viewer Web Component
+ *
+ * Usage:
+ *   <dw-log-viewer></dw-log-viewer>
+ *   <dw-log-viewer service="api-server" level="error"></dw-log-viewer>
+ *
+ * Attributes:
+ *   - service: Filter by service name
+ *   - level: Filter by log level (debug, info, warn, error, fatal)
+ *   - limit: Max number of logs to display (default: 100)
+ */
+class LogViewer extends HTMLElement {
+    static get observedAttributes() {
+        return ['service', 'level', 'limit'];
+    }
+
+    constructor() {
+        super();
+        this.attachShadow({ mode: 'open' });
+        this.logs = [];
+        this.filters = {
+            service: '',
+            level: '',
+            search: ''
+        };
+        this._unsubscribe = null;
+        this.maxLogs = 100;
+        this.autoScroll = true;
+    }
+
+    connectedCallback() {
+        this.maxLogs = parseInt(this.getAttribute('limit')) || 100;
+        this.filters.service = this.getAttribute('service') || '';
+        this.filters.level = this.getAttribute('level') || '';
+        this.render();
+        this.setupWebSocket();
+        this.fetchLogs();
+    }
+
+    disconnectedCallback() {
+        if (this._unsubscribe) {
+            this._unsubscribe();
+            this._unsubscribe = null;
+        }
+    }
+
+    attributeChangedCallback(name, oldValue, newValue) {
+        if (name === 'service') this.filters.service = newValue || '';
+        if (name === 'level') this.filters.level = newValue || '';
+        if (name === 'limit') this.maxLogs = parseInt(newValue) || 100;
+        this.renderLogs();
+    }
+
+    render() {
+        this.shadowRoot.innerHTML = `
+            <style>
+                :host {
+                    display: flex;
+                    flex-direction: column;
+                    height: 100%;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    background: #0f1419;
+                    color: #e7e9ea;
+                }
+                .controls {
+                    display: flex;
+                    gap: 0.5rem;
+                    padding: 0.5rem 0.8rem;
+                    border-bottom: 1px solid #2f3336;
+                    flex-wrap: wrap;
+                    align-items: center;
+                }
+                .controls input,
+                .controls select {
+                    padding: 0.3rem 0.5rem;
+                    background: #2f3336;
+                    border: 1px solid #3f4346;
+                    border-radius: 4px;
+                    color: #e7e9ea;
+                    font-size: 0.7rem;
+                }
+                .controls input { flex: 1; min-width: 150px; }
+                .controls select { min-width: 80px; }
+                .controls input:focus,
+                .controls select:focus {
+                    outline: none;
+                    border-color: #1d9bf0;
+                }
+                .filter-pills {
+                    display: flex;
+                    gap: 0.3rem;
+                    flex-wrap: wrap;
+                }
+                .filter-pill {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 0.3rem;
+                    padding: 0.2rem 0.5rem;
+                    background: #2f3336;
+                    border-radius: 12px;
+                    font-size: 0.7rem;
+                }
+                .filter-pill .remove {
+                    cursor: pointer;
+                    color: #71767b;
+                    font-weight: bold;
+                }
+                .filter-pill .remove:hover { color: #f4212e; }
+                .filter-pill.level-error { background: rgba(244, 33, 46, 0.2); color: #f4212e; }
+                .filter-pill.level-warn { background: rgba(255, 212, 0, 0.2); color: #ffd400; }
+                .log-container {
+                    flex: 1;
+                    overflow-y: auto;
+                    font-family: 'SF Mono', Consolas, monospace;
+                    font-size: 0.7rem;
+                }
+                .log-entry {
+                    padding: 0.4rem 0.8rem;
+                    border-bottom: 1px solid #1d1f23;
+                    display: flex;
+                    gap: 0.5rem;
+                }
+                .log-entry:hover { background: #1d1f23; }
+                .log-time { color: #71767b; white-space: nowrap; flex-shrink: 0; }
+                .log-level {
+                    padding: 0.1rem 0.3rem;
+                    border-radius: 3px;
+                    font-size: 0.6rem;
+                    font-weight: 600;
+                    text-transform: uppercase;
+                    flex-shrink: 0;
+                }
+                .log-level.debug { background: #2f3336; color: #71767b; }
+                .log-level.info { background: rgba(29, 155, 240, 0.2); color: #1d9bf0; }
+                .log-level.warn { background: rgba(255, 212, 0, 0.2); color: #ffd400; }
+                .log-level.error { background: rgba(244, 33, 46, 0.2); color: #f4212e; }
+                .log-level.fatal { background: rgba(122, 25, 25, 1); color: #ff6b6b; }
+                .log-service { color: #00ba7c; flex-shrink: 0; }
+                .log-message { color: #e7e9ea; word-break: break-all; flex: 1; }
+                .log-message .highlight {
+                    background: rgba(255, 212, 0, 0.3);
+                    padding: 0 2px;
+                    border-radius: 2px;
+                }
+                .empty {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    height: 100%;
+                    color: #71767b;
+                    font-size: 0.85rem;
+                }
+                .status-bar {
+                    display: flex;
+                    justify-content: space-between;
+                    padding: 0.3rem 0.8rem;
+                    border-top: 1px solid #2f3336;
+                    font-size: 0.65rem;
+                    color: #71767b;
+                }
+                .auto-scroll-toggle {
+                    cursor: pointer;
+                    color: #1d9bf0;
+                }
+            </style>
+            <div class="controls">
+                <input type="text" id="search" placeholder="Search logs...">
+                <select id="level-filter">
+                    <option value="">All Levels</option>
+                    <option value="debug">Debug</option>
+                    <option value="info">Info</option>
+                    <option value="warn">Warn</option>
+                    <option value="error">Error</option>
+                    <option value="fatal">Fatal</option>
+                </select>
+                <select id="service-filter">
+                    <option value="">All Services</option>
+                </select>
+                <div class="filter-pills" id="filter-pills"></div>
+            </div>
+            <div class="log-container" id="log-container"></div>
+            <div class="status-bar">
+                <span id="log-count">0 logs</span>
+                <span class="auto-scroll-toggle" id="auto-scroll-toggle">Auto-scroll: ON</span>
+            </div>
+        `;
+
+        this.setupEventListeners();
+    }
+
+    setupEventListeners() {
+        const search = this.shadowRoot.getElementById('search');
+        const levelFilter = this.shadowRoot.getElementById('level-filter');
+        const serviceFilter = this.shadowRoot.getElementById('service-filter');
+        const autoScrollToggle = this.shadowRoot.getElementById('auto-scroll-toggle');
+
+        search.addEventListener('input', (e) => {
+            this.filters.search = e.target.value;
+            this.renderLogs();
+        });
+
+        levelFilter.addEventListener('change', (e) => {
+            this.filters.level = e.target.value;
+            this.renderFilterPills();
+            this.renderLogs();
+        });
+
+        serviceFilter.addEventListener('change', (e) => {
+            this.filters.service = e.target.value;
+            this.renderFilterPills();
+            this.renderLogs();
+        });
+
+        autoScrollToggle.addEventListener('click', () => {
+            this.autoScroll = !this.autoScroll;
+            autoScrollToggle.textContent = `Auto-scroll: ${this.autoScroll ? 'ON' : 'OFF'}`;
+        });
+
+        const container = this.shadowRoot.getElementById('log-container');
+        container.addEventListener('scroll', () => {
+            const isAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 50;
+            if (!isAtBottom) {
+                this.autoScroll = false;
+                autoScrollToggle.textContent = 'Auto-scroll: OFF';
+            }
+        });
+    }
+
+    setupWebSocket() {
+        if (window.dwSocket) {
+            this._unsubscribe = window.dwSocket.subscribe('logs', (msg) => {
+                if (msg.type === 'entry' && msg.payload) {
+                    this.addLog(msg.payload);
+                }
+            });
+        }
+    }
+
+    async fetchLogs() {
+        try {
+            const params = new URLSearchParams({ limit: this.maxLogs.toString() });
+            if (this.filters.service) params.set('service', this.filters.service);
+            if (this.filters.level) params.set('level', this.filters.level);
+
+            const response = await fetch(`/api/logs?${params}`);
+            if (response.ok) {
+                const data = await response.json();
+                this.logs = data.entries || [];
+                this.updateServiceFilter();
+                this.renderLogs();
+            }
+        } catch (e) {
+            console.error('[LogViewer] Failed to fetch logs:', e);
+        }
+    }
+
+    addLog(log) {
+        this.logs.unshift(log);
+        if (this.logs.length > this.maxLogs) {
+            this.logs.pop();
+        }
+        this.renderLogs();
+    }
+
+    updateServiceFilter() {
+        const services = [...new Set(this.logs.map(l => l.service).filter(Boolean))];
+        const select = this.shadowRoot.getElementById('service-filter');
+        const currentValue = select.value;
+
+        select.innerHTML = '<option value="">All Services</option>' +
+            services.map(s => `<option value="${s}">${s}</option>`).join('');
+
+        select.value = currentValue;
+    }
+
+    renderFilterPills() {
+        const pills = this.shadowRoot.getElementById('filter-pills');
+        let html = '';
+
+        if (this.filters.level) {
+            html += `<span class="filter-pill level-${this.filters.level}">
+                ${this.filters.level}
+                <span class="remove" data-clear="level">&times;</span>
+            </span>`;
+        }
+
+        if (this.filters.service) {
+            html += `<span class="filter-pill">
+                ${this.filters.service}
+                <span class="remove" data-clear="service">&times;</span>
+            </span>`;
+        }
+
+        pills.innerHTML = html;
+
+        pills.querySelectorAll('.remove').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const key = e.target.dataset.clear;
+                this.filters[key] = '';
+                this.shadowRoot.getElementById(key + '-filter').value = '';
+                this.renderFilterPills();
+                this.renderLogs();
+            });
+        });
+    }
+
+    renderLogs() {
+        const container = this.shadowRoot.getElementById('log-container');
+        const countEl = this.shadowRoot.getElementById('log-count');
+
+        // Filter logs
+        let filtered = this.logs;
+        if (this.filters.level) {
+            filtered = filtered.filter(l => l.level === this.filters.level);
+        }
+        if (this.filters.service) {
+            filtered = filtered.filter(l => l.service === this.filters.service);
+        }
+        if (this.filters.search) {
+            const search = this.filters.search.toLowerCase();
+            filtered = filtered.filter(l =>
+                (l.message || '').toLowerCase().includes(search) ||
+                (l.service || '').toLowerCase().includes(search)
+            );
+        }
+
+        if (filtered.length === 0) {
+            container.innerHTML = '<div class="empty">No logs matching filters</div>';
+            countEl.textContent = '0 logs';
+            return;
+        }
+
+        container.innerHTML = filtered.map(log => `
+            <div class="log-entry">
+                <span class="log-time">${this.formatTime(log.timestamp)}</span>
+                <span class="log-level ${log.level || 'info'}">${log.level || 'info'}</span>
+                <span class="log-service">${log.service || ''}</span>
+                <span class="log-message">${this.highlightSearch(this.escapeHtml(log.message || ''))}</span>
+            </div>
+        `).join('');
+
+        countEl.textContent = `${filtered.length} logs`;
+
+        // Auto-scroll to bottom
+        if (this.autoScroll) {
+            container.scrollTop = container.scrollHeight;
+        }
+    }
+
+    formatTime(timestamp) {
+        if (!timestamp) return '';
+        const date = new Date(timestamp);
+        return date.toLocaleTimeString('en-US', {
+            hour12: false,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        }) + '.' + String(date.getMilliseconds()).padStart(3, '0');
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    highlightSearch(text) {
+        if (!this.filters.search) return text;
+        const regex = new RegExp(`(${this.escapeRegex(this.filters.search)})`, 'gi');
+        return text.replace(regex, '<span class="highlight">$1</span>');
+    }
+
+    escapeRegex(string) {
+        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    // Public API
+    refresh() {
+        this.fetchLogs();
+    }
+
+    setFilter(key, value) {
+        this.filters[key] = value;
+        this.renderFilterPills();
+        this.renderLogs();
+    }
+
+    clearFilters() {
+        this.filters = { service: '', level: '', search: '' };
+        this.shadowRoot.getElementById('search').value = '';
+        this.shadowRoot.getElementById('level-filter').value = '';
+        this.shadowRoot.getElementById('service-filter').value = '';
+        this.renderFilterPills();
+        this.renderLogs();
+    }
+}
+
+customElements.define('dw-log-viewer', LogViewer);
+
+/**
+ * Metric Sparkline Widget
+ * Compact inline chart for displaying metric trends
+ *
+ * Optimizations:
+ * - CSS parsed once via adoptedStyleSheets (or cached <style> fallback)
+ * - Selective DOM updates instead of full innerHTML replacement
+ */
+
+// Static stylesheet - parsed once, shared across all instances
+const sparklineStyles = new CSSStyleSheet();
+sparklineStyles.replaceSync(`
+    :host {
+        display: inline-block;
+        min-width: 100px;
+    }
+    .sparkline-container {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    .sparkline-label {
+        font-size: 0.7rem;
+        color: var(--text-muted, #71767b);
+        white-space: nowrap;
+        max-width: 80px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .sparkline-chart { flex-shrink: 0; }
+    .sparkline-chart svg { display: block; }
+    .sparkline-value {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+    }
+    .value {
+        font-size: 0.85rem;
+        font-weight: 600;
+    }
+    .trend { font-size: 0.75rem; }
+    .trend-up { color: var(--success, #00ba7c); }
+    .trend-down { color: var(--error, #f4212e); }
+    .trend-flat { color: var(--text-muted, #71767b); }
+    .loading-shimmer {
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg,
+            var(--bg-elevated, #1e2128) 25%,
+            var(--bg-card, #16181c) 50%,
+            var(--bg-elevated, #1e2128) 75%);
+        background-size: 200% 100%;
+        animation: shimmer 1.5s infinite;
+        border-radius: 4px;
+    }
+    @keyframes shimmer {
+        0% { background-position: 200% 0; }
+        100% { background-position: -200% 0; }
+    }
+    .no-data {
+        font-size: 0.7rem;
+        color: var(--text-muted, #71767b);
+        width: 100%;
+        text-align: center;
+    }
+`);
+
+class MetricSparkline extends HTMLElement {
+    static get observedAttributes() {
+        return ['metric', 'period', 'color', 'height', 'show-value', 'show-label'];
+    }
+
+    constructor() {
+        super();
+        this.data = [];
+        this.loading = true;
+        this._initialized = false;
+
+        // Create shadow root with shared stylesheet
+        this.attachShadow({ mode: 'open' });
+        this.shadowRoot.adoptedStyleSheets = [sparklineStyles];
+    }
+
+    connectedCallback() {
+        this._initDOM();
+        this.loadData();
+    }
+
+    attributeChangedCallback() {
+        if (this.isConnected) {
+            this.loadData();
+        }
+    }
+
+    get metric() { return this.getAttribute('metric') || ''; }
+    get period() { return this.getAttribute('period') || '1h'; }
+    get color() { return this.getAttribute('color') || 'var(--accent, #1d9bf0)'; }
+    get height() { return parseInt(this.getAttribute('height') || '40'); }
+    get showValue() { return this.hasAttribute('show-value'); }
+    get showLabel() { return this.hasAttribute('show-label'); }
+
+    // Create DOM structure once
+    _initDOM() {
+        if (this._initialized) return;
+        this._initialized = true;
+
+        const container = document.createElement('div');
+        container.className = 'sparkline-container';
+        container.style.height = `${this.height}px`;
+
+        // Label (conditionally shown)
+        this._label = document.createElement('div');
+        this._label.className = 'sparkline-label';
+        this._label.style.display = this.showLabel ? '' : 'none';
+        container.appendChild(this._label);
+
+        // Chart container
+        this._chart = document.createElement('div');
+        this._chart.className = 'sparkline-chart';
+        container.appendChild(this._chart);
+
+        // Value display (conditionally shown)
+        this._valueContainer = document.createElement('div');
+        this._valueContainer.className = 'sparkline-value';
+        this._valueContainer.style.display = this.showValue ? '' : 'none';
+        this._valueContainer.innerHTML = '<span class="value"></span><span class="trend"></span>';
+        container.appendChild(this._valueContainer);
+
+        this.shadowRoot.appendChild(container);
+    }
+
+    async loadData() {
+        if (!this.metric) {
+            this.loading = false;
+            this._renderState();
+            return;
+        }
+
+        this.loading = true;
+        this._renderState();
+
+        try {
+            const resp = await fetch(`/api/metrics/query?metric=${encodeURIComponent(this.metric)}&period=${this.period}&points=50`);
+            if (resp.ok) {
+                const result = await resp.json();
+                this.data = result.values || result.data || [];
+            }
+        } catch (e) {
+            console.error('Failed to load sparkline data:', e);
+        } finally {
+            this.loading = false;
+            this._renderState();
+        }
+    }
+
+    // Update only what changed
+    _renderState() {
+        if (!this._initialized) return;
+
+        if (this.showLabel) {
+            this._label.textContent = this.metric;
+            this._label.style.display = '';
+        } else {
+            this._label.style.display = 'none';
+        }
+
+        if (this.loading) {
+            this._chart.innerHTML = `<div class="loading-shimmer" style="width:100px;height:${this.height}px"></div>`;
+            this._valueContainer.style.display = 'none';
+            return;
+        }
+
+        if (this.data.length === 0) {
+            this._chart.innerHTML = '<div class="no-data">No data</div>';
+            this._valueContainer.style.display = 'none';
+            return;
+        }
+
+        // Render chart
+        const width = this.clientWidth || 150;
+        const height = this.height;
+        const values = this.data.map(d => typeof d === 'number' ? d : (d.value || d.v || 0));
+        const currentValue = values[values.length - 1];
+        const minValue = Math.min(...values);
+        const maxValue = Math.max(...values);
+        const range = maxValue - minValue || 1;
+
+        // Calculate trend
+        const mid = Math.floor(values.length / 2);
+        const firstAvg = values.slice(0, mid).reduce((a, b) => a + b, 0) / mid;
+        const secondAvg = values.slice(mid).reduce((a, b) => a + b, 0) / (values.length - mid);
+        const trend = secondAvg > firstAvg * 1.01 ? 'up' : secondAvg < firstAvg * 0.99 ? 'down' : 'flat';
+
+        const gradientId = `sg-${this.metric.replace(/[^a-z0-9]/gi, '')}`;
+        const path = this._generatePath(values, width - 4, height - 8, minValue, range);
+        const areaPath = this._generateAreaPath(values, width - 4, height - 8, minValue, range);
+        const dotY = height - 4 - ((currentValue - minValue) / range) * (height - 8);
+
+        this._chart.innerHTML = `
+            <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+                <defs>
+                    <linearGradient id="${gradientId}" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stop-color="${this.color}" stop-opacity="0.3"/>
+                        <stop offset="100%" stop-color="${this.color}" stop-opacity="0"/>
+                    </linearGradient>
+                </defs>
+                <path d="${areaPath}" fill="url(#${gradientId})"/>
+                <path d="${path}" fill="none" stroke="${this.color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <circle cx="${width - 4}" cy="${dotY}" r="2.5" fill="${this.color}"/>
+            </svg>
+        `;
+
+        // Update value display
+        if (this.showValue) {
+            this._valueContainer.style.display = '';
+            this._valueContainer.querySelector('.value').textContent = this._formatValue(currentValue);
+            const trendEl = this._valueContainer.querySelector('.trend');
+            trendEl.className = `trend trend-${trend}`;
+            trendEl.textContent = trend === 'up' ? '↑' : trend === 'down' ? '↓' : '→';
+        } else {
+            this._valueContainer.style.display = 'none';
+        }
+    }
+
+    _generatePath(values, width, height, min, range) {
+        if (values.length < 2) return '';
+        return 'M ' + values.map((v, i) => {
+            const x = 2 + (i / (values.length - 1)) * width;
+            const y = 4 + height - ((v - min) / range) * height;
+            return `${x},${y}`;
+        }).join(' L ');
+    }
+
+    _generateAreaPath(values, width, height, min, range) {
+        if (values.length < 2) return '';
+        const points = values.map((v, i) => {
+            const x = 2 + (i / (values.length - 1)) * width;
+            const y = 4 + height - ((v - min) / range) * height;
+            return `${x},${y}`;
+        });
+        return `M 2,${height + 4} L ${points.join(' L ')} L ${2 + width},${height + 4} Z`;
+    }
+
+    _formatValue(value) {
+        if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`;
+        if (value >= 1000) return `${(value / 1000).toFixed(1)}K`;
+        if (value % 1 !== 0) return value.toFixed(2);
+        return value.toString();
+    }
+}
+
+customElements.define('metric-sparkline', MetricSparkline);
+
+/**
+ * Metrics Card Web Component
+ *
+ * Usage:
+ *   <dw-metrics title="CPU" value="45" unit="%" type="cpu"></dw-metrics>
+ *   <dw-metrics title="Memory" value="8.2" unit="GB" max="16" type="mem"></dw-metrics>
+ *   <dw-metrics title="Requests" value="1.2K" unit="/s"></dw-metrics>
+ *
+ * Attributes:
+ *   - title: Label for the metric
+ *   - value: Current value
+ *   - unit: Unit string (%, GB, /s, etc.)
+ *   - max: Maximum value (for progress bar)
+ *   - type: cpu|mem|disk|net (determines bar color)
+ *   - detail: Additional detail text
+ */
+class MetricsCard extends HTMLElement {
+    static get observedAttributes() {
+        return ['title', 'value', 'unit', 'max', 'type', 'detail'];
+    }
+
+    constructor() {
+        super();
+        this.attachShadow({ mode: 'open' });
+        this._unsubscribe = null;
+    }
+
+    connectedCallback() {
+        this.render();
+        this.setupWebSocket();
+    }
+
+    disconnectedCallback() {
+        if (this._unsubscribe) {
+            this._unsubscribe();
+            this._unsubscribe = null;
+        }
+    }
+
+    attributeChangedCallback() {
+        this.render();
+    }
+
+    setupWebSocket() {
+        // Subscribe to system stats if we have a metric-id
+        const metricId = this.getAttribute('metric-id');
+        if (metricId && window.dwSocket) {
+            this._unsubscribe = window.dwSocket.subscribe('system', (msg) => {
+                if (msg.payload && msg.payload[metricId] !== undefined) {
+                    this.setValue(msg.payload[metricId]);
+                }
+            });
+        }
+    }
+
+    render() {
+        const title = this.getAttribute('title') || 'Metric';
+        const value = this.getAttribute('value') || '0';
+        const unit = this.getAttribute('unit') || '';
+        const max = parseFloat(this.getAttribute('max')) || 100;
+        const type = this.getAttribute('type') || '';
+        const detail = this.getAttribute('detail') || '';
+
+        const numValue = parseFloat(value) || 0;
+        const percentage = max > 0 ? Math.min((numValue / max) * 100, 100) : 0;
+
+        // Color gradients based on type
+        const gradients = {
+            cpu: 'linear-gradient(90deg, #1d9bf0, #1d4ed8)',
+            mem: 'linear-gradient(90deg, #00ba7c, #059669)',
+            disk: 'linear-gradient(90deg, #f4212e, #dc2626)',
+            net: 'linear-gradient(90deg, #7c3aed, #6d28d9)',
+            default: 'linear-gradient(90deg, #1d9bf0, #1d4ed8)'
+        };
+        const gradient = gradients[type] || gradients.default;
+
+        this.shadowRoot.innerHTML = `
+            <style>
+                :host {
+                    display: block;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                }
+                .card {
+                    padding: 0.5rem;
+                }
+                .title {
+                    font-size: 0.65rem;
+                    color: #71767b;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                    margin-bottom: 0.25rem;
+                }
+                .value-row {
+                    display: flex;
+                    align-items: baseline;
+                    gap: 0.25rem;
+                }
+                .value {
+                    font-size: 2rem;
+                    font-weight: 700;
+                    color: #e7e9ea;
+                    line-height: 1;
+                }
+                .unit {
+                    font-size: 0.8rem;
+                    color: #71767b;
+                }
+                .bar {
+                    height: 6px;
+                    background: #2f3336;
+                    border-radius: 3px;
+                    margin-top: 0.5rem;
+                    overflow: hidden;
+                }
+                .bar-fill {
+                    height: 100%;
+                    border-radius: 3px;
+                    background: ${gradient};
+                    transition: width 0.3s ease;
+                    width: ${percentage}%;
+                }
+                .detail {
+                    font-size: 0.7rem;
+                    color: #71767b;
+                    margin-top: 0.4rem;
+                    display: flex;
+                    justify-content: space-between;
+                }
+            </style>
+            <div class="card">
+                <div class="title">${title}</div>
+                <div class="value-row">
+                    <span class="value">${value}</span>
+                    <span class="unit">${unit}</span>
+                </div>
+                ${max ? `<div class="bar"><div class="bar-fill"></div></div>` : ''}
+                ${detail ? `<div class="detail">${detail}</div>` : ''}
+            </div>
+        `;
+    }
+
+    // Public API
+    setValue(value) {
+        this.setAttribute('value', value);
+    }
+
+    getValue() {
+        return parseFloat(this.getAttribute('value')) || 0;
+    }
+
+    setMax(max) {
+        this.setAttribute('max', max);
+    }
+
+    setDetail(detail) {
+        this.setAttribute('detail', detail);
+    }
+}
+
+customElements.define('dw-metrics', MetricsCard);
+
+/**
+ * Network Topology Component
+ * Real-time network connection map using D3 force-directed graph
+ */
+class NetworkTopology extends HTMLElement {
+    constructor() {
+        super();
+        this.data = null;
+        this.simulation = null;
+        this.svg = null;
+        this.resizeObserver = null;
+    }
+
+    connectedCallback() {
+        this.render();
+        this.loadData();
+
+        this.resizeObserver = new ResizeObserver(() => this.updateLayout());
+        this.resizeObserver.observe(this);
+
+        // Auto-refresh
+        this.refreshInterval = setInterval(() => this.loadData(), 30000);
+    }
+
+    disconnectedCallback() {
+        if (this.resizeObserver) this.resizeObserver.disconnect();
+        if (this.refreshInterval) clearInterval(this.refreshInterval);
+        if (this.simulation) this.simulation.stop();
+    }
+
+    static get observedAttributes() {
+        return ['namespace', 'show-external'];
+    }
+
+    get namespace() { return this.getAttribute('namespace') || ''; }
+    get showExternal() { return this.getAttribute('show-external') !== 'false'; }
+
+    render() {
+        this.innerHTML = `
+            <style>
+                .topology-container {
+                    display: flex;
+                    flex-direction: column;
+                    height: 100%;
+                    background: var(--bg-card, #16181c);
+                    border-radius: 8px;
+                    overflow: hidden;
+                }
+                .topology-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 0.75rem 1rem;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border-bottom: 1px solid var(--border-color, #2f3336);
+                }
+                .topology-title {
+                    font-weight: 600;
+                    font-size: 0.9rem;
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                }
+                .topology-controls {
+                    display: flex;
+                    gap: 0.5rem;
+                }
+                .topology-controls button {
+                    background: var(--bg-primary, #0f1419);
+                    border: 1px solid var(--border-color, #2f3336);
+                    border-radius: 4px;
+                    padding: 0.4rem 0.75rem;
+                    color: var(--text-primary, #e7e9ea);
+                    cursor: pointer;
+                    font-size: 0.8rem;
+                }
+                .topology-controls button:hover {
+                    border-color: var(--color-info, #1d9bf0);
+                }
+                .topology-body {
+                    flex: 1;
+                    position: relative;
+                    overflow: hidden;
+                }
+                .topology-svg {
+                    width: 100%;
+                    height: 100%;
+                }
+                .topology-node {
+                    cursor: pointer;
+                }
+                .topology-node circle {
+                    stroke: var(--border-color, #2f3336);
+                    stroke-width: 2px;
+                    transition: all 0.15s ease;
+                }
+                .topology-node:hover circle {
+                    stroke: var(--color-info, #1d9bf0);
+                    stroke-width: 3px;
+                }
+                .topology-node text {
+                    fill: var(--text-primary, #e7e9ea);
+                    font-size: 11px;
+                    text-anchor: middle;
+                    pointer-events: none;
+                }
+                .topology-link {
+                    stroke: var(--border-color, #2f3336);
+                    stroke-opacity: 0.6;
+                    fill: none;
+                }
+                .topology-link.active {
+                    stroke: var(--color-success, #00ba7c);
+                    stroke-opacity: 1;
+                }
+                .topology-link.error {
+                    stroke: var(--color-error, #f4212e);
+                    stroke-opacity: 1;
+                }
+                .topology-legend {
+                    position: absolute;
+                    bottom: 1rem;
+                    left: 1rem;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 0.5rem;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border: 1px solid var(--border-color, #2f3336);
+                    border-radius: 6px;
+                    padding: 0.75rem;
+                    font-size: 0.75rem;
+                }
+                .topology-legend-item {
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                }
+                .topology-legend-dot {
+                    width: 12px;
+                    height: 12px;
+                    border-radius: 50%;
+                }
+                .topology-tooltip {
+                    position: fixed;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border: 1px solid var(--border-color, #2f3336);
+                    border-radius: 6px;
+                    padding: 0.75rem;
+                    font-size: 0.8rem;
+                    pointer-events: none;
+                    z-index: 1000;
+                    display: none;
+                    max-width: 300px;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                }
+                .topology-tooltip-title {
+                    font-weight: 600;
+                    margin-bottom: 0.5rem;
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                }
+                .topology-tooltip-row {
+                    display: flex;
+                    justify-content: space-between;
+                    gap: 1rem;
+                    margin-top: 0.25rem;
+                }
+                .topology-tooltip-label {
+                    color: var(--text-muted, #71767b);
+                }
+                .topology-stats {
+                    display: flex;
+                    gap: 1.5rem;
+                    padding: 0.5rem 1rem;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border-top: 1px solid var(--border-color, #2f3336);
+                    font-size: 0.8rem;
+                }
+                .topology-stat {
+                    display: flex;
+                    gap: 0.5rem;
+                }
+                .topology-stat-label {
+                    color: var(--text-muted, #71767b);
+                }
+                .topology-stat-value {
+                    font-weight: 600;
+                }
+            </style>
+            <div class="topology-container">
+                <div class="topology-header">
+                    <div class="topology-title">
+                        <span>&#127760;</span>
+                        <span>Network Topology</span>
+                    </div>
+                    <div class="topology-controls">
+                        <button id="zoom-in">+</button>
+                        <button id="zoom-out">-</button>
+                        <button id="reset-view">Reset</button>
+                        <button id="refresh">Refresh</button>
+                    </div>
+                </div>
+                <div class="topology-body" id="body">
+                    <svg class="topology-svg" id="svg"></svg>
+                    <div class="topology-legend">
+                        <div class="topology-legend-item">
+                            <div class="topology-legend-dot" style="background: #3b82f6;"></div>
+                            <span>Service</span>
+                        </div>
+                        <div class="topology-legend-item">
+                            <div class="topology-legend-dot" style="background: #22c55e;"></div>
+                            <span>Database</span>
+                        </div>
+                        <div class="topology-legend-item">
+                            <div class="topology-legend-dot" style="background: #a855f7;"></div>
+                            <span>Cache</span>
+                        </div>
+                        <div class="topology-legend-item">
+                            <div class="topology-legend-dot" style="background: #71717a;"></div>
+                            <span>External</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="topology-stats">
+                    <div class="topology-stat">
+                        <span class="topology-stat-label">Nodes:</span>
+                        <span class="topology-stat-value" id="stat-nodes">0</span>
+                    </div>
+                    <div class="topology-stat">
+                        <span class="topology-stat-label">Connections:</span>
+                        <span class="topology-stat-value" id="stat-connections">0</span>
+                    </div>
+                    <div class="topology-stat">
+                        <span class="topology-stat-label">Requests/s:</span>
+                        <span class="topology-stat-value" id="stat-rps">0</span>
+                    </div>
+                </div>
+                <div class="topology-tooltip" id="tooltip"></div>
+            </div>
+        `;
+
+        this.setupEventListeners();
+    }
+
+    setupEventListeners() {
+        this.querySelector('#zoom-in')?.addEventListener('click', () => this.zoom(1.2));
+        this.querySelector('#zoom-out')?.addEventListener('click', () => this.zoom(0.8));
+        this.querySelector('#reset-view')?.addEventListener('click', () => this.resetView());
+        this.querySelector('#refresh')?.addEventListener('click', () => this.loadData());
+    }
+
+    async loadData() {
+        try {
+            const params = new URLSearchParams();
+            if (this.namespace) params.append('namespace', this.namespace);
+
+            const resp = await fetch(`/api/network/topology?${params}`);
+
+            if (!resp.ok) {
+                this.data = this.generateDemoData();
+            } else {
+                this.data = await resp.json();
+            }
+
+            this.renderTopology();
+            this.updateStats();
+        } catch (e) {
+            console.error('Failed to load topology:', e);
+            this.data = this.generateDemoData();
+            this.renderTopology();
+            this.updateStats();
+        }
+    }
+
+    generateDemoData() {
+        const nodes = [
+            { id: 'api-gateway', name: 'api-gateway', type: 'service', rps: 1200, latency: 45, errors: 0.1 },
+            { id: 'auth-service', name: 'auth-service', type: 'service', rps: 800, latency: 25, errors: 0 },
+            { id: 'user-service', name: 'user-service', type: 'service', rps: 600, latency: 35, errors: 0.2 },
+            { id: 'order-service', name: 'order-service', type: 'service', rps: 400, latency: 80, errors: 0.5 },
+            { id: 'payment-service', name: 'payment-service', type: 'service', rps: 200, latency: 120, errors: 0.1 },
+            { id: 'notification-svc', name: 'notification-svc', type: 'service', rps: 150, latency: 15, errors: 0 },
+            { id: 'postgres-main', name: 'postgres-main', type: 'database', rps: 2000, latency: 5, errors: 0 },
+            { id: 'postgres-replica', name: 'postgres-replica', type: 'database', rps: 1500, latency: 3, errors: 0 },
+            { id: 'redis-cache', name: 'redis-cache', type: 'cache', rps: 5000, latency: 1, errors: 0 },
+            { id: 'kafka', name: 'kafka', type: 'queue', rps: 3000, latency: 2, errors: 0 },
+            { id: 'stripe-api', name: 'stripe-api', type: 'external', rps: 100, latency: 200, errors: 0.5 },
+            { id: 'sendgrid', name: 'sendgrid', type: 'external', rps: 50, latency: 150, errors: 0.2 },
+        ];
+
+        const links = [
+            { source: 'api-gateway', target: 'auth-service', rps: 800, latency: 10 },
+            { source: 'api-gateway', target: 'user-service', rps: 400, latency: 15 },
+            { source: 'api-gateway', target: 'order-service', rps: 300, latency: 20 },
+            { source: 'auth-service', target: 'redis-cache', rps: 2000, latency: 1 },
+            { source: 'auth-service', target: 'postgres-main', rps: 200, latency: 5 },
+            { source: 'user-service', target: 'postgres-main', rps: 500, latency: 5 },
+            { source: 'user-service', target: 'redis-cache', rps: 1000, latency: 1 },
+            { source: 'order-service', target: 'postgres-main', rps: 400, latency: 8 },
+            { source: 'order-service', target: 'payment-service', rps: 150, latency: 50 },
+            { source: 'order-service', target: 'kafka', rps: 300, latency: 2 },
+            { source: 'payment-service', target: 'stripe-api', rps: 100, latency: 200 },
+            { source: 'payment-service', target: 'postgres-main', rps: 100, latency: 5 },
+            { source: 'notification-svc', target: 'kafka', rps: 200, latency: 2 },
+            { source: 'notification-svc', target: 'sendgrid', rps: 50, latency: 150 },
+            { source: 'postgres-main', target: 'postgres-replica', rps: 500, latency: 1 },
+        ];
+
+        return { nodes, links };
+    }
+
+    async renderTopology() {
+        if (!this.data) return;
+
+        // Ensure D3 is loaded
+        if (!window.d3) {
+            if (window.LibLoader) {
+                await window.LibLoader.load('d3');
+            } else {
+                console.error('D3 not available');
+                return;
+            }
+        }
+
+        const body = this.querySelector('#body');
+        const svgEl = this.querySelector('#svg');
+        if (!body || !svgEl) return;
+
+        const width = body.clientWidth;
+        const height = body.clientHeight;
+
+        // Clear previous
+        d3.select(svgEl).selectAll('*').remove();
+
+        const svg = d3.select(svgEl)
+            .attr('viewBox', [0, 0, width, height]);
+
+        // Create zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.3, 3])
+            .on('zoom', (event) => {
+                g.attr('transform', event.transform);
+            });
+
+        svg.call(zoom);
+
+        const g = svg.append('g');
+
+        // Arrow markers
+        svg.append('defs').selectAll('marker')
+            .data(['arrow'])
+            .join('marker')
+            .attr('id', 'arrow')
+            .attr('viewBox', '0 -5 10 10')
+            .attr('refX', 25)
+            .attr('refY', 0)
+            .attr('markerWidth', 6)
+            .attr('markerHeight', 6)
+            .attr('orient', 'auto')
+            .append('path')
+            .attr('fill', '#71767b')
+            .attr('d', 'M0,-5L10,0L0,5');
+
+        // Create simulation
+        const simulation = d3.forceSimulation(this.data.nodes)
+            .force('link', d3.forceLink(this.data.links).id(d => d.id).distance(120))
+            .force('charge', d3.forceManyBody().strength(-400))
+            .force('center', d3.forceCenter(width / 2, height / 2))
+            .force('collision', d3.forceCollide().radius(50));
+
+        this.simulation = simulation;
+
+        // Draw links
+        const link = g.append('g')
+            .selectAll('line')
+            .data(this.data.links)
+            .join('line')
+            .attr('class', 'topology-link')
+            .attr('stroke-width', d => Math.max(1, Math.log(d.rps / 100)))
+            .attr('marker-end', 'url(#arrow)');
+
+        // Draw nodes
+        const node = g.append('g')
+            .selectAll('g')
+            .data(this.data.nodes)
+            .join('g')
+            .attr('class', 'topology-node')
+            .call(d3.drag()
+                .on('start', (event, d) => {
+                    if (!event.active) simulation.alphaTarget(0.3).restart();
+                    d.fx = d.x;
+                    d.fy = d.y;
+                })
+                .on('drag', (event, d) => {
+                    d.fx = event.x;
+                    d.fy = event.y;
+                })
+                .on('end', (event, d) => {
+                    if (!event.active) simulation.alphaTarget(0);
+                    d.fx = null;
+                    d.fy = null;
+                }));
+
+        node.append('circle')
+            .attr('r', d => 15 + Math.log(d.rps / 100) * 3)
+            .attr('fill', d => this.getNodeColor(d.type));
+
+        node.append('text')
+            .attr('dy', 30)
+            .text(d => d.name);
+
+        // Tooltip events
+        const tooltip = this.querySelector('#tooltip');
+        node.on('mouseenter', (event, d) => {
+            tooltip.innerHTML = `
+                <div class="topology-tooltip-title">
+                    <span style="color: ${this.getNodeColor(d.type)}">&#9679;</span>
+                    ${d.name}
+                </div>
+                <div class="topology-tooltip-row">
+                    <span class="topology-tooltip-label">Type:</span>
+                    <span>${d.type}</span>
+                </div>
+                <div class="topology-tooltip-row">
+                    <span class="topology-tooltip-label">Requests/s:</span>
+                    <span>${d.rps.toLocaleString()}</span>
+                </div>
+                <div class="topology-tooltip-row">
+                    <span class="topology-tooltip-label">Latency:</span>
+                    <span>${d.latency}ms</span>
+                </div>
+                <div class="topology-tooltip-row">
+                    <span class="topology-tooltip-label">Error Rate:</span>
+                    <span style="color: ${d.errors > 0 ? '#f43f5e' : '#22c55e'}">${d.errors}%</span>
+                </div>
+            `;
+            tooltip.style.display = 'block';
+            tooltip.style.left = (event.pageX + 10) + 'px';
+            tooltip.style.top = (event.pageY + 10) + 'px';
+        });
+
+        node.on('mouseleave', () => {
+            tooltip.style.display = 'none';
+        });
+
+        node.on('click', (event, d) => {
+            this.dispatchEvent(new CustomEvent('node-click', { detail: d }));
+        });
+
+        // Update positions on tick
+        simulation.on('tick', () => {
+            link
+                .attr('x1', d => d.source.x)
+                .attr('y1', d => d.source.y)
+                .attr('x2', d => d.target.x)
+                .attr('y2', d => d.target.y);
+
+            node.attr('transform', d => `translate(${d.x},${d.y})`);
+        });
+
+        this.svg = svg;
+        this.zoomBehavior = zoom;
+    }
+
+    getNodeColor(type) {
+        const colors = {
+            service: '#3b82f6',
+            database: '#22c55e',
+            cache: '#a855f7',
+            queue: '#f59e0b',
+            external: '#71717a'
+        };
+        return colors[type] || colors.service;
+    }
+
+    zoom(factor) {
+        if (this.svg && this.zoomBehavior) {
+            this.svg.transition().call(this.zoomBehavior.scaleBy, factor);
+        }
+    }
+
+    resetView() {
+        if (this.svg && this.zoomBehavior) {
+            this.svg.transition().call(this.zoomBehavior.transform, d3.zoomIdentity);
+        }
+    }
+
+    updateLayout() {
+        if (this.simulation && this.data) {
+            const body = this.querySelector('#body');
+            if (body) {
+                const width = body.clientWidth;
+                const height = body.clientHeight;
+                this.simulation.force('center', d3.forceCenter(width / 2, height / 2));
+                this.simulation.alpha(0.3).restart();
+            }
+        }
+    }
+
+    updateStats() {
+        if (!this.data) return;
+
+        this.querySelector('#stat-nodes').textContent = this.data.nodes.length;
+        this.querySelector('#stat-connections').textContent = this.data.links.length;
+
+        const totalRps = this.data.nodes.reduce((sum, n) => sum + n.rps, 0);
+        this.querySelector('#stat-rps').textContent = totalRps.toLocaleString();
+    }
+}
+
+customElements.define('network-topology', NetworkTopology);
+
+/**
+ * On-Call Calendar Widget
+ * Who's on-call now, schedule view, shift swaps
+ */
+class OncallCalendar extends HTMLElement {
+    constructor() {
+        super();
+        this.schedules = [];
+        this.currentOnCall = [];
+        this.view = 'current'; // current, week, month
+    }
+
+    connectedCallback() {
+        this.render();
+        this.loadData();
+    }
+
+    async loadData() {
+        try {
+            const [schedulesResp, currentResp] = await Promise.all([
+                fetch('/api/oncall/schedules'),
+                fetch('/api/oncall/current')
+            ]);
+
+            if (schedulesResp.ok) this.schedules = await schedulesResp.json() || [];
+            if (currentResp.ok) this.currentOnCall = await currentResp.json() || [];
+
+            this.renderContent();
+        } catch (e) {
+            console.error('Failed to load on-call data:', e);
+        }
+    }
+
+    setView(view) {
+        this.view = view;
+        this.querySelectorAll('.view-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.view === view);
+        });
+        this.renderContent();
+    }
+
+    render() {
+        this.innerHTML = `
+            <style>${this.getStyles()}</style>
+            <div class="oncall-calendar">
+                <div class="oncall-header">
+                    <div class="header-title">
+                        <span class="title-icon">📞</span>
+                        <span>On-Call</span>
+                    </div>
+                    <div class="header-views">
+                        <button class="view-btn active" data-view="current" onclick="this.getRootNode().host.setView('current')">Now</button>
+                        <button class="view-btn" data-view="week" onclick="this.getRootNode().host.setView('week')">Week</button>
+                        <button class="view-btn" data-view="month" onclick="this.getRootNode().host.setView('month')">Month</button>
+                    </div>
+                </div>
+                <div class="oncall-content" id="oncall-content">
+                    <div class="loading">Loading...</div>
+                </div>
+            </div>
+        `;
+    }
+
+    renderContent() {
+        const container = this.querySelector('#oncall-content');
+        if (!container) return;
+
+        switch (this.view) {
+            case 'current':
+                container.innerHTML = this.renderCurrentOnCall();
+                break;
+            case 'week':
+                container.innerHTML = this.renderWeekView();
+                break;
+            case 'month':
+                container.innerHTML = this.renderMonthView();
+                break;
+        }
+    }
+
+    renderCurrentOnCall() {
+        if (this.currentOnCall.length === 0 && this.schedules.length === 0) {
+            return `
+                <div class="empty-state">
+                    <span class="icon">📞</span>
+                    <p>No on-call schedules configured</p>
+                </div>
+            `;
+        }
+
+        // Group by schedule/team
+        const bySchedule = new Map();
+        this.currentOnCall.forEach(oc => {
+            const key = oc.schedule_name || oc.team || 'Default';
+            if (!bySchedule.has(key)) bySchedule.set(key, []);
+            bySchedule.get(key).push(oc);
+        });
+
+        return `
+            <div class="current-oncall">
+                ${Array.from(bySchedule.entries()).map(([name, people]) => `
+                    <div class="schedule-card">
+                        <div class="schedule-name">${this.escapeHtml(name)}</div>
+                        <div class="oncall-people">
+                            ${people.map((p, i) => `
+                                <div class="person-card ${i === 0 ? 'primary' : 'backup'}">
+                                    <div class="person-avatar">${this.getInitials(p.user_name || p.name)}</div>
+                                    <div class="person-info">
+                                        <div class="person-name">${this.escapeHtml(p.user_name || p.name || 'Unknown')}</div>
+                                        <div class="person-role">${i === 0 ? 'Primary' : 'Backup'}</div>
+                                        <div class="shift-time">Until ${this.formatTime(p.end_time)}</div>
+                                    </div>
+                                    <div class="person-actions">
+                                        <a href="tel:${p.phone || ''}" class="btn-contact" title="Call">📞</a>
+                                        <a href="mailto:${p.email || ''}" class="btn-contact" title="Email">✉️</a>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `).join('')}
+                ${this.schedules.filter(s => !Array.from(bySchedule.keys()).includes(s.name)).map(s => `
+                    <div class="schedule-card empty">
+                        <div class="schedule-name">${this.escapeHtml(s.name)}</div>
+                        <div class="no-oncall">No one currently on-call</div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+
+    renderWeekView() {
+        const days = this.getWeekDays();
+
+        return `
+            <div class="week-view">
+                <div class="week-header">
+                    ${days.map(d => `
+                        <div class="day-header ${d.isToday ? 'today' : ''}">
+                            <span class="day-name">${d.name}</span>
+                            <span class="day-date">${d.date}</span>
+                        </div>
+                    `).join('')}
+                </div>
+                <div class="week-body">
+                    ${this.schedules.slice(0, 3).map(schedule => `
+                        <div class="schedule-row">
+                            <div class="schedule-label">${this.escapeHtml(schedule.name)}</div>
+                            <div class="schedule-shifts">
+                                ${days.map(d => `
+                                    <div class="shift-cell ${d.isToday ? 'today' : ''}">
+                                        ${this.getShiftForDay(schedule, d.fullDate) || '<span class="no-shift">—</span>'}
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    renderMonthView() {
+        const today = new Date();
+        const year = today.getFullYear();
+        const month = today.getMonth();
+        const firstDay = new Date(year, month, 1);
+        const lastDay = new Date(year, month + 1, 0);
+        const startPadding = firstDay.getDay();
+
+        const days = [];
+        for (let i = 0; i < startPadding; i++) {
+            days.push({ empty: true });
+        }
+        for (let d = 1; d <= lastDay.getDate(); d++) {
+            days.push({
+                date: d,
+                isToday: d === today.getDate(),
+                fullDate: new Date(year, month, d)
+            });
+        }
+
+        return `
+            <div class="month-view">
+                <div class="month-header">
+                    <span class="month-name">${today.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</span>
+                </div>
+                <div class="month-grid">
+                    <div class="weekday-row">
+                        ${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => `<div class="weekday">${d}</div>`).join('')}
+                    </div>
+                    <div class="days-grid">
+                        ${days.map(d => d.empty ? '<div class="day-cell empty"></div>' : `
+                            <div class="day-cell ${d.isToday ? 'today' : ''}">
+                                <span class="day-num">${d.date}</span>
+                                ${this.getShiftIndicator(d.fullDate)}
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    getWeekDays() {
+        const days = [];
+        const today = new Date();
+        const dayOfWeek = today.getDay();
+        const startOfWeek = new Date(today);
+        startOfWeek.setDate(today.getDate() - dayOfWeek);
+
+        for (let i = 0; i < 7; i++) {
+            const d = new Date(startOfWeek);
+            d.setDate(startOfWeek.getDate() + i);
+            days.push({
+                name: d.toLocaleDateString('en-US', { weekday: 'short' }),
+                date: d.getDate(),
+                isToday: d.toDateString() === today.toDateString(),
+                fullDate: d
+            });
+        }
+        return days;
+    }
+
+    getShiftForDay(schedule, date) {
+        // In a real implementation, this would look up actual shifts
+        const person = this.currentOnCall.find(oc =>
+            (oc.schedule_name === schedule.name || oc.schedule_id === schedule.id)
+        );
+
+        if (person) {
+            return `<span class="shift-person">${this.getInitials(person.user_name || person.name)}</span>`;
+        }
+        return '';
+    }
+
+    getShiftIndicator(date) {
+        const hasShift = this.currentOnCall.length > 0;
+        return hasShift ? '<div class="shift-indicator"></div>' : '';
+    }
+
+    getInitials(name) {
+        if (!name) return '?';
+        return name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
+    }
+
+    formatTime(timestamp) {
+        if (!timestamp) return 'N/A';
+        const d = new Date(timestamp);
+        return d.toLocaleString('en-US', {
+            weekday: 'short',
+            hour: 'numeric',
+            minute: '2-digit'
+        });
+    }
+
+    escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    getStyles() {
+        return `
+            .oncall-calendar {
+                background: var(--bg-card, #16181c);
+                border-radius: 8px;
+                overflow: hidden;
+                height: 100%;
+                display: flex;
+                flex-direction: column;
+            }
+
+            .oncall-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 0.75rem 1rem;
+                background: var(--bg-elevated, #1e2128);
+                border-bottom: 1px solid var(--border, #2f3336);
+            }
+
+            .header-title {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                font-weight: 600;
+            }
+
+            .header-views { display: flex; gap: 0.25rem; }
+
+            .view-btn {
+                background: transparent;
+                border: none;
+                color: var(--text-muted, #71767b);
+                padding: 0.4rem 0.6rem;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 0.8rem;
+            }
+
+            .view-btn:hover { background: var(--bg-card, #16181c); }
+            .view-btn.active { background: var(--bg-card, #16181c); color: var(--text, #e7e9ea); }
+
+            .oncall-content {
+                flex: 1;
+                overflow-y: auto;
+                padding: 1rem;
+            }
+
+            .loading, .empty-state {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                padding: 3rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .empty-state .icon { font-size: 2rem; margin-bottom: 0.5rem; }
+
+            /* Current On-Call */
+            .current-oncall { display: flex; flex-direction: column; gap: 1rem; }
+
+            .schedule-card {
+                background: var(--bg-elevated, #1e2128);
+                border-radius: 8px;
+                padding: 1rem;
+            }
+
+            .schedule-card.empty { opacity: 0.6; }
+
+            .schedule-name {
+                font-weight: 600;
+                font-size: 0.85rem;
+                margin-bottom: 0.75rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .oncall-people { display: flex; flex-direction: column; gap: 0.5rem; }
+
+            .person-card {
+                display: flex;
+                align-items: center;
+                gap: 0.75rem;
+                padding: 0.75rem;
+                background: var(--bg-card, #16181c);
+                border-radius: 8px;
+                border-left: 3px solid var(--accent, #1d9bf0);
+            }
+
+            .person-card.backup {
+                border-left-color: var(--text-muted, #71767b);
+                opacity: 0.8;
+            }
+
+            .person-avatar {
+                width: 40px;
+                height: 40px;
+                border-radius: 50%;
+                background: var(--accent, #1d9bf0);
+                color: white;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-weight: 600;
+                font-size: 0.9rem;
+            }
+
+            .person-info { flex: 1; }
+
+            .person-name { font-weight: 500; }
+
+            .person-role {
+                font-size: 0.75rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .shift-time {
+                font-size: 0.7rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .person-actions { display: flex; gap: 0.5rem; }
+
+            .btn-contact {
+                width: 32px;
+                height: 32px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: var(--bg-elevated, #1e2128);
+                border-radius: 6px;
+                text-decoration: none;
+                font-size: 0.9rem;
+            }
+
+            .no-oncall {
+                font-size: 0.85rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            /* Week View */
+            .week-view { display: flex; flex-direction: column; }
+
+            .week-header {
+                display: grid;
+                grid-template-columns: repeat(7, 1fr);
+                gap: 0.25rem;
+                margin-bottom: 0.5rem;
+            }
+
+            .day-header {
+                text-align: center;
+                padding: 0.5rem;
+            }
+
+            .day-header.today {
+                background: var(--accent, #1d9bf0);
+                border-radius: 6px;
+                color: white;
+            }
+
+            .day-name { display: block; font-size: 0.7rem; color: var(--text-muted, #71767b); }
+            .day-header.today .day-name { color: rgba(255,255,255,0.8); }
+
+            .day-date { font-weight: 600; }
+
+            .schedule-row {
+                display: flex;
+                align-items: center;
+                margin-bottom: 0.5rem;
+            }
+
+            .schedule-label {
+                width: 80px;
+                font-size: 0.75rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .schedule-shifts {
+                flex: 1;
+                display: grid;
+                grid-template-columns: repeat(7, 1fr);
+                gap: 0.25rem;
+            }
+
+            .shift-cell {
+                background: var(--bg-elevated, #1e2128);
+                padding: 0.5rem;
+                border-radius: 4px;
+                text-align: center;
+                min-height: 40px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .shift-cell.today { border: 1px solid var(--accent, #1d9bf0); }
+
+            .shift-person {
+                width: 28px;
+                height: 28px;
+                background: var(--accent, #1d9bf0);
+                color: white;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 0.7rem;
+                font-weight: 600;
+            }
+
+            .no-shift { color: var(--text-muted, #71767b); }
+
+            /* Month View */
+            .month-view { }
+
+            .month-header {
+                text-align: center;
+                margin-bottom: 1rem;
+            }
+
+            .month-name { font-weight: 600; font-size: 1.1rem; }
+
+            .weekday-row {
+                display: grid;
+                grid-template-columns: repeat(7, 1fr);
+                gap: 0.25rem;
+                margin-bottom: 0.25rem;
+            }
+
+            .weekday {
+                text-align: center;
+                font-size: 0.7rem;
+                color: var(--text-muted, #71767b);
+                padding: 0.25rem;
+            }
+
+            .days-grid {
+                display: grid;
+                grid-template-columns: repeat(7, 1fr);
+                gap: 0.25rem;
+            }
+
+            .day-cell {
+                aspect-ratio: 1;
+                background: var(--bg-elevated, #1e2128);
+                border-radius: 4px;
+                padding: 0.25rem;
+                position: relative;
+            }
+
+            .day-cell.empty { background: transparent; }
+
+            .day-cell.today {
+                background: var(--accent, #1d9bf0);
+                color: white;
+            }
+
+            .day-num { font-size: 0.75rem; }
+
+            .shift-indicator {
+                position: absolute;
+                bottom: 4px;
+                left: 50%;
+                transform: translateX(-50%);
+                width: 6px;
+                height: 6px;
+                background: var(--success, #00ba7c);
+                border-radius: 50%;
+            }
+        `;
+    }
+}
+
+customElements.define('oncall-calendar', OncallCalendar);
+
+/**
+ * Resource Treemap Component
+ * Hierarchical resource usage visualization
+ */
+class ResourceTreemap extends HTMLElement {
+    constructor() {
+        super();
+        this.data = null;
+    }
+
+    connectedCallback() {
+        this.render();
+        this.loadData();
+    }
+
+    static get observedAttributes() {
+        return ['resource', 'namespace'];
+    }
+
+    get resource() { return this.getAttribute('resource') || 'memory'; }
+    get namespace() { return this.getAttribute('namespace') || ''; }
+
+    render() {
+        this.innerHTML = `
+            <style>
+                .treemap-container {
+                    display: flex;
+                    flex-direction: column;
+                    height: 100%;
+                    background: var(--bg-card, #16181c);
+                    border-radius: 8px;
+                    overflow: hidden;
+                }
+                .treemap-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 0.75rem 1rem;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border-bottom: 1px solid var(--border-color, #2f3336);
+                }
+                .treemap-title {
+                    font-weight: 600;
+                    font-size: 0.9rem;
+                }
+                .treemap-controls select {
+                    background: var(--bg-primary, #0f1419);
+                    border: 1px solid var(--border-color, #2f3336);
+                    border-radius: 4px;
+                    padding: 0.4rem 0.5rem;
+                    color: var(--text-primary, #e7e9ea);
+                    font-size: 0.8rem;
+                }
+                .treemap-body {
+                    flex: 1;
+                    position: relative;
+                    min-height: 250px;
+                }
+                .treemap-cell {
+                    position: absolute;
+                    border: 1px solid var(--bg-primary, #0f1419);
+                    overflow: hidden;
+                    cursor: pointer;
+                    transition: all 0.15s ease;
+                }
+                .treemap-cell:hover {
+                    z-index: 10;
+                    transform: scale(1.02);
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                }
+                .treemap-cell-content {
+                    padding: 0.5rem;
+                    height: 100%;
+                    display: flex;
+                    flex-direction: column;
+                }
+                .treemap-cell-name {
+                    font-size: 0.75rem;
+                    font-weight: 600;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+                .treemap-cell-value {
+                    font-size: 0.9rem;
+                    font-weight: 700;
+                    margin-top: auto;
+                }
+                .treemap-cell-small .treemap-cell-name {
+                    font-size: 0.65rem;
+                }
+                .treemap-cell-small .treemap-cell-value {
+                    display: none;
+                }
+                .treemap-tooltip {
+                    position: fixed;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border: 1px solid var(--border-color, #2f3336);
+                    border-radius: 6px;
+                    padding: 0.75rem;
+                    font-size: 0.8rem;
+                    pointer-events: none;
+                    z-index: 1000;
+                    display: none;
+                }
+                .treemap-legend {
+                    display: flex;
+                    gap: 1rem;
+                    padding: 0.5rem 1rem;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border-top: 1px solid var(--border-color, #2f3336);
+                    font-size: 0.75rem;
+                    flex-wrap: wrap;
+                }
+                .treemap-legend-item {
+                    display: flex;
+                    align-items: center;
+                    gap: 0.25rem;
+                }
+                .treemap-legend-dot {
+                    width: 10px;
+                    height: 10px;
+                    border-radius: 2px;
+                }
+            </style>
+            <div class="treemap-container">
+                <div class="treemap-header">
+                    <div class="treemap-title">Resource Usage by Container</div>
+                    <div class="treemap-controls">
+                        <select id="resource-select">
+                            <option value="memory">Memory</option>
+                            <option value="cpu">CPU</option>
+                            <option value="disk">Disk</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="treemap-body" id="body"></div>
+                <div class="treemap-legend" id="legend"></div>
+                <div class="treemap-tooltip" id="tooltip"></div>
+            </div>
+        `;
+
+        this.querySelector('#resource-select')?.addEventListener('change', (e) => {
+            this.setAttribute('resource', e.target.value);
+            this.loadData();
+        });
+    }
+
+    async loadData() {
+        try {
+            const resp = await fetch(`/api/resources/treemap?resource=${this.resource}`);
+            if (!resp.ok) {
+                this.data = this.generateDemoData();
+            } else {
+                this.data = await resp.json();
+            }
+            this.renderTreemap();
+        } catch (e) {
+            this.data = this.generateDemoData();
+            this.renderTreemap();
+        }
+    }
+
+    generateDemoData() {
+        const services = [
+            { name: 'api-gateway', namespace: 'production', value: 2048, limit: 4096 },
+            { name: 'user-service', namespace: 'production', value: 1536, limit: 2048 },
+            { name: 'order-service', namespace: 'production', value: 1800, limit: 2048 },
+            { name: 'payment-service', namespace: 'production', value: 1024, limit: 2048 },
+            { name: 'notification', namespace: 'production', value: 512, limit: 1024 },
+            { name: 'postgres', namespace: 'database', value: 4096, limit: 8192 },
+            { name: 'redis', namespace: 'database', value: 1024, limit: 2048 },
+            { name: 'kafka', namespace: 'messaging', value: 3072, limit: 4096 },
+            { name: 'monitoring', namespace: 'system', value: 768, limit: 1024 },
+            { name: 'logging', namespace: 'system', value: 512, limit: 1024 },
+        ];
+
+        return { items: services };
+    }
+
+    renderTreemap() {
+        const body = this.querySelector('#body');
+        const legend = this.querySelector('#legend');
+        const tooltip = this.querySelector('#tooltip');
+        if (!body || !this.data) return;
+
+        const width = body.clientWidth;
+        const height = body.clientHeight || 250;
+        const items = this.data.items;
+
+        // Simple treemap layout
+        const total = items.reduce((sum, i) => sum + i.value, 0);
+        const rects = this.squarify(items, width, height);
+
+        // Namespace colors
+        const namespaces = [...new Set(items.map(i => i.namespace))];
+        const colors = {
+            production: '#3b82f6',
+            database: '#22c55e',
+            messaging: '#f59e0b',
+            system: '#a855f7'
+        };
+
+        body.innerHTML = rects.map((r, i) => {
+            const item = items[i];
+            const color = colors[item.namespace] || '#6b7280';
+            const usage = (item.value / item.limit * 100).toFixed(0);
+            const isSmall = r.w < 80 || r.h < 50;
+
+            return `
+                <div class="treemap-cell ${isSmall ? 'treemap-cell-small' : ''}"
+                     style="left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px;background:${color}"
+                     data-index="${i}">
+                    <div class="treemap-cell-content">
+                        <div class="treemap-cell-name">${item.name}</div>
+                        <div class="treemap-cell-value">${this.formatBytes(item.value)}</div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        // Legend
+        legend.innerHTML = namespaces.map(ns => `
+            <div class="treemap-legend-item">
+                <div class="treemap-legend-dot" style="background:${colors[ns] || '#6b7280'}"></div>
+                <span>${ns}</span>
+            </div>
+        `).join('');
+
+        // Tooltip events
+        body.querySelectorAll('.treemap-cell').forEach(cell => {
+            cell.addEventListener('mouseenter', (e) => {
+                const idx = parseInt(cell.dataset.index);
+                const item = items[idx];
+                const usage = (item.value / item.limit * 100).toFixed(1);
+
+                tooltip.innerHTML = `
+                    <div style="font-weight:600;margin-bottom:0.5rem">${item.name}</div>
+                    <div>Namespace: ${item.namespace}</div>
+                    <div>Usage: ${this.formatBytes(item.value)} / ${this.formatBytes(item.limit)}</div>
+                    <div>Utilization: ${usage}%</div>
+                `;
+                tooltip.style.display = 'block';
+            });
+
+            cell.addEventListener('mousemove', (e) => {
+                tooltip.style.left = (e.clientX + 10) + 'px';
+                tooltip.style.top = (e.clientY + 10) + 'px';
+            });
+
+            cell.addEventListener('mouseleave', () => {
+                tooltip.style.display = 'none';
+            });
+        });
+    }
+
+    squarify(items, width, height) {
+        // Simple slice-and-dice treemap layout
+        const total = items.reduce((sum, i) => sum + i.value, 0);
+        const rects = [];
+        let x = 0, y = 0, w = width, h = height;
+
+        const sorted = [...items].sort((a, b) => b.value - a.value);
+
+        for (let i = 0; i < sorted.length; i++) {
+            const ratio = sorted[i].value / (total - items.slice(0, i).reduce((s, it) => s + it.value, 0) || 1);
+
+            if (w > h) {
+                const cellW = w * ratio;
+                rects.push({ x, y, w: cellW, h });
+                x += cellW;
+                w -= cellW;
+            } else {
+                const cellH = h * ratio;
+                rects.push({ x, y, w, h: cellH });
+                y += cellH;
+                h -= cellH;
+            }
+        }
+
+        return rects;
+    }
+
+    formatBytes(mb) {
+        if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GB';
+        return mb + ' MB';
+    }
+}
+
+customElements.define('resource-treemap', ResourceTreemap);
+
+/**
+ * Sankey Diagram Component
+ * Request flow visualization through services
+ */
+class SankeyDiagram extends HTMLElement {
+    constructor() {
+        super();
+        this.data = null;
+    }
+
+    connectedCallback() {
+        this.render();
+        this.loadData();
+    }
+
+    static get observedAttributes() {
+        return ['time-range'];
+    }
+
+    get timeRange() { return this.getAttribute('time-range') || '1h'; }
+
+    render() {
+        this.innerHTML = `
+            <style>
+                .sankey-container {
+                    display: flex;
+                    flex-direction: column;
+                    height: 100%;
+                    background: var(--bg-card, #16181c);
+                    border-radius: 8px;
+                    overflow: hidden;
+                }
+                .sankey-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 0.75rem 1rem;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border-bottom: 1px solid var(--border-color, #2f3336);
+                }
+                .sankey-title {
+                    font-weight: 600;
+                    font-size: 0.9rem;
+                }
+                .sankey-body {
+                    flex: 1;
+                    position: relative;
+                    min-height: 300px;
+                    overflow: hidden;
+                }
+                .sankey-svg {
+                    width: 100%;
+                    height: 100%;
+                }
+                .sankey-node rect {
+                    cursor: pointer;
+                    transition: opacity 0.2s ease;
+                }
+                .sankey-node rect:hover {
+                    opacity: 0.8;
+                }
+                .sankey-node text {
+                    fill: var(--text-primary, #e7e9ea);
+                    font-size: 11px;
+                    pointer-events: none;
+                }
+                .sankey-link {
+                    fill: none;
+                    stroke-opacity: 0.3;
+                    transition: stroke-opacity 0.2s ease;
+                }
+                .sankey-link:hover {
+                    stroke-opacity: 0.6;
+                }
+                .sankey-tooltip {
+                    position: fixed;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border: 1px solid var(--border-color, #2f3336);
+                    border-radius: 6px;
+                    padding: 0.75rem;
+                    font-size: 0.8rem;
+                    pointer-events: none;
+                    z-index: 1000;
+                    display: none;
+                }
+                .sankey-stats {
+                    display: flex;
+                    gap: 1.5rem;
+                    padding: 0.75rem 1rem;
+                    background: var(--bg-elevated, #1a1f2e);
+                    border-top: 1px solid var(--border-color, #2f3336);
+                    font-size: 0.8rem;
+                }
+                .sankey-stat-label {
+                    color: var(--text-muted, #71767b);
+                }
+            </style>
+            <div class="sankey-container">
+                <div class="sankey-header">
+                    <div class="sankey-title">Request Flow</div>
+                </div>
+                <div class="sankey-body">
+                    <svg class="sankey-svg" id="svg"></svg>
+                </div>
+                <div class="sankey-stats">
+                    <div>
+                        <span class="sankey-stat-label">Total Flow:</span>
+                        <span id="stat-total">0</span>
+                    </div>
+                    <div>
+                        <span class="sankey-stat-label">Services:</span>
+                        <span id="stat-nodes">0</span>
+                    </div>
+                    <div>
+                        <span class="sankey-stat-label">Connections:</span>
+                        <span id="stat-links">0</span>
+                    </div>
+                </div>
+                <div class="sankey-tooltip" id="tooltip"></div>
+            </div>
+        `;
+    }
+
+    async loadData() {
+        try {
+            const resp = await fetch(`/api/flow/sankey?range=${this.timeRange}`);
+            if (!resp.ok) {
+                this.data = this.generateDemoData();
+            } else {
+                this.data = await resp.json();
+            }
+            this.renderSankey();
+        } catch (e) {
+            this.data = this.generateDemoData();
+            this.renderSankey();
+        }
+    }
+
+    generateDemoData() {
+        return {
+            nodes: [
+                { id: 'ingress', name: 'Ingress', type: 'entry' },
+                { id: 'api-gateway', name: 'API Gateway', type: 'service' },
+                { id: 'auth', name: 'Auth Service', type: 'service' },
+                { id: 'users', name: 'User Service', type: 'service' },
+                { id: 'orders', name: 'Order Service', type: 'service' },
+                { id: 'payments', name: 'Payment Service', type: 'service' },
+                { id: 'postgres', name: 'PostgreSQL', type: 'database' },
+                { id: 'redis', name: 'Redis', type: 'cache' },
+                { id: 'stripe', name: 'Stripe API', type: 'external' },
+                { id: 'success', name: 'Success', type: 'exit' },
+                { id: 'error', name: 'Errors', type: 'exit' },
+            ],
+            links: [
+                { source: 'ingress', target: 'api-gateway', value: 10000 },
+                { source: 'api-gateway', target: 'auth', value: 8000 },
+                { source: 'api-gateway', target: 'users', value: 4000 },
+                { source: 'api-gateway', target: 'orders', value: 3000 },
+                { source: 'auth', target: 'redis', value: 7500 },
+                { source: 'auth', target: 'postgres', value: 500 },
+                { source: 'users', target: 'postgres', value: 3800 },
+                { source: 'orders', target: 'postgres', value: 2500 },
+                { source: 'orders', target: 'payments', value: 2000 },
+                { source: 'payments', target: 'stripe', value: 1800 },
+                { source: 'payments', target: 'postgres', value: 200 },
+                { source: 'auth', target: 'success', value: 7800 },
+                { source: 'auth', target: 'error', value: 200 },
+                { source: 'users', target: 'success', value: 3700 },
+                { source: 'users', target: 'error', value: 100 },
+                { source: 'payments', target: 'success', value: 1700 },
+                { source: 'payments', target: 'error', value: 100 },
+            ]
+        };
+    }
+
+    renderSankey() {
+        const svg = this.querySelector('#svg');
+        const tooltip = this.querySelector('#tooltip');
+        if (!svg || !this.data) return;
+
+        const rect = svg.getBoundingClientRect();
+        const width = rect.width || 600;
+        const height = rect.height || 300;
+        const padding = { top: 20, right: 100, bottom: 20, left: 100 };
+
+        const { nodes, links } = this.data;
+
+        // Create node map
+        const nodeMap = new Map(nodes.map((n, i) => [n.id, { ...n, index: i }]));
+
+        // Calculate node positions (simple layered layout)
+        const layers = this.computeLayers(nodes, links);
+        const layerCount = Math.max(...nodes.map(n => layers.get(n.id))) + 1;
+        const layerWidth = (width - padding.left - padding.right) / layerCount;
+
+        // Position nodes
+        const nodesByLayer = new Map();
+        nodes.forEach(n => {
+            const layer = layers.get(n.id);
+            if (!nodesByLayer.has(layer)) nodesByLayer.set(layer, []);
+            nodesByLayer.get(layer).push(n);
+        });
+
+        const nodeHeight = 30;
+        const nodePositions = new Map();
+
+        nodesByLayer.forEach((layerNodes, layer) => {
+            const totalHeight = layerNodes.length * (nodeHeight + 10);
+            const startY = (height - totalHeight) / 2;
+
+            layerNodes.forEach((n, i) => {
+                nodePositions.set(n.id, {
+                    x: padding.left + layer * layerWidth,
+                    y: startY + i * (nodeHeight + 10),
+                    width: 15,
+                    height: nodeHeight
+                });
+            });
+        });
+
+        // Colors
+        const colors = {
+            entry: '#3b82f6',
+            service: '#22c55e',
+            database: '#a855f7',
+            cache: '#f59e0b',
+            external: '#71717a',
+            exit: '#6b7280'
+        };
+
+        // Render
+        svg.innerHTML = `
+            <g class="sankey-links">
+                ${links.map(l => {
+                    const source = nodePositions.get(l.source);
+                    const target = nodePositions.get(l.target);
+                    if (!source || !target) return '';
+
+                    const sourceNode = nodeMap.get(l.source);
+                    const thickness = Math.max(2, Math.log(l.value) * 2);
+
+                    const path = this.createLinkPath(
+                        source.x + source.width, source.y + source.height / 2,
+                        target.x, target.y + target.height / 2
+                    );
+
+                    return `<path class="sankey-link" d="${path}"
+                                  stroke="${colors[sourceNode?.type] || '#3b82f6'}"
+                                  stroke-width="${thickness}"
+                                  data-source="${l.source}" data-target="${l.target}"
+                                  data-value="${l.value}"/>`;
+                }).join('')}
+            </g>
+            <g class="sankey-nodes">
+                ${nodes.map(n => {
+                    const pos = nodePositions.get(n.id);
+                    if (!pos) return '';
+
+                    return `
+                        <g class="sankey-node" data-id="${n.id}">
+                            <rect x="${pos.x}" y="${pos.y}"
+                                  width="${pos.width}" height="${pos.height}"
+                                  fill="${colors[n.type] || '#3b82f6'}"
+                                  rx="3"/>
+                            <text x="${pos.x + pos.width + 5}" y="${pos.y + pos.height / 2 + 4}">
+                                ${n.name}
+                            </text>
+                        </g>
+                    `;
+                }).join('')}
+            </g>
+        `;
+
+        // Tooltip events for links
+        svg.querySelectorAll('.sankey-link').forEach(path => {
+            path.addEventListener('mouseenter', (e) => {
+                const source = path.dataset.source;
+                const target = path.dataset.target;
+                const value = parseInt(path.dataset.value);
+
+                tooltip.innerHTML = `
+                    <div style="font-weight:600">${source} → ${target}</div>
+                    <div>Requests: ${value.toLocaleString()}</div>
+                `;
+                tooltip.style.display = 'block';
+            });
+
+            path.addEventListener('mousemove', (e) => {
+                tooltip.style.left = (e.clientX + 10) + 'px';
+                tooltip.style.top = (e.clientY + 10) + 'px';
+            });
+
+            path.addEventListener('mouseleave', () => {
+                tooltip.style.display = 'none';
+            });
+        });
+
+        // Stats
+        const totalFlow = links.filter(l => l.source === 'ingress').reduce((s, l) => s + l.value, 0);
+        this.querySelector('#stat-total').textContent = totalFlow.toLocaleString();
+        this.querySelector('#stat-nodes').textContent = nodes.length;
+        this.querySelector('#stat-links').textContent = links.length;
+    }
+
+    computeLayers(nodes, links) {
+        const layers = new Map();
+        const visited = new Set();
+
+        // Find entry nodes (no incoming links)
+        const hasIncoming = new Set(links.map(l => l.target));
+        const entryNodes = nodes.filter(n => !hasIncoming.has(n.id));
+
+        // BFS to assign layers
+        const queue = entryNodes.map(n => ({ id: n.id, layer: 0 }));
+
+        while (queue.length > 0) {
+            const { id, layer } = queue.shift();
+
+            if (visited.has(id)) continue;
+            visited.add(id);
+            layers.set(id, layer);
+
+            // Find outgoing links
+            links.filter(l => l.source === id).forEach(l => {
+                if (!visited.has(l.target)) {
+                    queue.push({ id: l.target, layer: layer + 1 });
+                }
+            });
+        }
+
+        // Handle any unvisited nodes
+        nodes.forEach(n => {
+            if (!layers.has(n.id)) {
+                layers.set(n.id, 0);
+            }
+        });
+
+        return layers;
+    }
+
+    createLinkPath(x1, y1, x2, y2) {
+        const midX = (x1 + x2) / 2;
+        return `M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`;
+    }
+}
+
+customElements.define('sankey-diagram', SankeyDiagram);
+
+/**
+ * Service Detail Widget
+ * Single service deep-dive: RED metrics, traces, logs, deploys
+ */
+class ServiceDetail extends HTMLElement {
+    constructor() {
+        super();
+        this.service = null;
+        this.serviceName = '';
+        this.metrics = {};
+        this.traces = [];
+        this.logs = [];
+        this.deploys = [];
+        this.incidents = [];
+        this.activeTab = 'overview';
+    }
+
+    static get observedAttributes() {
+        return ['service-name'];
+    }
+
+    attributeChangedCallback(name, oldValue, newValue) {
+        if (name === 'service-name' && newValue && newValue !== oldValue) {
+            this.serviceName = newValue;
+            this.loadServiceData();
+        }
+    }
+
+    connectedCallback() {
+        this.render();
+        if (this.serviceName) {
+            this.loadServiceData();
+        }
+    }
+
+    async loadServiceData() {
+        if (!this.serviceName) return;
+
+        this.showLoading();
+
+        try {
+            const [catalogResp, tracesResp, deploysResp, incidentsResp] = await Promise.all([
+                fetch(`/api/catalog/services?name=${encodeURIComponent(this.serviceName)}`),
+                fetch(`/api/traces?service=${encodeURIComponent(this.serviceName)}&limit=20`),
+                fetch(`/api/deploys?service=${encodeURIComponent(this.serviceName)}&limit=10`),
+                fetch(`/api/incidents?service=${encodeURIComponent(this.serviceName)}&limit=5`)
+            ]);
+
+            if (catalogResp.ok) {
+                const services = await catalogResp.json();
+                this.service = services?.find(s => s.name === this.serviceName) || { name: this.serviceName };
+            }
+
+            if (tracesResp.ok) this.traces = await tracesResp.json() || [];
+            if (deploysResp.ok) this.deploys = await deploysResp.json() || [];
+            if (incidentsResp.ok) this.incidents = await incidentsResp.json() || [];
+
+            // Calculate RED metrics from traces
+            this.calculateMetrics();
+
+            this.renderContent();
+        } catch (e) {
+            console.error('Failed to load service data:', e);
+            this.showError(e.message);
+        }
+    }
+
+    calculateMetrics() {
+        if (this.traces.length === 0) {
+            this.metrics = { rate: 0, errorRate: 0, p50: 0, p95: 0, p99: 0 };
+            return;
+        }
+
+        const durations = this.traces.map(t => t.duration_ms || 0).sort((a, b) => a - b);
+        const errors = this.traces.filter(t => t.has_error).length;
+
+        this.metrics = {
+            rate: this.traces.length, // per time window
+            errorRate: (errors / this.traces.length) * 100,
+            p50: durations[Math.floor(durations.length * 0.5)] || 0,
+            p95: durations[Math.floor(durations.length * 0.95)] || 0,
+            p99: durations[Math.floor(durations.length * 0.99)] || 0
+        };
+    }
+
+    setTab(tab) {
+        this.activeTab = tab;
+        this.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.tab === tab);
+        });
+        this.renderTabContent();
+    }
+
+    showLoading() {
+        const content = this.querySelector('#service-content');
+        if (content) {
+            content.innerHTML = `<div class="loading"><div class="spinner"></div>Loading...</div>`;
+        }
+    }
+
+    showError(message) {
+        const content = this.querySelector('#service-content');
+        if (content) {
+            content.innerHTML = `<div class="error">Error: ${message}</div>`;
+        }
+    }
+
+    render() {
+        this.innerHTML = `
+            <style>${this.getStyles()}</style>
+            <div class="service-detail">
+                <div class="service-header" id="service-header">
+                    <div class="header-loading">Select a service to view details</div>
+                </div>
+                <div class="service-tabs">
+                    <button class="tab-btn active" data-tab="overview" onclick="this.getRootNode().host.setTab('overview')">Overview</button>
+                    <button class="tab-btn" data-tab="traces" onclick="this.getRootNode().host.setTab('traces')">Traces</button>
+                    <button class="tab-btn" data-tab="logs" onclick="this.getRootNode().host.setTab('logs')">Logs</button>
+                    <button class="tab-btn" data-tab="deploys" onclick="this.getRootNode().host.setTab('deploys')">Deploys</button>
+                    <button class="tab-btn" data-tab="incidents" onclick="this.getRootNode().host.setTab('incidents')">Incidents</button>
+                </div>
+                <div class="service-content" id="service-content">
+                    <div class="empty-state">
+                        <span class="icon">🔧</span>
+                        <p>Select a service to view details</p>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    renderContent() {
+        this.renderHeader();
+        this.renderTabContent();
+    }
+
+    renderHeader() {
+        const header = this.querySelector('#service-header');
+        if (!header) return;
+
+        const health = this.getHealthStatus();
+        const tier = this.service?.tier || 'unknown';
+
+        header.innerHTML = `
+            <div class="header-main">
+                <div class="service-icon">${this.getServiceIcon()}</div>
+                <div class="service-info">
+                    <h1 class="service-name">${this.escapeHtml(this.serviceName)}</h1>
+                    <div class="service-meta">
+                        ${this.service?.team ? `<span class="meta-item">Team: ${this.escapeHtml(this.service.team)}</span>` : ''}
+                        ${this.service?.owner ? `<span class="meta-item">Owner: ${this.escapeHtml(this.service.owner)}</span>` : ''}
+                        <span class="meta-item">Tier: ${tier}</span>
+                    </div>
+                </div>
+                <div class="service-status">
+                    <span class="health-badge ${health.status}">${health.label}</span>
+                </div>
+            </div>
+            <div class="header-metrics">
+                <div class="metric-card">
+                    <span class="metric-value">${this.metrics.rate}</span>
+                    <span class="metric-label">Requests</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-value ${this.metrics.errorRate > 1 ? 'error' : ''}">${this.metrics.errorRate.toFixed(2)}%</span>
+                    <span class="metric-label">Error Rate</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-value">${this.metrics.p50.toFixed(0)}ms</span>
+                    <span class="metric-label">p50 Latency</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-value">${this.metrics.p95.toFixed(0)}ms</span>
+                    <span class="metric-label">p95 Latency</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-value">${this.metrics.p99.toFixed(0)}ms</span>
+                    <span class="metric-label">p99 Latency</span>
+                </div>
+            </div>
+        `;
+    }
+
+    renderTabContent() {
+        const content = this.querySelector('#service-content');
+        if (!content) return;
+
+        switch (this.activeTab) {
+            case 'overview':
+                content.innerHTML = this.renderOverview();
+                break;
+            case 'traces':
+                content.innerHTML = this.renderTraces();
+                break;
+            case 'logs':
+                content.innerHTML = this.renderLogs();
+                break;
+            case 'deploys':
+                content.innerHTML = this.renderDeploys();
+                break;
+            case 'incidents':
+                content.innerHTML = this.renderIncidents();
+                break;
+        }
+    }
+
+    renderOverview() {
+        return `
+            <div class="overview-grid">
+                <div class="overview-card">
+                    <h3>Service Info</h3>
+                    <div class="info-list">
+                        <div class="info-item">
+                            <span class="info-label">Repository</span>
+                            <span class="info-value">${this.service?.repo_url ? `<a href="${this.escapeHtml(this.service.repo_url)}" target="_blank">${this.escapeHtml(this.service.repo_url)}</a>` : '—'}</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Language</span>
+                            <span class="info-value">${this.service?.language || '—'}</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Framework</span>
+                            <span class="info-value">${this.service?.framework || '—'}</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Tags</span>
+                            <span class="info-value">${this.service?.tags?.join(', ') || '—'}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="overview-card">
+                    <h3>Recent Activity</h3>
+                    <div class="activity-list">
+                        ${this.deploys.slice(0, 3).map(d => `
+                            <div class="activity-item">
+                                <span class="activity-icon">🚀</span>
+                                <span class="activity-text">Deploy: ${this.escapeHtml(d.version || d.commit?.substring(0, 7) || 'unknown')}</span>
+                                <span class="activity-time">${this.formatTime(d.deployed_at)}</span>
+                            </div>
+                        `).join('') || '<div class="empty">No recent deploys</div>'}
+                        ${this.incidents.filter(i => i.status !== 'resolved').slice(0, 2).map(i => `
+                            <div class="activity-item incident">
+                                <span class="activity-icon">🚨</span>
+                                <span class="activity-text">${this.escapeHtml(i.title)}</span>
+                                <span class="activity-time">${this.formatTime(i.created_at)}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+                <div class="overview-card full-width">
+                    <h3>Dependencies</h3>
+                    <div class="deps-list">
+                        ${this.service?.dependencies?.map(d => `
+                            <span class="dep-badge">${this.escapeHtml(d)}</span>
+                        `).join('') || '<span class="empty">No dependencies tracked</span>'}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    renderTraces() {
+        if (this.traces.length === 0) {
+            return `<div class="empty-state"><span class="icon">🔍</span><p>No traces found</p></div>`;
+        }
+
+        return `
+            <div class="traces-list">
+                <div class="list-header">
+                    <span class="col-status">Status</span>
+                    <span class="col-operation">Operation</span>
+                    <span class="col-duration">Duration</span>
+                    <span class="col-time">Time</span>
+                </div>
+                ${this.traces.map(t => `
+                    <div class="trace-row ${t.has_error ? 'error' : ''}" onclick="window.open('/traces.html?id=${t.trace_id}', '_blank')">
+                        <span class="col-status">
+                            <span class="status-dot ${t.has_error ? 'error' : 'ok'}"></span>
+                        </span>
+                        <span class="col-operation">${this.escapeHtml(t.root_span || 'unknown')}</span>
+                        <span class="col-duration">${(t.duration_ms || 0).toFixed(1)}ms</span>
+                        <span class="col-time">${this.formatTime(t.start_time)}</span>
+                    </div>
+                `).join('')}
+            </div>
+            <div class="list-footer">
+                <a href="/traces.html?service=${encodeURIComponent(this.serviceName)}" class="link-more">View all traces →</a>
+            </div>
+        `;
+    }
+
+    renderLogs() {
+        return `
+            <div class="logs-embed">
+                <log-explorer></log-explorer>
+            </div>
+            <div class="list-footer">
+                <a href="/logs.html?service=${encodeURIComponent(this.serviceName)}" class="link-more">Open in Log Explorer →</a>
+            </div>
+        `;
+    }
+
+    renderDeploys() {
+        if (this.deploys.length === 0) {
+            return `<div class="empty-state"><span class="icon">🚀</span><p>No deploys found</p></div>`;
+        }
+
+        return `
+            <div class="deploys-list">
+                ${this.deploys.map(d => `
+                    <div class="deploy-card ${d.status || 'success'}">
+                        <div class="deploy-main">
+                            <div class="deploy-version">${this.escapeHtml(d.version || d.commit?.substring(0, 7) || 'unknown')}</div>
+                            <div class="deploy-meta">
+                                <span>by ${this.escapeHtml(d.deployed_by || 'unknown')}</span>
+                                <span>${this.formatTime(d.deployed_at)}</span>
+                            </div>
+                            ${d.message ? `<div class="deploy-message">${this.escapeHtml(d.message)}</div>` : ''}
+                        </div>
+                        <div class="deploy-status">
+                            <span class="status-badge ${d.status || 'success'}">${d.status || 'success'}</span>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+
+    renderIncidents() {
+        if (this.incidents.length === 0) {
+            return `<div class="empty-state"><span class="icon">✓</span><p>No incidents</p></div>`;
+        }
+
+        return `
+            <div class="incidents-list">
+                ${this.incidents.map(i => `
+                    <div class="incident-card ${i.severity}">
+                        <div class="incident-severity">
+                            ${this.getSeverityIcon(i.severity)}
+                        </div>
+                        <div class="incident-main">
+                            <div class="incident-title">${this.escapeHtml(i.title)}</div>
+                            <div class="incident-meta">
+                                <span class="status-badge ${i.status}">${i.status}</span>
+                                <span>${this.formatTime(i.created_at)}</span>
+                            </div>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+
+    getHealthStatus() {
+        if (this.metrics.errorRate > 5) return { status: 'critical', label: 'Critical' };
+        if (this.metrics.errorRate > 1) return { status: 'degraded', label: 'Degraded' };
+        return { status: 'healthy', label: 'Healthy' };
+    }
+
+    getServiceIcon() {
+        const type = this.service?.type || 'service';
+        switch (type) {
+            case 'database': return '🗄️';
+            case 'cache': return '⚡';
+            case 'queue': return '📬';
+            case 'gateway': return '🚪';
+            case 'frontend': return '🖥️';
+            default: return '🔧';
+        }
+    }
+
+    getSeverityIcon(severity) {
+        switch (severity) {
+            case 'critical': return '🔴';
+            case 'high': return '🟠';
+            case 'medium': return '🟡';
+            case 'low': return '🟢';
+            default: return '⚪';
+        }
+    }
+
+    formatTime(timestamp) {
+        if (!timestamp) return '—';
+        const d = new Date(timestamp);
+        const now = new Date();
+        const diffMs = now - d;
+
+        if (diffMs < 60000) return 'just now';
+        if (diffMs < 3600000) return `${Math.floor(diffMs / 60000)}m ago`;
+        if (diffMs < 86400000) return `${Math.floor(diffMs / 3600000)}h ago`;
+
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
+
+    escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    getStyles() {
+        return `
+            .service-detail {
+                background: var(--bg-card, #16181c);
+                border-radius: 8px;
+                overflow: hidden;
+                height: 100%;
+                display: flex;
+                flex-direction: column;
+            }
+
+            .service-header {
+                padding: 1rem;
+                background: var(--bg-elevated, #1e2128);
+                border-bottom: 1px solid var(--border, #2f3336);
+            }
+
+            .header-loading {
+                text-align: center;
+                color: var(--text-muted, #71767b);
+                padding: 1rem;
+            }
+
+            .header-main {
+                display: flex;
+                align-items: center;
+                gap: 1rem;
+                margin-bottom: 1rem;
+            }
+
+            .service-icon {
+                font-size: 2rem;
+            }
+
+            .service-info { flex: 1; }
+
+            .service-name {
+                font-size: 1.25rem;
+                font-weight: 600;
+                margin: 0 0 0.25rem 0;
+            }
+
+            .service-meta {
+                display: flex;
+                gap: 1rem;
+                font-size: 0.8rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .health-badge {
+                padding: 0.25rem 0.75rem;
+                border-radius: 12px;
+                font-size: 0.8rem;
+                font-weight: 500;
+            }
+
+            .health-badge.healthy { background: var(--success, #00ba7c); color: white; }
+            .health-badge.degraded { background: var(--warning, #ffd400); color: #1a1a1a; }
+            .health-badge.critical { background: var(--error, #f4212e); color: white; }
+
+            .header-metrics {
+                display: flex;
+                gap: 1rem;
+            }
+
+            .metric-card {
+                background: var(--bg-card, #16181c);
+                padding: 0.75rem 1rem;
+                border-radius: 8px;
+                text-align: center;
+                min-width: 80px;
+            }
+
+            .metric-value {
+                display: block;
+                font-size: 1.25rem;
+                font-weight: 600;
+            }
+
+            .metric-value.error { color: var(--error, #f4212e); }
+
+            .metric-label {
+                font-size: 0.7rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .service-tabs {
+                display: flex;
+                gap: 0.25rem;
+                padding: 0 1rem;
+                background: var(--bg-elevated, #1e2128);
+                border-bottom: 1px solid var(--border, #2f3336);
+            }
+
+            .tab-btn {
+                background: transparent;
+                border: none;
+                color: var(--text-muted, #71767b);
+                padding: 0.75rem 1rem;
+                cursor: pointer;
+                border-bottom: 2px solid transparent;
+                margin-bottom: -1px;
+            }
+
+            .tab-btn:hover { color: var(--text, #e7e9ea); }
+            .tab-btn.active {
+                color: var(--accent, #1d9bf0);
+                border-bottom-color: var(--accent, #1d9bf0);
+            }
+
+            .service-content {
+                flex: 1;
+                overflow-y: auto;
+                padding: 1rem;
+            }
+
+            .loading, .empty-state, .error {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                padding: 3rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .error { color: var(--error, #f4212e); }
+
+            .spinner {
+                width: 24px;
+                height: 24px;
+                border: 3px solid var(--border, #2f3336);
+                border-top-color: var(--accent, #1d9bf0);
+                border-radius: 50%;
+                animation: spin 0.8s linear infinite;
+                margin-bottom: 0.5rem;
+            }
+
+            @keyframes spin { to { transform: rotate(360deg); } }
+
+            .empty-state .icon { font-size: 2rem; margin-bottom: 0.5rem; }
+
+            /* Overview */
+            .overview-grid {
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 1rem;
+            }
+
+            .overview-card {
+                background: var(--bg-elevated, #1e2128);
+                border-radius: 8px;
+                padding: 1rem;
+            }
+
+            .overview-card.full-width { grid-column: span 2; }
+
+            .overview-card h3 {
+                font-size: 0.85rem;
+                color: var(--text-muted, #71767b);
+                margin: 0 0 0.75rem 0;
+            }
+
+            .info-list { display: flex; flex-direction: column; gap: 0.5rem; }
+
+            .info-item {
+                display: flex;
+                justify-content: space-between;
+                font-size: 0.85rem;
+            }
+
+            .info-label { color: var(--text-muted, #71767b); }
+
+            .info-value a { color: var(--accent, #1d9bf0); text-decoration: none; }
+
+            .activity-list { display: flex; flex-direction: column; gap: 0.5rem; }
+
+            .activity-item {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                font-size: 0.85rem;
+            }
+
+            .activity-item.incident { color: var(--error, #f4212e); }
+
+            .activity-time {
+                margin-left: auto;
+                color: var(--text-muted, #71767b);
+                font-size: 0.75rem;
+            }
+
+            .deps-list { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+            .dep-badge {
+                background: var(--bg-card, #16181c);
+                padding: 0.25rem 0.5rem;
+                border-radius: 4px;
+                font-size: 0.8rem;
+            }
+
+            /* Traces */
+            .traces-list { display: flex; flex-direction: column; }
+
+            .list-header {
+                display: flex;
+                padding: 0.5rem 0;
+                font-size: 0.75rem;
+                color: var(--text-muted, #71767b);
+                border-bottom: 1px solid var(--border, #2f3336);
+            }
+
+            .trace-row {
+                display: flex;
+                padding: 0.75rem 0;
+                border-bottom: 1px solid var(--border, #2f3336);
+                cursor: pointer;
+            }
+
+            .trace-row:hover { background: var(--bg-elevated, #1e2128); }
+
+            .col-status { width: 40px; }
+            .col-operation { flex: 1; }
+            .col-duration { width: 80px; text-align: right; }
+            .col-time { width: 100px; text-align: right; color: var(--text-muted, #71767b); }
+
+            .status-dot {
+                display: inline-block;
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+            }
+
+            .status-dot.ok { background: var(--success, #00ba7c); }
+            .status-dot.error { background: var(--error, #f4212e); }
+
+            .list-footer {
+                padding: 1rem 0;
+                text-align: center;
+            }
+
+            .link-more {
+                color: var(--accent, #1d9bf0);
+                text-decoration: none;
+                font-size: 0.85rem;
+            }
+
+            /* Deploys */
+            .deploys-list { display: flex; flex-direction: column; gap: 0.75rem; }
+
+            .deploy-card {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 1rem;
+                background: var(--bg-elevated, #1e2128);
+                border-radius: 8px;
+                border-left: 3px solid var(--success, #00ba7c);
+            }
+
+            .deploy-card.failed { border-left-color: var(--error, #f4212e); }
+
+            .deploy-version { font-weight: 600; margin-bottom: 0.25rem; }
+
+            .deploy-meta {
+                font-size: 0.8rem;
+                color: var(--text-muted, #71767b);
+                display: flex;
+                gap: 1rem;
+            }
+
+            .deploy-message {
+                font-size: 0.85rem;
+                margin-top: 0.5rem;
+            }
+
+            .status-badge {
+                padding: 0.2rem 0.5rem;
+                border-radius: 4px;
+                font-size: 0.7rem;
+                text-transform: uppercase;
+            }
+
+            .status-badge.success { background: var(--success, #00ba7c); color: white; }
+            .status-badge.failed { background: var(--error, #f4212e); color: white; }
+
+            /* Incidents */
+            .incidents-list { display: flex; flex-direction: column; gap: 0.75rem; }
+
+            .incident-card {
+                display: flex;
+                gap: 0.75rem;
+                padding: 1rem;
+                background: var(--bg-elevated, #1e2128);
+                border-radius: 8px;
+                border-left: 3px solid var(--border, #2f3336);
+            }
+
+            .incident-card.critical { border-left-color: var(--error, #f4212e); }
+            .incident-card.high { border-left-color: #ff7a00; }
+
+            .incident-severity { font-size: 1.25rem; }
+            .incident-main { flex: 1; }
+
+            .incident-title { font-weight: 500; margin-bottom: 0.25rem; }
+
+            .incident-meta {
+                display: flex;
+                gap: 0.75rem;
+                font-size: 0.8rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .status-badge.active { background: var(--error, #f4212e); color: white; }
+            .status-badge.resolved { background: var(--success, #00ba7c); color: white; }
+
+            .logs-embed {
+                height: 300px;
+                border: 1px solid var(--border, #2f3336);
+                border-radius: 8px;
+                overflow: hidden;
+            }
+
+            .empty { color: var(--text-muted, #71767b); font-size: 0.85rem; }
+        `;
+    }
+}
+
+customElements.define('service-detail', ServiceDetail);
+
+/**
+ * Service Map Web Component
+ *
+ * Usage:
+ *   <dw-service-map></dw-service-map>
+ *   <dw-service-map auto-refresh="10000"></dw-service-map>
+ *
+ * Attributes:
+ *   - auto-refresh: Refresh interval in ms (0 to disable, default: uses WebSocket)
+ *   - layout: force|hierarchical (default: force)
+ */
+class ServiceMap extends HTMLElement {
+    static get observedAttributes() {
+        return ['auto-refresh', 'layout'];
+    }
+
+    constructor() {
+        super();
+        this.attachShadow({ mode: 'open' });
+        this.simulation = null;
+        this.svg = null;
+        this.data = null;
+        this._unsubscribe = null;
+        this._refreshInterval = null;
+        this.zoom = null;
+    }
+
+    async connectedCallback() {
+        this.render();
+        await this.loadD3();
+        this.initSVG();
+        this.setupWebSocket();
+        this.fetchData();
+    }
+
+    disconnectedCallback() {
+        this.cleanup();
+    }
+
+    cleanup() {
+        // Stop simulation
+        if (this.simulation) {
+            this.simulation.stop();
+            this.simulation = null;
+        }
+
+        // Unsubscribe from WebSocket
+        if (this._unsubscribe) {
+            this._unsubscribe();
+            this._unsubscribe = null;
+        }
+
+        // Clear refresh interval
+        if (this._refreshInterval) {
+            clearInterval(this._refreshInterval);
+            this._refreshInterval = null;
+        }
+    }
+
+    async loadD3() {
+        if (window.Loader) {
+            await window.Loader.load('d3');
+        } else if (typeof d3 === 'undefined') {
+            throw new Error('D3 not available and Loader not found');
+        }
+    }
+
+    render() {
+        this.shadowRoot.innerHTML = `
+            <style>
+                :host {
+                    display: block;
+                    width: 100%;
+                    height: 100%;
+                    position: relative;
+                }
+                .container {
+                    width: 100%;
+                    height: 100%;
+                    background: radial-gradient(ellipse at center, #1a1f2e 0%, #0f1419 100%);
+                    overflow: hidden;
+                }
+                svg {
+                    width: 100%;
+                    height: 100%;
+                }
+                .node {
+                    cursor: pointer;
+                }
+                .node:hover {
+                    filter: brightness(1.2);
+                }
+                .node-circle {
+                    stroke-width: 2;
+                    fill: #1a1f2e;
+                }
+                .node-healthy .node-circle { stroke: #00ba7c; }
+                .node-degraded .node-circle { stroke: #ffd400; }
+                .node-unhealthy .node-circle { stroke: #f4212e; }
+                .node-external .node-circle { stroke: #7c3aed; }
+                .node-label {
+                    fill: #e7e9ea;
+                    font-size: 11px;
+                    font-weight: 600;
+                    text-anchor: middle;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                }
+                .node-metrics {
+                    fill: #8b949e;
+                    font-size: 9px;
+                    text-anchor: middle;
+                    font-family: 'SF Mono', Consolas, monospace;
+                }
+                .link {
+                    stroke: #3f4346;
+                    stroke-width: 2;
+                    fill: none;
+                }
+                .link-active {
+                    stroke: rgba(29, 155, 240, 0.6);
+                    stroke-dasharray: 6 4;
+                    animation: flow 0.8s linear infinite;
+                }
+                .link-error {
+                    stroke: rgba(244, 33, 46, 0.7);
+                    stroke-width: 2.5;
+                }
+                @keyframes flow {
+                    from { stroke-dashoffset: 10; }
+                    to { stroke-dashoffset: 0; }
+                }
+                .tooltip {
+                    position: absolute;
+                    background: rgba(26, 31, 46, 0.95);
+                    border: 1px solid #3f4346;
+                    border-radius: 8px;
+                    padding: 12px 16px;
+                    font-size: 12px;
+                    pointer-events: none;
+                    z-index: 100;
+                    display: none;
+                    color: #e7e9ea;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    min-width: 180px;
+                    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+                }
+                .tooltip.visible { display: block; }
+                .tooltip-title { font-weight: 600; margin-bottom: 8px; }
+                .tooltip-row { display: flex; justify-content: space-between; padding: 4px 0; }
+                .tooltip-label { color: #71767b; }
+                .tooltip-value { font-family: 'SF Mono', Consolas, monospace; }
+                .legend {
+                    position: absolute;
+                    bottom: 10px;
+                    left: 10px;
+                    display: flex;
+                    gap: 16px;
+                    font-size: 11px;
+                    color: #8b949e;
+                    background: rgba(15, 20, 25, 0.8);
+                    padding: 6px 12px;
+                    border-radius: 6px;
+                }
+                .legend-item { display: flex; align-items: center; gap: 6px; }
+                .legend-dot {
+                    width: 10px;
+                    height: 10px;
+                    border-radius: 50%;
+                    box-shadow: 0 0 6px currentColor;
+                }
+                .legend-dot.healthy { background: #00ba7c; color: #00ba7c; }
+                .legend-dot.degraded { background: #ffd400; color: #ffd400; }
+                .legend-dot.unhealthy { background: #f4212e; color: #f4212e; }
+                .legend-dot.external { background: #7c3aed; color: #7c3aed; }
+                .empty {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    height: 100%;
+                    color: #71767b;
+                    font-size: 14px;
+                }
+            </style>
+            <div class="container">
+                <svg></svg>
+                <div class="tooltip"></div>
+                <div class="legend">
+                    <div class="legend-item"><span class="legend-dot healthy"></span>Healthy</div>
+                    <div class="legend-item"><span class="legend-dot degraded"></span>Degraded</div>
+                    <div class="legend-item"><span class="legend-dot unhealthy"></span>Unhealthy</div>
+                    <div class="legend-item"><span class="legend-dot external"></span>External</div>
+                </div>
+            </div>
+        `;
+    }
+
+    initSVG() {
+        const container = this.shadowRoot.querySelector('.container');
+        this.svg = d3.select(this.shadowRoot.querySelector('svg'));
+
+        // Set up zoom
+        this.zoom = d3.zoom()
+            .scaleExtent([0.3, 3])
+            .on('zoom', (event) => {
+                this.svg.select('.main-group').attr('transform', event.transform);
+            });
+
+        this.svg.call(this.zoom);
+
+        // Create main group for zoom/pan
+        this.svg.append('g').attr('class', 'main-group');
+    }
+
+    setupWebSocket() {
+        if (window.dwSocket) {
+            this._unsubscribe = window.dwSocket.subscribe('servicemap', (msg) => {
+                if (msg.payload) {
+                    this.updateData(msg.payload);
+                }
+            });
+        }
+
+        // Fallback to polling if auto-refresh is set
+        const refreshInterval = parseInt(this.getAttribute('auto-refresh'));
+        if (refreshInterval > 0) {
+            this._refreshInterval = setInterval(() => this.fetchData(), refreshInterval);
+        }
+    }
+
+    async fetchData() {
+        try {
+            const response = await fetch('/api/servicemap');
+            if (response.ok) {
+                const data = await response.json();
+                this.updateData(data);
+            }
+        } catch (e) {
+            console.error('[ServiceMap] Failed to fetch data:', e);
+        }
+    }
+
+    updateData(data) {
+        this.data = data;
+        this.renderGraph();
+    }
+
+    renderGraph() {
+        if (!this.data || !this.svg) return;
+
+        const { nodes, edges } = this.data;
+        if (!nodes || nodes.length === 0) {
+            this.shadowRoot.querySelector('.container').innerHTML = '<div class="empty">No services discovered yet</div>';
+            return;
+        }
+
+        const container = this.shadowRoot.querySelector('.container');
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+
+        const mainGroup = this.svg.select('.main-group');
+        mainGroup.selectAll('*').remove();
+
+        // Create links
+        const linkGroup = mainGroup.append('g').attr('class', 'links');
+        const links = linkGroup.selectAll('.link')
+            .data(edges || [])
+            .enter()
+            .append('line')
+            .attr('class', d => {
+                let cls = 'link';
+                if (d.errorRate > 0.01) cls += ' link-error';
+                else if (d.rps > 0) cls += ' link-active';
+                return cls;
+            });
+
+        // Create nodes
+        const nodeGroup = mainGroup.append('g').attr('class', 'nodes');
+        const nodeElements = nodeGroup.selectAll('.node')
+            .data(nodes)
+            .enter()
+            .append('g')
+            .attr('class', d => `node node-${d.status || 'healthy'}`)
+            .call(d3.drag()
+                .on('start', this.dragStarted.bind(this))
+                .on('drag', this.dragged.bind(this))
+                .on('end', this.dragEnded.bind(this)));
+
+        nodeElements.append('circle')
+            .attr('class', 'node-circle')
+            .attr('r', 20);
+
+        nodeElements.append('text')
+            .attr('class', 'node-label')
+            .attr('dy', 30)
+            .text(d => d.name.length > 12 ? d.name.substring(0, 10) + '...' : d.name);
+
+        nodeElements.append('text')
+            .attr('class', 'node-metrics')
+            .attr('dy', 42)
+            .text(d => d.latency ? `${d.latency}ms` : '');
+
+        // Tooltip events
+        const tooltip = this.shadowRoot.querySelector('.tooltip');
+        nodeElements
+            .on('mouseover', (event, d) => {
+                tooltip.innerHTML = `
+                    <div class="tooltip-title">${d.name}</div>
+                    <div class="tooltip-row"><span class="tooltip-label">Status</span><span class="tooltip-value">${d.status || 'unknown'}</span></div>
+                    <div class="tooltip-row"><span class="tooltip-label">RPS</span><span class="tooltip-value">${d.rps || 0}</span></div>
+                    <div class="tooltip-row"><span class="tooltip-label">Latency</span><span class="tooltip-value">${d.latency || 0}ms</span></div>
+                    <div class="tooltip-row"><span class="tooltip-label">Error Rate</span><span class="tooltip-value">${((d.errorRate || 0) * 100).toFixed(2)}%</span></div>
+                `;
+                tooltip.classList.add('visible');
+            })
+            .on('mousemove', (event) => {
+                const rect = container.getBoundingClientRect();
+                tooltip.style.left = (event.clientX - rect.left + 10) + 'px';
+                tooltip.style.top = (event.clientY - rect.top - 10) + 'px';
+            })
+            .on('mouseout', () => {
+                tooltip.classList.remove('visible');
+            });
+
+        // Set up force simulation
+        const nodeMap = new Map(nodes.map((n, i) => [n.id || n.name, i]));
+
+        this.simulation = d3.forceSimulation(nodes)
+            .force('link', d3.forceLink(edges || [])
+                .id(d => d.id || d.name)
+                .distance(100))
+            .force('charge', d3.forceManyBody().strength(-300))
+            .force('center', d3.forceCenter(width / 2, height / 2))
+            .force('collision', d3.forceCollide().radius(40));
+
+        this.simulation.on('tick', () => {
+            links
+                .attr('x1', d => d.source.x)
+                .attr('y1', d => d.source.y)
+                .attr('x2', d => d.target.x)
+                .attr('y2', d => d.target.y);
+
+            nodeElements.attr('transform', d => `translate(${d.x},${d.y})`);
+        });
+    }
+
+    dragStarted(event, d) {
+        if (!event.active) this.simulation.alphaTarget(0.3).restart();
+        d.fx = d.x;
+        d.fy = d.y;
+    }
+
+    dragged(event, d) {
+        d.fx = event.x;
+        d.fy = event.y;
+    }
+
+    dragEnded(event, d) {
+        if (!event.active) this.simulation.alphaTarget(0);
+        d.fx = null;
+        d.fy = null;
+    }
+
+    // Public API
+    refresh() {
+        this.fetchData();
+    }
+
+    zoomIn() {
+        this.svg.transition().call(this.zoom.scaleBy, 1.3);
+    }
+
+    zoomOut() {
+        this.svg.transition().call(this.zoom.scaleBy, 0.7);
+    }
+
+    resetZoom() {
+        this.svg.transition().call(this.zoom.transform, d3.zoomIdentity);
+    }
+}
+
+customElements.define('dw-service-map', ServiceMap);
+
+/**
+ * SLO Status Cards Widget
+ * Error budgets, burn rate visualization
+ */
+class SloCards extends HTMLElement {
+    constructor() {
+        super();
+        this.slos = [];
+        this.view = 'grid'; // grid, list
+    }
+
+    connectedCallback() {
+        this.render();
+        this.loadSLOs();
+        this.refreshInterval = setInterval(() => this.loadSLOs(), 60000);
+    }
+
+    disconnectedCallback() {
+        if (this.refreshInterval) clearInterval(this.refreshInterval);
+    }
+
+    async loadSLOs() {
+        try {
+            const resp = await fetch('/api/slos');
+            if (resp.ok) {
+                this.slos = await resp.json() || [];
+                this.renderContent();
+            }
+        } catch (e) {
+            console.error('Failed to load SLOs:', e);
+        }
+    }
+
+    setView(view) {
+        this.view = view;
+        this.querySelectorAll('.view-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.view === view);
+        });
+        this.renderContent();
+    }
+
+    render() {
+        this.innerHTML = `
+            <style>${this.getStyles()}</style>
+            <div class="slo-cards">
+                <div class="slo-header">
+                    <div class="slo-title">
+                        <span class="title-icon">🎯</span>
+                        <span>SLO Status</span>
+                    </div>
+                    <div class="slo-view-toggle">
+                        <button class="view-btn active" data-view="grid" onclick="this.getRootNode().host.setView('grid')">▦</button>
+                        <button class="view-btn" data-view="list" onclick="this.getRootNode().host.setView('list')">☰</button>
+                    </div>
+                    <button class="btn-sm" onclick="this.getRootNode().host.showCreateSLO()">+ New SLO</button>
+                </div>
+                <div class="slo-summary" id="slo-summary"></div>
+                <div class="slo-content" id="slo-content">
+                    <div class="loading">Loading SLOs...</div>
+                </div>
+            </div>
+        `;
+    }
+
+    renderContent() {
+        const container = this.querySelector('#slo-content');
+        const summary = this.querySelector('#slo-summary');
+
+        // Calculate summary stats
+        const atRisk = this.slos.filter(s => this.getBudgetRemaining(s) < 20).length;
+        const healthy = this.slos.filter(s => this.getBudgetRemaining(s) >= 20).length;
+
+        summary.innerHTML = `
+            <div class="summary-stat">
+                <span class="stat-value healthy">${healthy}</span>
+                <span class="stat-label">Healthy</span>
+            </div>
+            <div class="summary-stat">
+                <span class="stat-value at-risk">${atRisk}</span>
+                <span class="stat-label">At Risk</span>
+            </div>
+            <div class="summary-stat">
+                <span class="stat-value">${this.slos.length}</span>
+                <span class="stat-label">Total</span>
+            </div>
+        `;
+
+        if (this.slos.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <span class="icon">🎯</span>
+                    <p>No SLOs configured</p>
+                    <button class="btn-create" onclick="this.getRootNode().host.showCreateSLO()">Create SLO</button>
+                </div>
+            `;
+            return;
+        }
+
+        const sorted = [...this.slos].sort((a, b) => this.getBudgetRemaining(a) - this.getBudgetRemaining(b));
+
+        if (this.view === 'grid') {
+            container.innerHTML = `
+                <div class="slo-grid">
+                    ${sorted.map(slo => this.renderSLOCard(slo)).join('')}
+                </div>
+            `;
+        } else {
+            container.innerHTML = `
+                <div class="slo-list">
+                    ${sorted.map(slo => this.renderSLORow(slo)).join('')}
+                </div>
+            `;
+        }
+    }
+
+    renderSLOCard(slo) {
+        const budgetRemaining = this.getBudgetRemaining(slo);
+        const burnRate = this.getBurnRate(slo);
+        const status = this.getStatus(budgetRemaining);
+        const current = slo.current_value || 0;
+        const target = slo.target || 99.9;
+
+        return `
+            <div class="slo-card status-${status}" onclick="this.getRootNode().host.showSLODetail('${slo.id}')">
+                <div class="card-header">
+                    <span class="slo-name">${this.escapeHtml(slo.name)}</span>
+                    <span class="slo-service">${this.escapeHtml(slo.service || '')}</span>
+                </div>
+                <div class="card-body">
+                    <div class="budget-ring">
+                        <svg viewBox="0 0 36 36" class="budget-chart">
+                            <path class="budget-bg" d="M18 2.0845
+                                a 15.9155 15.9155 0 0 1 0 31.831
+                                a 15.9155 15.9155 0 0 1 0 -31.831"/>
+                            <path class="budget-fill ${status}" stroke-dasharray="${budgetRemaining}, 100" d="M18 2.0845
+                                a 15.9155 15.9155 0 0 1 0 31.831
+                                a 15.9155 15.9155 0 0 1 0 -31.831"/>
+                        </svg>
+                        <div class="budget-value">
+                            <span class="budget-pct">${budgetRemaining.toFixed(0)}%</span>
+                            <span class="budget-label">budget</span>
+                        </div>
+                    </div>
+                    <div class="slo-metrics">
+                        <div class="metric">
+                            <span class="metric-label">Current</span>
+                            <span class="metric-value">${current.toFixed(2)}%</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Target</span>
+                            <span class="metric-value">${target}%</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Burn Rate</span>
+                            <span class="metric-value ${burnRate > 1 ? 'warning' : ''}">${burnRate.toFixed(1)}x</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer">
+                    <span class="slo-window">${slo.window || '30d'} window</span>
+                    ${status === 'critical' ? '<span class="alert-badge">At Risk</span>' : ''}
+                </div>
+            </div>
+        `;
+    }
+
+    renderSLORow(slo) {
+        const budgetRemaining = this.getBudgetRemaining(slo);
+        const burnRate = this.getBurnRate(slo);
+        const status = this.getStatus(budgetRemaining);
+        const current = slo.current_value || 0;
+        const target = slo.target || 99.9;
+
+        return `
+            <div class="slo-row status-${status}" onclick="this.getRootNode().host.showSLODetail('${slo.id}')">
+                <div class="row-status">
+                    <span class="status-dot ${status}"></span>
+                </div>
+                <div class="row-name">
+                    <span class="slo-name">${this.escapeHtml(slo.name)}</span>
+                    <span class="slo-service">${this.escapeHtml(slo.service || '')}</span>
+                </div>
+                <div class="row-metric">
+                    <span class="metric-label">Current</span>
+                    <span class="metric-value">${current.toFixed(2)}%</span>
+                </div>
+                <div class="row-metric">
+                    <span class="metric-label">Target</span>
+                    <span class="metric-value">${target}%</span>
+                </div>
+                <div class="row-budget">
+                    <div class="budget-bar">
+                        <div class="budget-bar-fill ${status}" style="width: ${budgetRemaining}%"></div>
+                    </div>
+                    <span class="budget-text">${budgetRemaining.toFixed(0)}% remaining</span>
+                </div>
+                <div class="row-burn">
+                    <span class="${burnRate > 1 ? 'warning' : ''}">${burnRate.toFixed(1)}x</span>
+                </div>
+            </div>
+        `;
+    }
+
+    getBudgetRemaining(slo) {
+        if (slo.budget_remaining !== undefined) return Math.max(0, Math.min(100, slo.budget_remaining));
+
+        const target = slo.target || 99.9;
+        const current = slo.current_value || target;
+        const errorBudget = 100 - target;
+        const errorUsed = Math.max(0, target - current);
+        const remaining = ((errorBudget - errorUsed) / errorBudget) * 100;
+
+        return Math.max(0, Math.min(100, remaining));
+    }
+
+    getBurnRate(slo) {
+        if (slo.burn_rate !== undefined) return slo.burn_rate;
+        // Estimate burn rate based on current vs target
+        const budgetRemaining = this.getBudgetRemaining(slo);
+        // Assuming 30 days, if we're at 50% with 15 days left, burn rate is 1x
+        return budgetRemaining < 50 ? 1.5 : 1.0;
+    }
+
+    getStatus(budgetRemaining) {
+        if (budgetRemaining < 10) return 'critical';
+        if (budgetRemaining < 30) return 'warning';
+        return 'healthy';
+    }
+
+    showSLODetail(id) {
+        const slo = this.slos.find(s => s.id === id);
+        if (!slo) return;
+
+        const budgetRemaining = this.getBudgetRemaining(slo);
+        const burnRate = this.getBurnRate(slo);
+
+        alert(`
+SLO: ${slo.name}
+Service: ${slo.service || '—'}
+Target: ${slo.target}%
+Current: ${(slo.current_value || 0).toFixed(2)}%
+Budget Remaining: ${budgetRemaining.toFixed(1)}%
+Burn Rate: ${burnRate.toFixed(2)}x
+Window: ${slo.window || '30d'}
+        `);
+    }
+
+    showCreateSLO() {
+        window.location.href = '/#slos';
+    }
+
+    escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    getStyles() {
+        return `
+            .slo-cards {
+                background: var(--bg-card, #16181c);
+                border-radius: 8px;
+                overflow: hidden;
+                height: 100%;
+                display: flex;
+                flex-direction: column;
+            }
+
+            .slo-header {
+                display: flex;
+                align-items: center;
+                gap: 1rem;
+                padding: 0.75rem 1rem;
+                background: var(--bg-elevated, #1e2128);
+                border-bottom: 1px solid var(--border, #2f3336);
+            }
+
+            .slo-title {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                font-weight: 600;
+            }
+
+            .slo-view-toggle {
+                display: flex;
+                margin-left: auto;
+                background: var(--bg-card, #16181c);
+                border-radius: 4px;
+                overflow: hidden;
+            }
+
+            .view-btn {
+                background: transparent;
+                border: none;
+                color: var(--text-muted, #71767b);
+                padding: 0.4rem 0.6rem;
+                cursor: pointer;
+            }
+
+            .view-btn:hover { color: var(--text, #e7e9ea); }
+            .view-btn.active { background: var(--bg-elevated, #1e2128); color: var(--text, #e7e9ea); }
+
+            .btn-sm {
+                background: var(--accent, #1d9bf0);
+                border: none;
+                color: white;
+                padding: 0.4rem 0.75rem;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 0.8rem;
+            }
+
+            .slo-summary {
+                display: flex;
+                gap: 2rem;
+                padding: 0.75rem 1rem;
+                border-bottom: 1px solid var(--border, #2f3336);
+            }
+
+            .summary-stat {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .stat-value {
+                font-size: 1.5rem;
+                font-weight: 600;
+            }
+
+            .stat-value.healthy { color: var(--success, #00ba7c); }
+            .stat-value.at-risk { color: var(--error, #f4212e); }
+
+            .stat-label {
+                font-size: 0.7rem;
+                color: var(--text-muted, #71767b);
+                text-transform: uppercase;
+            }
+
+            .slo-content {
+                flex: 1;
+                overflow-y: auto;
+                padding: 1rem;
+            }
+
+            .loading, .empty-state {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                padding: 3rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .empty-state .icon { font-size: 2.5rem; margin-bottom: 1rem; }
+
+            .btn-create {
+                background: var(--accent, #1d9bf0);
+                border: none;
+                color: white;
+                padding: 0.5rem 1rem;
+                border-radius: 6px;
+                cursor: pointer;
+                margin-top: 1rem;
+            }
+
+            .slo-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+                gap: 1rem;
+            }
+
+            .slo-card {
+                background: var(--bg-elevated, #1e2128);
+                border-radius: 8px;
+                padding: 1rem;
+                cursor: pointer;
+                border: 1px solid var(--border, #2f3336);
+                transition: all 0.15s;
+            }
+
+            .slo-card:hover { border-color: var(--accent, #1d9bf0); }
+
+            .slo-card.status-critical { border-left: 4px solid var(--error, #f4212e); }
+            .slo-card.status-warning { border-left: 4px solid var(--warning, #ffd400); }
+            .slo-card.status-healthy { border-left: 4px solid var(--success, #00ba7c); }
+
+            .card-header {
+                margin-bottom: 1rem;
+            }
+
+            .slo-name {
+                display: block;
+                font-weight: 600;
+                font-size: 0.9rem;
+                margin-bottom: 0.25rem;
+            }
+
+            .slo-service {
+                font-size: 0.75rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .card-body {
+                display: flex;
+                gap: 1rem;
+                align-items: center;
+            }
+
+            .budget-ring {
+                position: relative;
+                width: 80px;
+                height: 80px;
+            }
+
+            .budget-chart {
+                transform: rotate(-90deg);
+            }
+
+            .budget-bg {
+                fill: none;
+                stroke: var(--bg-card, #16181c);
+                stroke-width: 3.5;
+            }
+
+            .budget-fill {
+                fill: none;
+                stroke-width: 3.5;
+                stroke-linecap: round;
+            }
+
+            .budget-fill.healthy { stroke: var(--success, #00ba7c); }
+            .budget-fill.warning { stroke: var(--warning, #ffd400); }
+            .budget-fill.critical { stroke: var(--error, #f4212e); }
+
+            .budget-value {
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                text-align: center;
+            }
+
+            .budget-pct {
+                display: block;
+                font-size: 1.1rem;
+                font-weight: 600;
+            }
+
+            .budget-label {
+                font-size: 0.6rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .slo-metrics {
+                flex: 1;
+            }
+
+            .metric {
+                display: flex;
+                justify-content: space-between;
+                padding: 0.25rem 0;
+                font-size: 0.8rem;
+            }
+
+            .metric-label { color: var(--text-muted, #71767b); }
+            .metric-value.warning { color: var(--warning, #ffd400); }
+
+            .card-footer {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-top: 1rem;
+                padding-top: 0.75rem;
+                border-top: 1px solid var(--border, #2f3336);
+            }
+
+            .slo-window {
+                font-size: 0.7rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .alert-badge {
+                background: var(--error, #f4212e);
+                color: white;
+                padding: 0.15rem 0.5rem;
+                border-radius: 10px;
+                font-size: 0.65rem;
+            }
+
+            /* List view */
+            .slo-list { display: flex; flex-direction: column; gap: 0.5rem; }
+
+            .slo-row {
+                display: flex;
+                align-items: center;
+                gap: 1rem;
+                padding: 0.75rem;
+                background: var(--bg-elevated, #1e2128);
+                border-radius: 6px;
+                cursor: pointer;
+            }
+
+            .slo-row:hover { background: var(--bg-card, #16181c); }
+
+            .row-status {
+                width: 20px;
+            }
+
+            .status-dot {
+                display: block;
+                width: 10px;
+                height: 10px;
+                border-radius: 50%;
+            }
+
+            .status-dot.healthy { background: var(--success, #00ba7c); }
+            .status-dot.warning { background: var(--warning, #ffd400); }
+            .status-dot.critical { background: var(--error, #f4212e); }
+
+            .row-name {
+                flex: 1;
+            }
+
+            .row-name .slo-name {
+                margin-bottom: 0;
+            }
+
+            .row-metric {
+                width: 80px;
+                text-align: right;
+            }
+
+            .row-metric .metric-label {
+                display: block;
+                font-size: 0.65rem;
+            }
+
+            .row-metric .metric-value {
+                font-size: 0.85rem;
+            }
+
+            .row-budget {
+                width: 150px;
+            }
+
+            .budget-bar {
+                height: 6px;
+                background: var(--bg-card, #16181c);
+                border-radius: 3px;
+                overflow: hidden;
+                margin-bottom: 0.25rem;
+            }
+
+            .budget-bar-fill {
+                height: 100%;
+                border-radius: 3px;
+            }
+
+            .budget-bar-fill.healthy { background: var(--success, #00ba7c); }
+            .budget-bar-fill.warning { background: var(--warning, #ffd400); }
+            .budget-bar-fill.critical { background: var(--error, #f4212e); }
+
+            .budget-text {
+                font-size: 0.7rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .row-burn {
+                width: 50px;
+                text-align: right;
+                font-size: 0.85rem;
+            }
+
+            .row-burn .warning { color: var(--warning, #ffd400); }
+        `;
+    }
+}
+
+customElements.define('slo-cards', SloCards);
+
+/**
+ * Stat Gauge Component
+ * Big number display with optional gauge arc
+ */
+class StatGauge extends HTMLElement {
+    constructor() {
+        super();
+        this.value = 0;
+        this.animationFrame = null;
+    }
+
+    connectedCallback() {
+        this.render();
+        this.loadData();
+
+        // Auto-refresh
+        this.refreshInterval = setInterval(() => this.loadData(), 10000);
+    }
+
+    disconnectedCallback() {
+        if (this.refreshInterval) clearInterval(this.refreshInterval);
+        if (this.animationFrame) cancelAnimationFrame(this.animationFrame);
+    }
+
+    static get observedAttributes() {
+        return ['metric', 'title', 'unit', 'min', 'max', 'thresholds', 'show-gauge'];
+    }
+
+    get metric() { return this.getAttribute('metric') || ''; }
+    get title() { return this.getAttribute('title') || 'Metric'; }
+    get unit() { return this.getAttribute('unit') || ''; }
+    get min() { return parseFloat(this.getAttribute('min')) || 0; }
+    get max() { return parseFloat(this.getAttribute('max')) || 100; }
+    get showGauge() { return this.getAttribute('show-gauge') !== 'false'; }
+    get thresholds() {
+        try {
+            return JSON.parse(this.getAttribute('thresholds') || '{}');
+        } catch { return {}; }
+    }
+
+    render() {
+        this.innerHTML = `
+            <style>
+                .stat-gauge-container {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    height: 100%;
+                    background: var(--bg-card, #16181c);
+                    border-radius: 8px;
+                    padding: 1rem;
+                }
+                .stat-gauge-title {
+                    font-size: 0.85rem;
+                    color: var(--text-muted, #71767b);
+                    margin-bottom: 0.5rem;
+                }
+                .stat-gauge-value-container {
+                    position: relative;
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                }
+                .stat-gauge-svg {
+                    width: 120px;
+                    height: 70px;
+                }
+                .stat-gauge-bg {
+                    fill: none;
+                    stroke: var(--border-color, #2f3336);
+                    stroke-width: 8;
+                    stroke-linecap: round;
+                }
+                .stat-gauge-fill {
+                    fill: none;
+                    stroke-width: 8;
+                    stroke-linecap: round;
+                    transition: stroke-dashoffset 0.5s ease, stroke 0.3s ease;
+                }
+                .stat-gauge-value {
+                    font-size: 2rem;
+                    font-weight: 700;
+                    line-height: 1;
+                    margin-top: 0.5rem;
+                }
+                .stat-gauge-unit {
+                    font-size: 0.9rem;
+                    color: var(--text-muted, #71767b);
+                    margin-top: 0.25rem;
+                }
+                .stat-gauge-trend {
+                    display: flex;
+                    align-items: center;
+                    gap: 0.25rem;
+                    font-size: 0.8rem;
+                    margin-top: 0.5rem;
+                }
+                .stat-gauge-trend.up { color: #22c55e; }
+                .stat-gauge-trend.down { color: #f43f5e; }
+                .stat-gauge-trend.neutral { color: var(--text-muted, #71767b); }
+            </style>
+            <div class="stat-gauge-container">
+                <div class="stat-gauge-title">${this.title}</div>
+                <div class="stat-gauge-value-container">
+                    ${this.showGauge ? `
+                    <svg class="stat-gauge-svg" viewBox="0 0 120 70">
+                        <path class="stat-gauge-bg" d="M 10 60 A 50 50 0 0 1 110 60"></path>
+                        <path class="stat-gauge-fill" id="gauge-fill" d="M 10 60 A 50 50 0 0 1 110 60"></path>
+                    </svg>
+                    ` : ''}
+                    <div class="stat-gauge-value" id="value">--</div>
+                    <div class="stat-gauge-unit">${this.unit}</div>
+                </div>
+                <div class="stat-gauge-trend neutral" id="trend">
+                    <span id="trend-icon">→</span>
+                    <span id="trend-value">--</span>
+                </div>
+            </div>
+        `;
+    }
+
+    async loadData() {
+        try {
+            const resp = await fetch(`/api/metrics/current?metric=${this.metric}`);
+            let data;
+            if (!resp.ok) {
+                data = this.generateDemoData();
+            } else {
+                data = await resp.json();
+            }
+            this.updateDisplay(data);
+        } catch (e) {
+            this.updateDisplay(this.generateDemoData());
+        }
+    }
+
+    generateDemoData() {
+        const metrics = {
+            'cpu_usage': { value: 45 + Math.random() * 30, trend: Math.random() * 10 - 5 },
+            'memory_usage': { value: 60 + Math.random() * 20, trend: Math.random() * 5 - 2 },
+            'requests_per_second': { value: 800 + Math.random() * 400, trend: Math.random() * 100 - 50 },
+            'error_rate': { value: Math.random() * 2, trend: Math.random() * 0.5 - 0.25 },
+            'active_connections': { value: Math.floor(100 + Math.random() * 200), trend: Math.floor(Math.random() * 20 - 10) },
+        };
+        return metrics[this.metric] || { value: 50 + Math.random() * 50, trend: Math.random() * 10 - 5 };
+    }
+
+    updateDisplay(data) {
+        const { value, trend } = data;
+        const prevValue = this.value;
+        this.value = value;
+
+        // Animate value
+        this.animateValue(prevValue, value);
+
+        // Update gauge
+        if (this.showGauge) {
+            this.updateGauge(value);
+        }
+
+        // Update trend
+        const trendEl = this.querySelector('#trend');
+        const trendIcon = this.querySelector('#trend-icon');
+        const trendValue = this.querySelector('#trend-value');
+
+        if (trend > 0.5) {
+            trendEl.className = 'stat-gauge-trend up';
+            trendIcon.textContent = '↑';
+            trendValue.textContent = `+${this.formatValue(trend)}`;
+        } else if (trend < -0.5) {
+            trendEl.className = 'stat-gauge-trend down';
+            trendIcon.textContent = '↓';
+            trendValue.textContent = this.formatValue(trend);
+        } else {
+            trendEl.className = 'stat-gauge-trend neutral';
+            trendIcon.textContent = '→';
+            trendValue.textContent = 'stable';
+        }
+    }
+
+    animateValue(from, to) {
+        const valueEl = this.querySelector('#value');
+        if (!valueEl) return;
+
+        const duration = 500;
+        const start = performance.now();
+
+        const animate = (now) => {
+            const elapsed = now - start;
+            const progress = Math.min(elapsed / duration, 1);
+            const eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
+
+            const current = from + (to - from) * eased;
+            valueEl.textContent = this.formatValue(current);
+            valueEl.style.color = this.getValueColor(current);
+
+            if (progress < 1) {
+                this.animationFrame = requestAnimationFrame(animate);
+            }
+        };
+
+        this.animationFrame = requestAnimationFrame(animate);
+    }
+
+    updateGauge(value) {
+        const fill = this.querySelector('#gauge-fill');
+        if (!fill) return;
+
+        const percentage = Math.min(1, Math.max(0, (value - this.min) / (this.max - this.min)));
+
+        // Arc length calculation
+        const arcLength = Math.PI * 50; // radius 50, semicircle
+        const dashOffset = arcLength * (1 - percentage);
+
+        fill.style.strokeDasharray = arcLength;
+        fill.style.strokeDashoffset = dashOffset;
+        fill.style.stroke = this.getValueColor(value);
+    }
+
+    getValueColor(value) {
+        const { warning, critical } = this.thresholds;
+
+        if (critical !== undefined && value >= critical) return '#f43f5e';
+        if (warning !== undefined && value >= warning) return '#f59e0b';
+        return '#22c55e';
+    }
+
+    formatValue(value) {
+        if (value >= 1000000) return (value / 1000000).toFixed(1) + 'M';
+        if (value >= 1000) return (value / 1000).toFixed(1) + 'K';
+        if (Number.isInteger(value)) return value.toString();
+        return value.toFixed(1);
+    }
+}
+
+customElements.define('stat-gauge', StatGauge);
+
+/**
+ * Status Badge Web Component
+ *
+ * Usage:
+ *   <dw-badge status="ok"></dw-badge>
+ *   <dw-badge status="warning" pulse></dw-badge>
+ *   <dw-badge status="error" size="lg">Custom Text</dw-badge>
+ *
+ * Attributes:
+ *   - status: ok|warning|error|info|muted|pending|alerting|healthy|degraded|unhealthy
+ *   - pulse: Add pulsing animation
+ *   - size: sm|md|lg (default: md)
+ */
+class StatusBadge extends HTMLElement {
+    static get observedAttributes() {
+        return ['status', 'pulse', 'size'];
+    }
+
+    constructor() {
+        super();
+        this.attachShadow({ mode: 'open' });
+    }
+
+    connectedCallback() {
+        this.render();
+    }
+
+    attributeChangedCallback() {
+        this.render();
+    }
+
+    render() {
+        const status = this.getAttribute('status') || 'muted';
+        const pulse = this.hasAttribute('pulse');
+        const size = this.getAttribute('size') || 'md';
+
+        // Map status to colors
+        const statusColors = {
+            ok: { bg: 'rgba(0, 186, 124, 0.2)', color: '#00ba7c' },
+            success: { bg: 'rgba(0, 186, 124, 0.2)', color: '#00ba7c' },
+            healthy: { bg: 'rgba(0, 186, 124, 0.2)', color: '#00ba7c' },
+            up: { bg: 'rgba(0, 186, 124, 0.2)', color: '#00ba7c' },
+            resolved: { bg: 'rgba(0, 186, 124, 0.2)', color: '#00ba7c' },
+            met: { bg: 'rgba(0, 186, 124, 0.2)', color: '#00ba7c' },
+
+            warning: { bg: 'rgba(255, 212, 0, 0.2)', color: '#ffd400' },
+            pending: { bg: 'rgba(255, 212, 0, 0.2)', color: '#ffd400' },
+            degraded: { bg: 'rgba(255, 212, 0, 0.2)', color: '#ffd400' },
+            acknowledged: { bg: 'rgba(255, 212, 0, 0.2)', color: '#ffd400' },
+            at_risk: { bg: 'rgba(255, 212, 0, 0.2)', color: '#ffd400' },
+
+            error: { bg: 'rgba(244, 33, 46, 0.2)', color: '#f4212e' },
+            alerting: { bg: 'rgba(244, 33, 46, 0.2)', color: '#f4212e' },
+            unhealthy: { bg: 'rgba(244, 33, 46, 0.2)', color: '#f4212e' },
+            down: { bg: 'rgba(244, 33, 46, 0.2)', color: '#f4212e' },
+            triggered: { bg: 'rgba(244, 33, 46, 0.2)', color: '#f4212e' },
+            critical: { bg: 'rgba(244, 33, 46, 0.2)', color: '#f4212e' },
+            breached: { bg: 'rgba(244, 33, 46, 0.2)', color: '#f4212e' },
+
+            info: { bg: 'rgba(29, 155, 240, 0.2)', color: '#1d9bf0' },
+
+            muted: { bg: 'rgba(47, 51, 54, 1)', color: '#71767b' },
+            unknown: { bg: 'rgba(47, 51, 54, 1)', color: '#71767b' },
+            no_data: { bg: 'rgba(47, 51, 54, 1)', color: '#71767b' }
+        };
+
+        const colors = statusColors[status.toLowerCase()] || statusColors.muted;
+
+        // Size mappings
+        const sizes = {
+            sm: { padding: '0.1rem 0.3rem', fontSize: '0.6rem' },
+            md: { padding: '0.15rem 0.4rem', fontSize: '0.65rem' },
+            lg: { padding: '0.2rem 0.5rem', fontSize: '0.7rem' }
+        };
+        const sizeStyle = sizes[size] || sizes.md;
+
+        // Get display text
+        const text = this.textContent.trim() || this.formatStatus(status);
+
+        this.shadowRoot.innerHTML = `
+            <style>
+                :host {
+                    display: inline-block;
+                }
+                .badge {
+                    padding: ${sizeStyle.padding};
+                    border-radius: 3px;
+                    font-size: ${sizeStyle.fontSize};
+                    font-weight: 600;
+                    text-transform: uppercase;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    background: ${colors.bg};
+                    color: ${colors.color};
+                    white-space: nowrap;
+                    ${pulse ? 'animation: pulse 1s infinite;' : ''}
+                }
+                @keyframes pulse {
+                    0%, 100% { opacity: 1; }
+                    50% { opacity: 0.6; }
+                }
+            </style>
+            <span class="badge">${text}</span>
+        `;
+    }
+
+    formatStatus(status) {
+        return status.replace(/_/g, ' ');
+    }
+
+    // Public API
+    setStatus(status) {
+        this.setAttribute('status', status);
+    }
+
+    getStatus() {
+        return this.getAttribute('status');
+    }
+}
+
+customElements.define('dw-badge', StatusBadge);
+
+/**
+ * Synthetics Uptime Widget
+ * Shows synthetic monitor status and uptime percentages
+ */
+class SyntheticsUptime extends HTMLElement {
+    constructor() {
+        super();
+        this.monitors = [];
+        this.loading = true;
+        this.filter = 'all'; // all, failing, passing
+    }
+
+    connectedCallback() {
+        this.render();
+        this.loadData();
+    }
+
+    async loadData() {
+        this.loading = true;
+        this.render();
+
+        try {
+            const resp = await fetch('/api/synthetics/monitors');
+            if (resp.ok) {
+                this.monitors = await resp.json() || [];
+            }
+        } catch (e) {
+            console.error('Failed to load synthetics data:', e);
+        } finally {
+            this.loading = false;
+            this.render();
+        }
+    }
+
+    setFilter(filter) {
+        this.filter = filter;
+        this.render();
+    }
+
+    getFilteredMonitors() {
+        if (this.filter === 'all') return this.monitors;
+        if (this.filter === 'failing') return this.monitors.filter(m => m.status === 'failing' || m.status === 'degraded');
+        if (this.filter === 'passing') return this.monitors.filter(m => m.status === 'passing');
+        return this.monitors;
+    }
+
+    render() {
+        if (this.loading) {
+            this.innerHTML = `
+                <style>${this.getStyles()}</style>
+                <div class="synthetics-uptime">
+                    <div class="synth-header">
+                        <span class="title-icon">🔍</span>
+                        <span>Synthetic Monitors</span>
+                    </div>
+                    <div class="loading">Loading monitors...</div>
+                </div>
+            `;
+            return;
+        }
+
+        const monitors = this.getFilteredMonitors();
+        const stats = this.calculateStats();
+
+        this.innerHTML = `
+            <style>${this.getStyles()}</style>
+            <div class="synthetics-uptime">
+                <div class="synth-header">
+                    <div class="header-title">
+                        <span class="title-icon">🔍</span>
+                        <span>Synthetic Monitors</span>
+                    </div>
+                    <button class="btn-refresh" onclick="this.getRootNode().host.loadData()">↻</button>
+                </div>
+
+                <div class="stats-bar">
+                    <div class="stat-item">
+                        <span class="stat-value">${stats.total}</span>
+                        <span class="stat-label">Total</span>
+                    </div>
+                    <div class="stat-item passing">
+                        <span class="stat-value">${stats.passing}</span>
+                        <span class="stat-label">Passing</span>
+                    </div>
+                    <div class="stat-item failing">
+                        <span class="stat-value">${stats.failing}</span>
+                        <span class="stat-label">Failing</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-value">${stats.avgUptime.toFixed(1)}%</span>
+                        <span class="stat-label">Avg Uptime</span>
+                    </div>
+                </div>
+
+                <div class="filter-tabs">
+                    <button class="tab ${this.filter === 'all' ? 'active' : ''}"
+                            onclick="this.getRootNode().host.setFilter('all')">All</button>
+                    <button class="tab ${this.filter === 'failing' ? 'active' : ''}"
+                            onclick="this.getRootNode().host.setFilter('failing')">Failing</button>
+                    <button class="tab ${this.filter === 'passing' ? 'active' : ''}"
+                            onclick="this.getRootNode().host.setFilter('passing')">Passing</button>
+                </div>
+
+                <div class="monitors-list">
+                    ${monitors.length === 0 ? `
+                        <div class="empty-state">No monitors match filter</div>
+                    ` : monitors.map(m => this.renderMonitor(m)).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    renderMonitor(monitor) {
+        const statusClass = monitor.status === 'passing' ? 'passing' :
+                           monitor.status === 'degraded' ? 'degraded' : 'failing';
+        const statusIcon = monitor.status === 'passing' ? '✓' :
+                          monitor.status === 'degraded' ? '!' : '✗';
+
+        return `
+            <div class="monitor-item ${statusClass}">
+                <div class="monitor-status">
+                    <span class="status-icon">${statusIcon}</span>
+                </div>
+                <div class="monitor-info">
+                    <div class="monitor-name">${this.escapeHtml(monitor.name)}</div>
+                    <div class="monitor-url">${this.escapeHtml(monitor.url || monitor.endpoint || '')}</div>
+                </div>
+                <div class="monitor-metrics">
+                    <div class="metric">
+                        <span class="metric-value">${monitor.uptime?.toFixed(1) || 0}%</span>
+                        <span class="metric-label">Uptime</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-value">${monitor.latency_ms || 0}ms</span>
+                        <span class="metric-label">Latency</span>
+                    </div>
+                </div>
+                <div class="uptime-bar">
+                    ${this.renderUptimeBar(monitor.history || [])}
+                </div>
+            </div>
+        `;
+    }
+
+    renderUptimeBar(history) {
+        // Show last 30 checks as small bars
+        const checks = history.slice(-30);
+        if (checks.length === 0) {
+            // Generate placeholder
+            return '<div class="uptime-placeholder">No history</div>';
+        }
+
+        return `
+            <div class="uptime-bars">
+                ${checks.map(c => `
+                    <div class="uptime-tick ${c.success ? 'up' : 'down'}"
+                         title="${c.timestamp ? new Date(c.timestamp).toLocaleString() : ''}: ${c.success ? 'Up' : 'Down'}">
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+
+    calculateStats() {
+        const total = this.monitors.length;
+        const passing = this.monitors.filter(m => m.status === 'passing').length;
+        const failing = this.monitors.filter(m => m.status === 'failing' || m.status === 'degraded').length;
+        const avgUptime = total > 0
+            ? this.monitors.reduce((sum, m) => sum + (m.uptime || 0), 0) / total
+            : 100;
+
+        return { total, passing, failing, avgUptime };
+    }
+
+    escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    getStyles() {
+        return `
+            .synthetics-uptime {
+                background: var(--bg-card, #16181c);
+                border-radius: 8px;
+                overflow: hidden;
+                height: 100%;
+                display: flex;
+                flex-direction: column;
+            }
+
+            .synth-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 0.75rem 1rem;
+                background: var(--bg-elevated, #1e2128);
+                border-bottom: 1px solid var(--border, #2f3336);
+            }
+
+            .header-title {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                font-weight: 600;
+            }
+
+            .btn-refresh {
+                background: var(--bg-card, #16181c);
+                border: 1px solid var(--border, #2f3336);
+                border-radius: 4px;
+                color: var(--text, #e7e9ea);
+                padding: 0.25rem 0.5rem;
+                cursor: pointer;
+            }
+
+            .loading, .empty-state {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 2rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .stats-bar {
+                display: flex;
+                justify-content: space-around;
+                padding: 1rem;
+                background: var(--bg-elevated, #1e2128);
+                border-bottom: 1px solid var(--border, #2f3336);
+            }
+
+            .stat-item {
+                text-align: center;
+            }
+
+            .stat-value {
+                display: block;
+                font-size: 1.25rem;
+                font-weight: 600;
+            }
+
+            .stat-item.passing .stat-value { color: var(--success, #00ba7c); }
+            .stat-item.failing .stat-value { color: var(--error, #f4212e); }
+
+            .stat-label {
+                font-size: 0.7rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .filter-tabs {
+                display: flex;
+                gap: 0.5rem;
+                padding: 0.75rem 1rem;
+                border-bottom: 1px solid var(--border, #2f3336);
+            }
+
+            .tab {
+                background: var(--bg-elevated, #1e2128);
+                border: 1px solid var(--border, #2f3336);
+                border-radius: 4px;
+                color: var(--text-muted, #71767b);
+                padding: 0.4rem 0.75rem;
+                font-size: 0.8rem;
+                cursor: pointer;
+            }
+
+            .tab.active {
+                background: var(--accent, #1d9bf0);
+                border-color: var(--accent, #1d9bf0);
+                color: white;
+            }
+
+            .monitors-list {
+                flex: 1;
+                overflow-y: auto;
+                padding: 0.5rem;
+            }
+
+            .monitor-item {
+                display: grid;
+                grid-template-columns: auto 1fr auto auto;
+                gap: 0.75rem;
+                align-items: center;
+                padding: 0.75rem;
+                margin-bottom: 0.5rem;
+                background: var(--bg-elevated, #1e2128);
+                border-radius: 6px;
+                border-left: 3px solid var(--border, #2f3336);
+            }
+
+            .monitor-item.passing { border-left-color: var(--success, #00ba7c); }
+            .monitor-item.degraded { border-left-color: var(--warning, #ffd400); }
+            .monitor-item.failing { border-left-color: var(--error, #f4212e); }
+
+            .monitor-status {
+                width: 28px;
+                height: 28px;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 0.9rem;
+                font-weight: bold;
+            }
+
+            .monitor-item.passing .monitor-status {
+                background: rgba(0, 186, 124, 0.2);
+                color: var(--success, #00ba7c);
+            }
+
+            .monitor-item.degraded .monitor-status {
+                background: rgba(255, 212, 0, 0.2);
+                color: var(--warning, #ffd400);
+            }
+
+            .monitor-item.failing .monitor-status {
+                background: rgba(244, 33, 46, 0.2);
+                color: var(--error, #f4212e);
+            }
+
+            .monitor-info {
+                min-width: 0;
+            }
+
+            .monitor-name {
+                font-weight: 500;
+                font-size: 0.9rem;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .monitor-url {
+                font-size: 0.75rem;
+                color: var(--text-muted, #71767b);
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .monitor-metrics {
+                display: flex;
+                gap: 1rem;
+            }
+
+            .metric {
+                text-align: center;
+            }
+
+            .metric-value {
+                display: block;
+                font-size: 0.9rem;
+                font-weight: 600;
+            }
+
+            .metric-label {
+                font-size: 0.65rem;
+                color: var(--text-muted, #71767b);
+            }
+
+            .uptime-bar {
+                width: 120px;
+            }
+
+            .uptime-bars {
+                display: flex;
+                gap: 2px;
+                height: 20px;
+                align-items: flex-end;
+            }
+
+            .uptime-tick {
+                flex: 1;
+                min-width: 3px;
+                height: 100%;
+                border-radius: 1px;
+            }
+
+            .uptime-tick.up { background: var(--success, #00ba7c); }
+            .uptime-tick.down { background: var(--error, #f4212e); }
+
+            .uptime-placeholder {
+                font-size: 0.7rem;
+                color: var(--text-muted, #71767b);
+                text-align: center;
+            }
+
+            @media (max-width: 700px) {
+                .monitor-item {
+                    grid-template-columns: auto 1fr;
+                    grid-template-rows: auto auto;
+                }
+
+                .monitor-metrics, .uptime-bar {
+                    grid-column: 1 / -1;
+                }
+            }
+        `;
+    }
+}
+
+customElements.define('synthetics-uptime', SyntheticsUptime);
+
+/**
+ * Toast Notifications System
+ * Global notification manager for alerts and messages
+ */
+class ToastContainer extends HTMLElement {
+    constructor() {
+        super();
+        this.toasts = [];
+        this.maxToasts = 5;
+    }
+
+    connectedCallback() {
+        this.render();
+        // Expose global function
+        window.showToast = this.addToast.bind(this);
+
+        // Listen for custom events
+        window.addEventListener('toast', (e) => {
+            this.addToast(e.detail);
+        });
+
+        // Listen for WebSocket notifications
+        if (window.ws) {
+            window.ws.subscribe('notification', (data) => {
+                this.addToast({
+                    type: data.severity || 'info',
+                    title: data.title,
+                    message: data.message,
+                    duration: data.duration
+                });
+            });
+        }
+    }
+
+    addToast(options) {
+        const toast = {
+            id: Date.now() + Math.random(),
+            type: options.type || 'info', // info, success, warning, error
+            title: options.title || '',
+            message: options.message || '',
+            duration: options.duration !== undefined ? options.duration : 5000,
+            action: options.action || null, // { label, callback }
+            timestamp: new Date()
+        };
+
+        this.toasts.unshift(toast);
+
+        // Limit visible toasts
+        if (this.toasts.length > this.maxToasts) {
+            this.toasts = this.toasts.slice(0, this.maxToasts);
+        }
+
+        this.render();
+
+        // Auto dismiss
+        if (toast.duration > 0) {
+            setTimeout(() => this.removeToast(toast.id), toast.duration);
+        }
+
+        return toast.id;
+    }
+
+    removeToast(id) {
+        const index = this.toasts.findIndex(t => t.id === id);
+        if (index !== -1) {
+            // Add exit animation class
+            const toastEl = this.querySelector(`[data-toast-id="${id}"]`);
+            if (toastEl) {
+                toastEl.classList.add('exiting');
+                setTimeout(() => {
+                    this.toasts = this.toasts.filter(t => t.id !== id);
+                    this.render();
+                }, 300);
+            } else {
+                this.toasts = this.toasts.filter(t => t.id !== id);
+                this.render();
+            }
+        }
+    }
+
+    handleAction(id) {
+        const toast = this.toasts.find(t => t.id === id);
+        if (toast && toast.action && toast.action.callback) {
+            toast.action.callback();
+        }
+        this.removeToast(id);
+    }
+
+    render() {
+        this.innerHTML = `
+            <style>${this.getStyles()}</style>
+            <div class="toast-container">
+                ${this.toasts.map(toast => this.renderToast(toast)).join('')}
+            </div>
+        `;
+    }
+
+    renderToast(toast) {
+        const icon = this.getIcon(toast.type);
+
+        return `
+            <div class="toast toast-${toast.type}" data-toast-id="${toast.id}">
+                <div class="toast-icon">${icon}</div>
+                <div class="toast-content">
+                    ${toast.title ? `<div class="toast-title">${this.escapeHtml(toast.title)}</div>` : ''}
+                    ${toast.message ? `<div class="toast-message">${this.escapeHtml(toast.message)}</div>` : ''}
+                </div>
+                <div class="toast-actions">
+                    ${toast.action ? `
+                        <button class="toast-action-btn" onclick="this.getRootNode().host.handleAction(${toast.id})">
+                            ${this.escapeHtml(toast.action.label)}
+                        </button>
+                    ` : ''}
+                    <button class="toast-close" onclick="this.getRootNode().host.removeToast(${toast.id})">×</button>
+                </div>
+                ${toast.duration > 0 ? `
+                    <div class="toast-progress">
+                        <div class="toast-progress-bar" style="animation-duration: ${toast.duration}ms"></div>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    }
+
+    getIcon(type) {
+        switch (type) {
+            case 'success': return '✓';
+            case 'warning': return '⚠';
+            case 'error': return '✗';
+            default: return 'ℹ';
+        }
+    }
+
+    escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    getStyles() {
+        return `
+            :host {
+                position: fixed;
+                top: 1rem;
+                right: 1rem;
+                z-index: 10000;
+                pointer-events: none;
+            }
+
+            .toast-container {
+                display: flex;
+                flex-direction: column;
+                gap: 0.5rem;
+                max-width: 400px;
+            }
+
+            .toast {
+                display: flex;
+                align-items: flex-start;
+                gap: 0.75rem;
+                padding: 0.875rem 1rem;
+                background: var(--bg-elevated, #1e2128);
+                border-radius: 8px;
+                border-left: 4px solid var(--border, #2f3336);
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+                pointer-events: auto;
+                animation: slideIn 0.3s ease-out;
+                position: relative;
+                overflow: hidden;
+            }
+
+            .toast.exiting {
+                animation: slideOut 0.3s ease-in forwards;
+            }
+
+            @keyframes slideIn {
+                from {
+                    transform: translateX(100%);
+                    opacity: 0;
+                }
+                to {
+                    transform: translateX(0);
+                    opacity: 1;
+                }
+            }
+
+            @keyframes slideOut {
+                from {
+                    transform: translateX(0);
+                    opacity: 1;
+                }
+                to {
+                    transform: translateX(100%);
+                    opacity: 0;
+                }
+            }
+
+            .toast-info { border-left-color: var(--accent, #1d9bf0); }
+            .toast-success { border-left-color: var(--success, #00ba7c); }
+            .toast-warning { border-left-color: var(--warning, #ffd400); }
+            .toast-error { border-left-color: var(--error, #f4212e); }
+
+            .toast-icon {
+                width: 24px;
+                height: 24px;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 0.8rem;
+                font-weight: bold;
+                flex-shrink: 0;
+            }
+
+            .toast-info .toast-icon {
+                background: rgba(29, 155, 240, 0.2);
+                color: var(--accent, #1d9bf0);
+            }
+
+            .toast-success .toast-icon {
+                background: rgba(0, 186, 124, 0.2);
+                color: var(--success, #00ba7c);
+            }
+
+            .toast-warning .toast-icon {
+                background: rgba(255, 212, 0, 0.2);
+                color: var(--warning, #ffd400);
+            }
+
+            .toast-error .toast-icon {
+                background: rgba(244, 33, 46, 0.2);
+                color: var(--error, #f4212e);
+            }
+
+            .toast-content {
+                flex: 1;
+                min-width: 0;
+            }
+
+            .toast-title {
+                font-weight: 600;
+                font-size: 0.9rem;
+                margin-bottom: 0.25rem;
+            }
+
+            .toast-message {
+                font-size: 0.8rem;
+                color: var(--text-muted, #71767b);
+                line-height: 1.4;
+            }
+
+            .toast-actions {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                flex-shrink: 0;
+            }
+
+            .toast-action-btn {
+                background: var(--accent, #1d9bf0);
+                border: none;
+                border-radius: 4px;
+                color: white;
+                padding: 0.3rem 0.6rem;
+                font-size: 0.75rem;
+                cursor: pointer;
+                font-weight: 500;
+            }
+
+            .toast-action-btn:hover {
+                filter: brightness(1.1);
+            }
+
+            .toast-close {
+                background: none;
+                border: none;
+                color: var(--text-muted, #71767b);
+                font-size: 1.25rem;
+                cursor: pointer;
+                padding: 0;
+                line-height: 1;
+            }
+
+            .toast-close:hover {
+                color: var(--text, #e7e9ea);
+            }
+
+            .toast-progress {
+                position: absolute;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                height: 3px;
+                background: rgba(255, 255, 255, 0.1);
+            }
+
+            .toast-progress-bar {
+                height: 100%;
+                width: 100%;
+                transform-origin: left;
+                animation: progress linear forwards;
+            }
+
+            @keyframes progress {
+                from { transform: scaleX(1); }
+                to { transform: scaleX(0); }
+            }
+
+            .toast-info .toast-progress-bar { background: var(--accent, #1d9bf0); }
+            .toast-success .toast-progress-bar { background: var(--success, #00ba7c); }
+            .toast-warning .toast-progress-bar { background: var(--warning, #ffd400); }
+            .toast-error .toast-progress-bar { background: var(--error, #f4212e); }
+
+            @media (max-width: 500px) {
+                :host {
+                    left: 1rem;
+                    right: 1rem;
+                }
+
+                .toast-container {
+                    max-width: none;
+                }
+            }
+        `;
+    }
+}
+
+customElements.define('toast-container', ToastContainer);
+
+// Convenience functions for programmatic use
+window.toast = {
+    info: (message, title = '', options = {}) => window.showToast({ type: 'info', message, title, ...options }),
+    success: (message, title = '', options = {}) => window.showToast({ type: 'success', message, title, ...options }),
+    warning: (message, title = '', options = {}) => window.showToast({ type: 'warning', message, title, ...options }),
+    error: (message, title = '', options = {}) => window.showToast({ type: 'error', message, title, ...options })
+};
+
+/**
+ * Trace Viewer Web Component
+ *
+ * Usage:
+ *   <dw-trace-viewer></dw-trace-viewer>
+ *   <dw-trace-viewer trace-id="abc123"></dw-trace-viewer>
+ */
+class TraceViewer extends HTMLElement {
+    static get observedAttributes() {
+        return ['trace-id'];
+    }
+
+    constructor() {
+        super();
+        this.attachShadow({ mode: 'open' });
+        this.traces = [];
+        this.selectedTrace = null;
+        this.selectedSpan = null;
+        this._unsubscribe = null;
+    }
+
+    connectedCallback() {
+        this.render();
+        this.setupWebSocket();
+        this.fetchTraces();
+    }
+
+    disconnectedCallback() {
+        if (this._unsubscribe) {
+            this._unsubscribe();
+            this._unsubscribe = null;
+        }
+    }
+
+    attributeChangedCallback(name, oldValue, newValue) {
+        if (name === 'trace-id' && newValue) {
+            this.loadTrace(newValue);
+        }
+    }
+
+    render() {
+        this.shadowRoot.innerHTML = `
+            <style>
+                :host {
+                    display: flex;
+                    flex-direction: column;
+                    height: 100%;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    background: #0f1419;
+                    color: #e7e9ea;
+                }
+                .trace-list {
+                    max-height: 200px;
+                    overflow-y: auto;
+                    border-bottom: 1px solid #2f3336;
+                }
+                .trace-item {
+                    padding: 0.6rem 0.8rem;
+                    border-bottom: 1px solid #2f3336;
+                    cursor: pointer;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    transition: background 0.15s;
+                }
+                .trace-item:hover { background: rgba(29, 155, 240, 0.1); }
+                .trace-item.selected {
+                    background: linear-gradient(90deg, rgba(29, 155, 240, 0.2), rgba(29, 155, 240, 0.1));
+                    border-left: 3px solid #1d9bf0;
+                }
+                .trace-name { font-weight: 500; font-size: 0.75rem; }
+                .trace-service { color: #71767b; font-size: 0.65rem; }
+                .trace-duration { font-family: 'SF Mono', Consolas, monospace; font-size: 0.7rem; }
+                .trace-status {
+                    display: inline-block;
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 50%;
+                    margin-right: 0.5rem;
+                }
+                .trace-status.ok { background: #00ba7c; box-shadow: 0 0 6px #00ba7c; }
+                .trace-status.error { background: #f4212e; box-shadow: 0 0 6px #f4212e; }
+                .waterfall { flex: 1; overflow: auto; }
+                .waterfall-header {
+                    display: flex;
+                    font-size: 0.65rem;
+                    color: #536471;
+                    padding: 8px 12px;
+                    background: rgba(47, 51, 54, 0.5);
+                    border-bottom: 1px solid #2f3336;
+                    position: sticky;
+                    top: 0;
+                    z-index: 5;
+                }
+                .waterfall-header-op { width: 240px; flex-shrink: 0; }
+                .waterfall-header-timeline { flex: 1; display: flex; justify-content: space-between; padding: 0 8px; }
+                .span-row {
+                    display: flex;
+                    align-items: center;
+                    padding: 4px 12px;
+                    cursor: pointer;
+                    border-left: 3px solid transparent;
+                }
+                .span-row:hover { background: rgba(29, 155, 240, 0.08); }
+                .span-row.selected { background: rgba(29, 155, 240, 0.15); border-left-color: #1d9bf0; }
+                .span-info { width: 240px; flex-shrink: 0; overflow: hidden; }
+                .span-name {
+                    font-size: 0.75rem;
+                    font-weight: 500;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+                .span-service {
+                    font-size: 0.65rem;
+                    padding: 1px 5px;
+                    border-radius: 3px;
+                    background: rgba(255, 255, 255, 0.05);
+                }
+                .span-timeline { flex: 1; position: relative; height: 24px; margin: 0 8px; }
+                .span-bar {
+                    position: absolute;
+                    height: 16px;
+                    top: 4px;
+                    border-radius: 4px;
+                    min-width: 4px;
+                    transition: all 0.15s;
+                }
+                .span-bar:hover { transform: scaleY(1.2); }
+                .span-bar.error { box-shadow: 0 0 8px rgba(244, 33, 46, 0.5); }
+                .span-duration {
+                    position: absolute;
+                    right: 8px;
+                    font-size: 0.65rem;
+                    font-family: 'SF Mono', Consolas, monospace;
+                    color: #8b949e;
+                }
+                .empty {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    height: 100%;
+                    color: #71767b;
+                    font-size: 0.85rem;
+                }
+                .service-colors {
+                    --svc-0: #1d9bf0;
+                    --svc-1: #00ba7c;
+                    --svc-2: #ffd400;
+                    --svc-3: #7c3aed;
+                    --svc-4: #f97316;
+                    --svc-5: #06b6d4;
+                }
+            </style>
+            <div class="service-colors"></div>
+            <div class="trace-list" id="trace-list"></div>
+            <div class="waterfall" id="waterfall">
+                <div class="empty">Select a trace to view details</div>
+            </div>
+        `;
+    }
+
+    setupWebSocket() {
+        if (window.dwSocket) {
+            this._unsubscribe = window.dwSocket.subscribe('traces', (msg) => {
+                if (msg.type === 'new' && msg.payload) {
+                    this.addTrace(msg.payload);
+                }
+            });
+        }
+    }
+
+    async fetchTraces() {
+        try {
+            const response = await fetch('/api/traces?limit=20');
+            if (response.ok) {
+                const data = await response.json();
+                this.traces = data.traces || [];
+                this.renderTraceList();
+            }
+        } catch (e) {
+            console.error('[TraceViewer] Failed to fetch traces:', e);
+        }
+    }
+
+    addTrace(trace) {
+        this.traces.unshift(trace);
+        if (this.traces.length > 50) {
+            this.traces.pop();
+        }
+        this.renderTraceList();
+    }
+
+    renderTraceList() {
+        const list = this.shadowRoot.getElementById('trace-list');
+        if (!list) return;
+
+        list.innerHTML = this.traces.map((trace, i) => `
+            <div class="trace-item ${this.selectedTrace?.id === trace.id ? 'selected' : ''}"
+                 data-index="${i}">
+                <div>
+                    <span class="trace-status ${trace.status === 'error' ? 'error' : 'ok'}"></span>
+                    <span class="trace-name">${trace.name || trace.operationName || 'Unknown'}</span>
+                    <div class="trace-service">${trace.service || trace.serviceName || ''}</div>
+                </div>
+                <div class="trace-meta">
+                    <span class="trace-duration">${this.formatDuration(trace.duration)}</span>
                 </div>
             </div>
         `).join('');
 
-        let opsHtml = '';
-        if (operations && operations.length > 0) {
-            opsHtml = `<div style="padding:0.5rem;">
-                <div style="font-size:0.7rem;color:#71767b;margin-bottom:0.5rem;">Operation Breakdown</div>
-                ${operations.map(op => `
-                    <div style="display:flex;justify-content:space-between;padding:0.3rem 0;font-size:0.75rem;">
-                        <span>${op.operation}</span>
-                        <span style="font-family:monospace;">${op.count}</span>
-                    </div>
-                `).join('')}
-            </div>`;
+        // Add click handlers
+        list.querySelectorAll('.trace-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const index = parseInt(item.dataset.index);
+                this.selectTrace(this.traces[index]);
+            });
+        });
+    }
+
+    selectTrace(trace) {
+        this.selectedTrace = trace;
+        this.renderTraceList();
+        this.renderWaterfall(trace);
+    }
+
+    async loadTrace(traceId) {
+        try {
+            const response = await fetch(`/api/traces/${traceId}`);
+            if (response.ok) {
+                const trace = await response.json();
+                this.selectTrace(trace);
+            }
+        } catch (e) {
+            console.error('[TraceViewer] Failed to load trace:', e);
         }
+    }
 
-        content.innerHTML = statsHtml + opsHtml;
-    }).catch(() => {
-        content.innerHTML = '<div class="empty-state">Database statistics not available</div>';
-    });
-}
-
-// Cardinality functions
-function loadCardinality() {
-    const content = document.getElementById('cardinality-content');
-    if (!content) return;
-
-    Promise.all([
-        fetch('/api/cardinality/stats').then(r => r.ok ? r.json() : null),
-        fetch('/api/cardinality/high?threshold=500').then(r => r.ok ? r.json() : null)
-    ]).then(([stats, highCard]) => {
-        if (!stats) {
-            content.innerHTML = '<div class="empty-state">Cardinality data not available yet. Start collecting metrics to analyze cardinality.</div>';
+    renderWaterfall(trace) {
+        const waterfall = this.shadowRoot.getElementById('waterfall');
+        if (!trace || !trace.spans || trace.spans.length === 0) {
+            waterfall.innerHTML = '<div class="empty">No spans in this trace</div>';
             return;
         }
 
-        const highCardMetrics = highCard?.metrics || [];
-        const highCardCount = highCard?.count || 0;
+        const spans = trace.spans;
+        const minTime = Math.min(...spans.map(s => s.startTime || 0));
+        const maxTime = Math.max(...spans.map(s => (s.startTime || 0) + (s.duration || 0)));
+        const totalDuration = maxTime - minTime;
 
-        const summaryHtml = `
-            <div class="cardinality-summary">
-                <div class="cardinality-stat">
-                    <span class="cardinality-stat-value">${stats.total_metrics || 0}</span>
-                    <span class="cardinality-stat-label">Total Metrics</span>
+        // Service colors
+        const services = [...new Set(spans.map(s => s.service || s.serviceName))];
+        const colors = ['#1d9bf0', '#00ba7c', '#ffd400', '#7c3aed', '#f97316', '#06b6d4'];
+
+        waterfall.innerHTML = `
+            <div class="waterfall-header">
+                <div class="waterfall-header-op">Operation</div>
+                <div class="waterfall-header-timeline">
+                    <span>0ms</span>
+                    <span>${this.formatDuration(totalDuration / 1000000)}</span>
                 </div>
-                <div class="cardinality-stat">
-                    <span class="cardinality-stat-value">${stats.total_series || 0}</span>
-                    <span class="cardinality-stat-label">Total Series</span>
+            </div>
+            <div class="waterfall-body">
+                ${spans.map((span, i) => {
+                    const start = ((span.startTime || 0) - minTime) / totalDuration * 100;
+                    const width = Math.max((span.duration || 0) / totalDuration * 100, 0.5);
+                    const serviceIndex = services.indexOf(span.service || span.serviceName);
+                    const color = colors[serviceIndex % colors.length];
+
+                    return `
+                        <div class="span-row" data-index="${i}">
+                            <div class="span-info">
+                                <div class="span-name">${span.operationName || span.name || 'Unknown'}</div>
+                                <span class="span-service" style="color: ${color}">${span.service || span.serviceName || ''}</span>
+                            </div>
+                            <div class="span-timeline">
+                                <div class="span-bar ${span.status === 'error' ? 'error' : ''}"
+                                     style="left: ${start}%; width: ${width}%; background: ${color};">
+                                </div>
+                                <span class="span-duration">${this.formatDuration(span.duration / 1000000)}</span>
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        `;
+    }
+
+    formatDuration(ms) {
+        if (ms < 1) return `${(ms * 1000).toFixed(0)}µs`;
+        if (ms < 1000) return `${ms.toFixed(1)}ms`;
+        return `${(ms / 1000).toFixed(2)}s`;
+    }
+
+    // Public API
+    refresh() {
+        this.fetchTraces();
+    }
+}
+
+customElements.define('dw-trace-viewer', TraceViewer);
+
+/**
+ * Trace Waterfall Widget
+ * Displays a distributed trace as a Gantt-style waterfall chart
+ */
+class TraceWaterfall extends HTMLElement {
+    constructor() {
+        super();
+        this.trace = null;
+        this.selectedSpan = null;
+        this.timeScale = 1;
+    }
+
+    connectedCallback() {
+        this.render();
+        this.setupEventListeners();
+    }
+
+    static get observedAttributes() {
+        return ['trace-id'];
+    }
+
+    attributeChangedCallback(name, oldValue, newValue) {
+        if (name === 'trace-id' && newValue && newValue !== oldValue) {
+            this.loadTrace(newValue);
+        }
+    }
+
+    async loadTrace(traceId) {
+        try {
+            this.showLoading();
+            const resp = await fetch(`/api/traces/${traceId}`);
+            if (!resp.ok) throw new Error('Trace not found');
+            this.trace = await resp.json();
+            this.render();
+        } catch (e) {
+            this.showError(e.message);
+        }
+    }
+
+    setTrace(trace) {
+        this.trace = trace;
+        this.render();
+    }
+
+    showLoading() {
+        this.innerHTML = `
+            <div class="trace-waterfall-loading">
+                <div class="spinner"></div>
+                <span>Loading trace...</span>
+            </div>
+        `;
+    }
+
+    showError(message) {
+        this.innerHTML = `
+            <div class="trace-waterfall-error">
+                <span class="icon">⚠️</span>
+                <span>${message}</span>
+            </div>
+        `;
+    }
+
+    render() {
+        if (!this.trace || !this.trace.spans || this.trace.spans.length === 0) {
+            this.innerHTML = `
+                <div class="trace-waterfall-empty">
+                    <span class="icon">🔍</span>
+                    <p>Select a trace to view</p>
                 </div>
-                <div class="cardinality-stat">
-                    <span class="cardinality-stat-value ${highCardCount > 0 ? 'warning' : ''}">${highCardCount}</span>
-                    <span class="cardinality-stat-label">High Cardinality</span>
+            `;
+            return;
+        }
+
+        const spans = this.organizeSpans(this.trace.spans);
+        const { minTime, maxTime, duration } = this.getTimeRange(spans);
+
+        this.innerHTML = `
+            <style>${this.getStyles()}</style>
+            <div class="trace-waterfall">
+                <div class="trace-header">
+                    <div class="trace-title">
+                        <span class="trace-id">${this.trace.trace_id?.substring(0, 16) || 'Unknown'}...</span>
+                        <span class="trace-duration">${this.formatDuration(duration)}</span>
+                        <span class="trace-spans">${spans.length} spans</span>
+                    </div>
+                    <div class="trace-actions">
+                        <button class="btn-icon" onclick="this.getRootNode().host.zoomIn()" title="Zoom In">+</button>
+                        <button class="btn-icon" onclick="this.getRootNode().host.zoomOut()" title="Zoom Out">−</button>
+                        <button class="btn-icon" onclick="this.getRootNode().host.resetZoom()" title="Reset">⟲</button>
+                    </div>
                 </div>
-                <div class="cardinality-stat">
-                    <span class="cardinality-stat-value">${stats.total_tag_keys || 0}</span>
-                    <span class="cardinality-stat-label">Tag Keys</span>
+                <div class="trace-timeline">
+                    ${this.renderTimeline(minTime, duration)}
+                </div>
+                <div class="trace-spans-container">
+                    ${spans.map((span, i) => this.renderSpan(span, i, minTime, duration)).join('')}
+                </div>
+                <div class="span-details" id="span-details" style="display: none;">
+                    <div class="span-details-header">
+                        <span class="span-details-title">Span Details</span>
+                        <button class="btn-close" onclick="this.getRootNode().host.closeDetails()">×</button>
+                    </div>
+                    <div class="span-details-content" id="span-details-content"></div>
                 </div>
             </div>
         `;
+    }
 
-        let metricsHtml = '';
-        if (highCardMetrics.length > 0) {
-            const maxSeries = Math.max(...highCardMetrics.map(m => m.series_count || 0), 1);
-            metricsHtml = `<div style="font-size:0.7rem;color:#71767b;margin:0.5rem 0;">High Cardinality Metrics (>${highCard.threshold || 500} series)</div>` +
-                highCardMetrics.slice(0, 10).map(m => {
-                    const pct = ((m.series_count || 0) / maxSeries) * 100;
-                    const barClass = m.series_count > 5000 ? 'danger' : m.series_count > 1000 ? 'warning' : '';
-                    return `<div class="cardinality-metric">
-                        <div style="flex:1;min-width:0;">
-                            <div style="display:flex;justify-content:space-between;align-items:center;">
-                                <span class="cardinality-metric-name">${escapeHtml(m.name || m.metric_name)}</span>
-                                <span class="cardinality-metric-series ${m.series_count > 5000 ? 'danger' : m.series_count > 1000 ? 'warning' : ''}">${m.series_count}</span>
-                            </div>
-                            <div class="cardinality-bar"><div class="cardinality-bar-fill ${barClass}" style="width:${pct}%"></div></div>
-                        </div>
-                    </div>`;
-                }).join('');
-        } else {
-            metricsHtml = '<div style="padding:0.5rem;font-size:0.75rem;color:#71767b;">No high cardinality metrics detected. Looking good!</div>';
+    organizeSpans(spans) {
+        // Build parent-child relationships and calculate depth
+        const spanMap = new Map();
+        spans.forEach(s => spanMap.set(s.span_id, { ...s, children: [], depth: 0 }));
+
+        const roots = [];
+        spanMap.forEach(span => {
+            if (span.parent_span_id && spanMap.has(span.parent_span_id)) {
+                spanMap.get(span.parent_span_id).children.push(span);
+            } else {
+                roots.push(span);
+            }
+        });
+
+        // Flatten with depth
+        const result = [];
+        const flatten = (span, depth) => {
+            span.depth = depth;
+            result.push(span);
+            span.children
+                .sort((a, b) => new Date(a.start_time) - new Date(b.start_time))
+                .forEach(child => flatten(child, depth + 1));
+        };
+
+        roots
+            .sort((a, b) => new Date(a.start_time) - new Date(b.start_time))
+            .forEach(root => flatten(root, 0));
+
+        return result;
+    }
+
+    getTimeRange(spans) {
+        let minTime = Infinity;
+        let maxTime = -Infinity;
+
+        spans.forEach(span => {
+            const start = new Date(span.start_time).getTime();
+            const end = new Date(span.end_time).getTime();
+            minTime = Math.min(minTime, start);
+            maxTime = Math.max(maxTime, end);
+        });
+
+        return { minTime, maxTime, duration: maxTime - minTime };
+    }
+
+    renderTimeline(minTime, duration) {
+        const ticks = 5;
+        const tickMarks = [];
+        for (let i = 0; i <= ticks; i++) {
+            const pct = (i / ticks) * 100;
+            const time = (duration * i) / ticks;
+            tickMarks.push(`
+                <div class="timeline-tick" style="left: ${pct}%">
+                    <span class="tick-label">${this.formatDuration(time)}</span>
+                </div>
+            `);
         }
+        return `
+            <div class="timeline-ruler">
+                ${tickMarks.join('')}
+            </div>
+        `;
+    }
 
-        content.innerHTML = summaryHtml + metricsHtml;
-    }).catch(() => {
-        content.innerHTML = '<div class="empty-state">Cardinality explorer not available</div>';
-    });
+    renderSpan(span, index, minTime, duration) {
+        const startTime = new Date(span.start_time).getTime();
+        const endTime = new Date(span.end_time).getTime();
+        const spanDuration = endTime - startTime;
+
+        const leftPct = ((startTime - minTime) / duration) * 100;
+        const widthPct = Math.max((spanDuration / duration) * 100, 0.5); // Min width for visibility
+
+        const isError = span.status === 'ERROR' || span.status === 'error';
+        const statusClass = isError ? 'span-error' : 'span-ok';
+        const serviceColor = this.getServiceColor(span.service_name);
+
+        return `
+            <div class="span-row" data-span-index="${index}" onclick="this.getRootNode().host.selectSpan(${index})">
+                <div class="span-info" style="padding-left: ${span.depth * 20 + 8}px">
+                    <span class="span-service" style="background: ${serviceColor}">${span.service_name || 'unknown'}</span>
+                    <span class="span-name">${span.name || 'unnamed'}</span>
+                </div>
+                <div class="span-bar-container">
+                    <div class="span-bar ${statusClass}"
+                         style="left: ${leftPct}%; width: ${widthPct}%; background: ${serviceColor};"
+                         title="${span.name}: ${this.formatDuration(spanDuration)}">
+                        ${widthPct > 8 ? `<span class="span-duration">${this.formatDuration(spanDuration)}</span>` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    selectSpan(index) {
+        const spans = this.organizeSpans(this.trace.spans);
+        const span = spans[index];
+        if (!span) return;
+
+        this.selectedSpan = span;
+
+        // Highlight selected row
+        this.querySelectorAll('.span-row').forEach((row, i) => {
+            row.classList.toggle('selected', i === index);
+        });
+
+        // Show details panel
+        const detailsPanel = this.querySelector('#span-details');
+        const detailsContent = this.querySelector('#span-details-content');
+
+        detailsPanel.style.display = 'block';
+        detailsContent.innerHTML = this.renderSpanDetails(span);
+    }
+
+    renderSpanDetails(span) {
+        const attrs = span.attributes || {};
+        const attrRows = Object.entries(attrs).map(([k, v]) => `
+            <tr>
+                <td class="attr-key">${this.escapeHtml(k)}</td>
+                <td class="attr-value">${this.escapeHtml(String(v))}</td>
+            </tr>
+        `).join('');
+
+        return `
+            <div class="detail-section">
+                <div class="detail-row">
+                    <span class="detail-label">Service</span>
+                    <span class="detail-value">${span.service_name || 'unknown'}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Operation</span>
+                    <span class="detail-value">${span.name || 'unnamed'}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Span ID</span>
+                    <span class="detail-value mono">${span.span_id}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Duration</span>
+                    <span class="detail-value">${this.formatDuration(span.duration_ms)}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Status</span>
+                    <span class="detail-value status-${span.status?.toLowerCase() || 'ok'}">${span.status || 'OK'}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Kind</span>
+                    <span class="detail-value">${span.kind || 'INTERNAL'}</span>
+                </div>
+            </div>
+            ${Object.keys(attrs).length > 0 ? `
+                <div class="detail-section">
+                    <h4>Attributes</h4>
+                    <table class="attrs-table">
+                        <tbody>${attrRows}</tbody>
+                    </table>
+                </div>
+            ` : ''}
+        `;
+    }
+
+    closeDetails() {
+        const detailsPanel = this.querySelector('#span-details');
+        if (detailsPanel) {
+            detailsPanel.style.display = 'none';
+        }
+        this.querySelectorAll('.span-row.selected').forEach(row => {
+            row.classList.remove('selected');
+        });
+    }
+
+    zoomIn() {
+        this.timeScale = Math.min(this.timeScale * 1.5, 10);
+        this.applyZoom();
+    }
+
+    zoomOut() {
+        this.timeScale = Math.max(this.timeScale / 1.5, 0.5);
+        this.applyZoom();
+    }
+
+    resetZoom() {
+        this.timeScale = 1;
+        this.applyZoom();
+    }
+
+    applyZoom() {
+        const container = this.querySelector('.trace-spans-container');
+        if (container) {
+            container.style.transform = `scaleX(${this.timeScale})`;
+            container.style.transformOrigin = 'left';
+        }
+    }
+
+    getServiceColor(serviceName) {
+        const colors = [
+            '#1d9bf0', '#00ba7c', '#f4212e', '#ffd400', '#7856ff',
+            '#f91880', '#ff7a00', '#00d4aa', '#794bc4', '#17bf63'
+        ];
+        if (!serviceName) return colors[0];
+        let hash = 0;
+        for (let i = 0; i < serviceName.length; i++) {
+            hash = serviceName.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        return colors[Math.abs(hash) % colors.length];
+    }
+
+    formatDuration(ms) {
+        if (ms === undefined || ms === null) return '—';
+        if (ms < 1) return `${(ms * 1000).toFixed(0)}μs`;
+        if (ms < 1000) return `${ms.toFixed(1)}ms`;
+        return `${(ms / 1000).toFixed(2)}s`;
+    }
+
+    escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    setupEventListeners() {
+        // Keyboard navigation
+        this.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                this.closeDetails();
+            }
+        });
+    }
+
+    getStyles() {
+        return `
+            .trace-waterfall {
+                background: var(--bg-card, #16181c);
+                border-radius: 8px;
+                overflow: hidden;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                color: var(--text, #e7e9ea);
+            }
+
+            .trace-waterfall-loading,
+            .trace-waterfall-error,
+            .trace-waterfall-empty {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 0.75rem;
+                padding: 3rem;
+                color: var(--text-muted, #71767b);
+                flex-direction: column;
+            }
+
+            .trace-waterfall-error { color: var(--error, #f4212e); }
+
+            .spinner {
+                width: 24px;
+                height: 24px;
+                border: 3px solid var(--border, #2f3336);
+                border-top-color: var(--accent, #1d9bf0);
+                border-radius: 50%;
+                animation: spin 0.8s linear infinite;
+            }
+
+            @keyframes spin { to { transform: rotate(360deg); } }
+
+            .trace-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 0.75rem 1rem;
+                background: var(--bg-elevated, #1e2128);
+                border-bottom: 1px solid var(--border, #2f3336);
+            }
+
+            .trace-title {
+                display: flex;
+                align-items: center;
+                gap: 1rem;
+            }
+
+            .trace-id {
+                font-family: monospace;
+                font-size: 0.85rem;
+                color: var(--accent, #1d9bf0);
+            }
+
+            .trace-duration {
+                font-weight: 600;
+                font-size: 0.9rem;
+            }
+
+            .trace-spans {
+                color: var(--text-muted, #71767b);
+                font-size: 0.8rem;
+            }
+
+            .trace-actions {
+                display: flex;
+                gap: 0.25rem;
+            }
+
+            .btn-icon {
+                width: 28px;
+                height: 28px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: var(--bg-card, #16181c);
+                border: 1px solid var(--border, #2f3336);
+                border-radius: 4px;
+                color: var(--text, #e7e9ea);
+                cursor: pointer;
+                font-size: 1rem;
+            }
+
+            .btn-icon:hover {
+                border-color: var(--accent, #1d9bf0);
+                color: var(--accent, #1d9bf0);
+            }
+
+            .trace-timeline {
+                position: relative;
+                height: 24px;
+                background: var(--bg-elevated, #1e2128);
+                border-bottom: 1px solid var(--border, #2f3336);
+            }
+
+            .timeline-ruler {
+                position: relative;
+                height: 100%;
+                margin-left: 200px;
+            }
+
+            .timeline-tick {
+                position: absolute;
+                top: 0;
+                bottom: 0;
+                border-left: 1px solid var(--border, #2f3336);
+            }
+
+            .tick-label {
+                position: absolute;
+                top: 4px;
+                left: 4px;
+                font-size: 0.7rem;
+                color: var(--text-muted, #71767b);
+                white-space: nowrap;
+            }
+
+            .trace-spans-container {
+                max-height: 400px;
+                overflow-y: auto;
+                transition: transform 0.2s ease;
+            }
+
+            .span-row {
+                display: flex;
+                align-items: center;
+                height: 32px;
+                border-bottom: 1px solid var(--border, #2f3336);
+                cursor: pointer;
+                transition: background 0.15s;
+            }
+
+            .span-row:hover {
+                background: var(--bg-elevated, #1e2128);
+            }
+
+            .span-row.selected {
+                background: rgba(29, 155, 240, 0.1);
+            }
+
+            .span-info {
+                width: 200px;
+                min-width: 200px;
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                padding-right: 0.5rem;
+                overflow: hidden;
+            }
+
+            .span-service {
+                font-size: 0.65rem;
+                padding: 0.15rem 0.4rem;
+                border-radius: 3px;
+                color: white;
+                white-space: nowrap;
+                flex-shrink: 0;
+            }
+
+            .span-name {
+                font-size: 0.8rem;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .span-bar-container {
+                flex: 1;
+                position: relative;
+                height: 100%;
+            }
+
+            .span-bar {
+                position: absolute;
+                top: 6px;
+                height: 20px;
+                border-radius: 3px;
+                display: flex;
+                align-items: center;
+                justify-content: flex-end;
+                padding-right: 4px;
+                min-width: 3px;
+                opacity: 0.85;
+            }
+
+            .span-bar:hover {
+                opacity: 1;
+            }
+
+            .span-bar.span-error {
+                background: var(--error, #f4212e) !important;
+            }
+
+            .span-duration {
+                font-size: 0.65rem;
+                color: white;
+                text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+            }
+
+            .span-details {
+                position: absolute;
+                right: 0;
+                top: 0;
+                bottom: 0;
+                width: 350px;
+                background: var(--bg-card, #16181c);
+                border-left: 1px solid var(--border, #2f3336);
+                overflow-y: auto;
+                z-index: 10;
+            }
+
+            .span-details-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 0.75rem 1rem;
+                background: var(--bg-elevated, #1e2128);
+                border-bottom: 1px solid var(--border, #2f3336);
+                position: sticky;
+                top: 0;
+            }
+
+            .span-details-title {
+                font-weight: 600;
+                font-size: 0.9rem;
+            }
+
+            .btn-close {
+                background: none;
+                border: none;
+                color: var(--text-muted, #71767b);
+                font-size: 1.25rem;
+                cursor: pointer;
+                padding: 0;
+                line-height: 1;
+            }
+
+            .btn-close:hover {
+                color: var(--text, #e7e9ea);
+            }
+
+            .span-details-content {
+                padding: 1rem;
+            }
+
+            .detail-section {
+                margin-bottom: 1.5rem;
+            }
+
+            .detail-section h4 {
+                font-size: 0.8rem;
+                color: var(--text-muted, #71767b);
+                margin-bottom: 0.75rem;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+            }
+
+            .detail-row {
+                display: flex;
+                justify-content: space-between;
+                padding: 0.4rem 0;
+                border-bottom: 1px solid var(--border, #2f3336);
+            }
+
+            .detail-label {
+                color: var(--text-muted, #71767b);
+                font-size: 0.8rem;
+            }
+
+            .detail-value {
+                font-size: 0.85rem;
+                text-align: right;
+            }
+
+            .detail-value.mono {
+                font-family: monospace;
+                font-size: 0.75rem;
+            }
+
+            .detail-value.status-error {
+                color: var(--error, #f4212e);
+            }
+
+            .detail-value.status-ok {
+                color: var(--success, #00ba7c);
+            }
+
+            .attrs-table {
+                width: 100%;
+                font-size: 0.8rem;
+                border-collapse: collapse;
+            }
+
+            .attrs-table tr {
+                border-bottom: 1px solid var(--border, #2f3336);
+            }
+
+            .attrs-table td {
+                padding: 0.4rem 0;
+            }
+
+            .attr-key {
+                color: var(--text-muted, #71767b);
+                width: 40%;
+            }
+
+            .attr-value {
+                font-family: monospace;
+                word-break: break-all;
+            }
+        `;
+    }
 }
 
-// Initialize Anomaly, Alerting, Notifications, On-Call, and Audit
-// WebSocket handles real-time updates, polling is fallback only
-setTimeout(loadAnomalies, 1300);
-setInterval(loadAnomalies, 30000);     // WebSocket handles new anomalies
-setTimeout(loadAlerts, 1400);
-setInterval(loadAlerts, 30000);        // WebSocket handles alert updates
-setTimeout(loadNotifyWidget, 1500);
-setInterval(loadNotifyWidget, 30000);
-setTimeout(loadOnCallWidget, 1600);
-setInterval(loadOnCallWidget, 60000);
-setTimeout(loadAuditWidget, 1700);
-setInterval(loadAuditWidget, 60000);
+customElements.define('trace-waterfall', TraceWaterfall);
 
-// Initialize Cost Intelligence, DB Watch, and Cardinality
-setTimeout(loadCostIntel, 1800);
-setInterval(loadCostIntel, 60000); // Refresh every minute
-setTimeout(loadDBWatch, 1900);
-setInterval(loadDBWatch, 5000); // Refresh every 5 seconds
-setTimeout(loadCardinality, 2000);
-setInterval(loadCardinality, 30000); // Refresh every 30 seconds
+// Export for module systems
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = TraceWaterfall;
+}

@@ -9,14 +9,23 @@ import (
 	"time"
 )
 
+// SpanCallback is called for each span received
+type SpanCallback func(span Span)
+
 // OTLPReceiver handles OpenTelemetry trace ingestion
 type OTLPReceiver struct {
-	store *Store
+	store        *Store
+	spanCallback SpanCallback
 }
 
 // NewOTLPReceiver creates a new OTLP receiver
 func NewOTLPReceiver(store *Store) *OTLPReceiver {
 	return &OTLPReceiver{store: store}
+}
+
+// SetSpanCallback sets a callback to be invoked for each span received
+func (r *OTLPReceiver) SetSpanCallback(cb SpanCallback) {
+	r.spanCallback = cb
 }
 
 // OTLP JSON structures (simplified)
@@ -103,6 +112,11 @@ func (r *OTLPReceiver) HandleTraces(w http.ResponseWriter, req *http.Request) {
 					continue
 				}
 				spanCount++
+
+				// Call the span callback for entity synthesis
+				if r.spanCallback != nil {
+					r.spanCallback(span)
+				}
 			}
 		}
 	}
@@ -253,6 +267,11 @@ func (r *OTLPReceiver) HandleSimpleTrace(w http.ResponseWriter, req *http.Reques
 	if err := r.store.RecordSpan(span); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// Call the span callback for entity synthesis
+	if r.spanCallback != nil {
+		r.spanCallback(span)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

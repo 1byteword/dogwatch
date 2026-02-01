@@ -176,6 +176,12 @@
     left: 0;
     right: 0;
     bottom: 0;
+    padding: 0.5rem;
+}
+
+.chart-wrap canvas {
+    width: 100% !important;
+    height: 100% !important;
 }
 
 /* Modal System */

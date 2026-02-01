@@ -20,12 +20,18 @@ type IncidentTrigger interface {
 	TriggerFromWatch(watchID, watchName, message string, severity string) error
 }
 
+// WatchBroadcaster interface for broadcasting watch state changes via WebSocket
+type WatchBroadcaster interface {
+	BroadcastWatchState(watchID, state string, value float64)
+}
+
 // Engine evaluates watches and fires notifications
 type Engine struct {
-	store    *Store
-	metrics  MetricsProvider
-	notifier *Notifier
-	pager    IncidentTrigger
+	store       *Store
+	metrics     MetricsProvider
+	notifier    *Notifier
+	pager       IncidentTrigger
+	broadcaster WatchBroadcaster
 
 	// Track pending states for duration requirements
 	pendingStart map[string]time.Time
@@ -54,6 +60,13 @@ func (e *Engine) SetPager(pager IncidentTrigger) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.pager = pager
+}
+
+// SetBroadcaster sets the WebSocket broadcaster for real-time updates
+func (e *Engine) SetBroadcaster(broadcaster WatchBroadcaster) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.broadcaster = broadcaster
 }
 
 // Start begins the evaluation loop
@@ -225,6 +238,11 @@ func (e *Engine) transition(w *Watch, newState State, value float64) {
 
 	log.Printf("[watches] %s: %s -> %s (value=%.2f, threshold=%.2f)",
 		w.Name, oldState, newState, value, w.Threshold)
+
+	// Broadcast state change via WebSocket
+	if e.broadcaster != nil {
+		e.broadcaster.BroadcastWatchState(w.ID, string(newState), value)
+	}
 }
 
 func (e *Engine) formatMessage(w *Watch, from, to State, value float64) string {

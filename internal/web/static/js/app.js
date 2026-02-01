@@ -98,6 +98,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             initGrid();
             loadLayout();
 
+            // Expose grid and functions for widget picker
+            window.grid = grid;
+            window.getWidgetContent = getWidgetContent;
+            window.saveLayout = saveLayout;
+
             // Wait for GridStack to finish rendering before loading data
             requestAnimationFrame(() => {
                 startDataRefresh();

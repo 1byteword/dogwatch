@@ -16,7 +16,7 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 | **Features** | Dashboards ✅, SLOs ✅, Synthetics ✅, Incidents ✅, On-call ✅, Catalog ✅, Anomaly ✅, K8s ✅, Federation ✅ |
 | **Cost Intel** | Cost calculators ✅, Cardinality ✅, Usage analytics ✅, Data shaping ✅, Quotas ✅ |
 | **Correlation** | Change correlation ✅, Alert enrichment ✅, Dependency graph ✅ |
-| **NOT Built** | Visual query builder |
+| **NOT Built** | - |
 
 ---
 
@@ -114,8 +114,8 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 
 | Task | Complexity | VISION.md Reference |
 |------|------------|---------------------|
-| Visual query builder | 3 weeks | [Query Builder UX](VISION.md#2-query-builder-ux--steal-this) |
-| "My Services" developer view | 1 week | [Pain Point: Developer Experience](VISION.md#pain-point-6-developer-experience-gap--medium) |
+| ~~Visual query builder~~ | ✅ Done | [Query Builder UX](VISION.md#2-query-builder-ux--steal-this) |
+| ~~"My Services" developer view~~ | ✅ Done | [Pain Point: Developer Experience](VISION.md#pain-point-6-developer-experience-gap--medium) |
 | ~~"My On-Call" view~~ | ✅ Done | [Pain Point: On-Call Burnout](VISION.md#pain-point-7-on-call-burnout--medium) |
 
 ---
@@ -126,9 +126,9 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 
 | Task | Complexity | VISION.md Reference |
 |------|------------|---------------------|
-| DQL pipe-based query language | 4 weeks | [SPL / Query Language](VISION.md#1-spl-search-processing-language--steal-this) |
-| Cross-signal joins (logs + traces) | 2 weeks | [SPL / Query Language](VISION.md#1-spl-search-processing-language--steal-this) |
-| Full-text search with BM25 ranking | 2 weeks | [Full-Text Search](VISION.md#1-full-text-search-with-relevance--steal-this) |
+| ~~DQL pipe-based query language~~ | ✅ Done | [SPL / Query Language](VISION.md#1-spl-search-processing-language--steal-this) |
+| ~~Cross-signal joins (logs + traces)~~ | ✅ Done | [SPL / Query Language](VISION.md#1-spl-search-processing-language--steal-this) |
+| ~~Full-text search with BM25 ranking~~ | ✅ Done | [Full-Text Search](VISION.md#1-full-text-search-with-relevance--steal-this) |
 
 ### P2 - Advanced Queries
 
@@ -218,12 +218,13 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 | **Features** | Dashboards, SLOs, Synthetics, Incidents, On-call, Service catalog, Anomaly detection (IForest), Deploy tracking |
 | **Infrastructure** | Federation (gossip), K8s collector, Container monitoring, Rate limiting, Pagination, Health checks |
 | **APM SDK** | HTTP middleware, SQL/Redis/gRPC instrumentation |
-| **UI** | Web server, Service map, History graphs, Demo data, Lookout homepage, Entity synthesis/mapping, My On-Call dashboard |
+| **UI** | Web server, Service map, History graphs, Demo data, Lookout homepage, Entity synthesis/mapping, My On-Call dashboard, My Services developer view |
 | **Cost Intel** | Datadog/New Relic/Splunk calculators, Cost trending, Recommendations, Cardinality explorer, Usage analytics, Data shaping, Team quotas |
 | **Correlation** | Change correlation engine, Alert auto-enrichment, Deploy-incident correlation, Dependency graph |
 | **Root Cause** | BubbleUp (chi-squared analysis, lift calculation, dimension ranking) |
-| **Logs** | LogCompare (time period comparison), LogReduce (pattern detection) |
+| **Logs** | LogCompare (time period comparison), LogReduce (pattern detection), BM25 relevance search |
 | **Production** | Prometheus remote write receiver, Health check endpoints (/healthz, /readyz, /livez) |
+| **Query** | DQL (pipe + SQL syntax), Cross-signal JOINs, BM25 full-text search |
 
 ---
 
@@ -241,45 +242,29 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 
 ---
 
-## Frontend Performance Refactoring (In Progress)
+## Frontend Performance Refactoring ✅
 
 Goal: Transform 557KB monolithic frontend into modular, real-time system.
 
-### Completed
 | Task | Status |
 |------|--------|
-| CSS extraction - variables.css | ✅ Done |
-| CSS extraction - base.css | ✅ Done |
-| CSS extraction - components.css | ✅ Done |
-| CSS extraction - layout.css | ✅ Done |
+| CSS extraction (variables, base, components, layout, bundle) | ✅ Done |
 | WebSocket backend (websocket.go) | ✅ Done |
 | WebSocket client (js/websocket.js) | ✅ Done |
+| Wire WebSocket hub to server.go | ✅ Done |
+| Wire WebSocket to watch engine | ✅ Done |
+| Add /api/ws route | ✅ Done |
 | Lazy loader (js/loader.js) | ✅ Done |
-| Web Component: status-badge.js | ✅ Done |
-| Web Component: metrics-card.js | ✅ Done |
-| Web Component: service-map.js | ✅ Done |
-| Web Component: trace-viewer.js | ✅ Done |
-| Web Component: log-viewer.js | ✅ Done |
+| Web Components (status-badge, metrics-card, service-map, trace-viewer, log-viewer) | ✅ Done |
 | Update index.html (CSS extraction) | ✅ Done |
-| Dashboard CSS file | ✅ Done |
+| Frontend WebSocket subscriptions (8 topics) | ✅ Done |
+| Polling fallback for robustness | ✅ Done |
 
-### Not Yet Started
-| Task | Notes |
-|------|-------|
-| Wire WebSocket hub to main.go | Add hub creation, route registration, periodic broadcasts |
-| Wire WebSocket to watch engine | Broadcast state changes on watch transitions |
-| Update bubbleup.html | Remove inline CSS, add CSS links |
-| Remove polling from frontend | Replace setInterval calls with WebSocket subscriptions |
-| Add /api/ws route to server.go | Register WebSocket upgrade handler |
-| Test WebSocket connection | Verify real-time updates work |
-| Verify CSS extraction | Visual regression check |
-
-### Target Metrics
-| Metric | Current | Target | Status |
-|--------|---------|--------|--------|
-| Initial HTML | 476KB | <100KB | In Progress (was 557KB) |
-| API calls/8hr | ~7,200 | <500 | Pending |
-| Time to interactive | ~3s | <1.5s | Pending |
+### Results
+| Metric | Before | After | Target |
+|--------|--------|-------|--------|
+| Initial HTML | 557KB | **40KB** | <100KB ✅ |
+| Real-time updates | Polling only | **WebSocket primary** | WebSocket ✅ |
 
 ---
 
@@ -287,7 +272,7 @@ Goal: Transform 557KB monolithic frontend into modular, real-time system.
 
 | Question | Answer |
 |----------|--------|
-| **Build first** | Visual query builder or "My Services" view (Phase 4) |
+| **Build first** | DQL query language (Phase 5) or Security features (Phase 6) |
 | **Makes people pay** | ✅ Cost Intelligence, Control Plane, LogCompare - all done |
 | **Makes people stay** | ✅ BubbleUp, Lookout, Entity synthesis - all done |
 | **The moat** | Zero-config eBPF + cost transparency |

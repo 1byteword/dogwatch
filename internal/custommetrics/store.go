@@ -125,6 +125,11 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// DB returns the underlying database connection for query builder
+func (s *Store) DB() *sql.DB {
+	return s.db
+}
+
 // SetCardinalityHook sets a hook for cardinality tracking
 func (s *Store) SetCardinalityHook(hook CardinalityHook) {
 	s.mu.Lock()

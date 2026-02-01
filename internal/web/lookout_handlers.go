@@ -330,16 +330,16 @@ const lookoutTemplate = `<!DOCTYPE html>
             </div>
         </div>
 
-        {{if eq .TotalItems 0}}
-        <div class="all-clear">
-            <div class="icon">✅</div>
-            <h2>All Clear</h2>
-            <p>No anomalies, alerts, or issues detected. Systems operating normally.</p>
-        </div>
-        {{else}}
-
         <div class="two-col">
             <div class="main-col">
+                {{if eq .TotalItems 0}}
+                <div class="all-clear">
+                    <div class="icon">✅</div>
+                    <h2>All Clear</h2>
+                    <p>No anomalies, alerts, or issues detected. Systems operating normally.</p>
+                </div>
+                {{end}}
+
                 {{if .Critical}}
                 <div class="section">
                     <div class="section-header critical">
@@ -476,8 +476,6 @@ const lookoutTemplate = `<!DOCTYPE html>
                 {{end}}
             </div>
         </div>
-
-        {{end}}
     </div>
 
     <script>

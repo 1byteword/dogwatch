@@ -585,3 +585,8 @@ func (s *Store) scanSpans(rows *sql.Rows) ([]Span, error) {
 func (s *Store) Close() error {
 	return s.db.Close()
 }
+
+// DB returns the underlying database connection for query builder
+func (s *Store) DB() *sql.DB {
+	return s.db
+}

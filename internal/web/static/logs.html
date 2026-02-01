@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="/css/variables.css">
     <link rel="stylesheet" href="/css/base.css">
     <link rel="stylesheet" href="/css/components.css">
+    <link rel="stylesheet" href="/css/sidebar.css">
     <style>
         :root {
             --bg: #0f1419;
@@ -28,28 +29,7 @@
             color: var(--text);
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             min-height: 100vh;
-            display: flex;
-            flex-direction: column;
         }
-
-        .header {
-            background: linear-gradient(135deg, #1a1f2e 0%, var(--bg) 100%);
-            padding: 0.75rem 1.5rem;
-            border-bottom: 1px solid var(--border);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .logo {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .logo-icon { font-size: 1.5rem; }
-        .logo h1 { font-size: 1.1rem; font-weight: 600; }
-        .logo span { color: var(--text-muted); font-size: 0.7rem; margin-left: 0.5rem; }
 
         .btn {
             background: var(--bg-card);
@@ -235,27 +215,84 @@
     </style>
 </head>
 <body>
-    <header class="header">
-        <div class="logo">
-            <span class="logo-icon">&#128021;</span>
-            <h1>dogwatch<span>Log Explorer</span></h1>
-        </div>
-        <nav style="display: flex; gap: 0.75rem;">
-            <a href="/" class="btn">&#8592; Dashboard</a>
-            <a href="/traces.html" class="btn">Traces</a>
-            <a href="/lookout" class="btn">Lookout</a>
-        </nav>
-    </header>
-
-    <div class="container">
-        <div class="page-header">
-            <h2 class="page-title">Log Explorer</h2>
-            <div class="quick-links">
-                <a href="#patterns" class="quick-link" onclick="togglePatterns()">&#128202; Log Patterns</a>
-                <a href="#compare" class="quick-link" onclick="toggleCompare()">&#8596; Compare Periods</a>
-                <a href="/api/logs?limit=1000&format=csv" class="quick-link" download>&#128229; Export CSV</a>
+    <div class="app-layout">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-resize-handle" id="sidebar-resize-handle"></div>
+            <div class="sidebar-header">
+                <span class="logo-icon">&#128021;</span>
+                <span class="logo-text">dogwatch</span>
             </div>
-        </div>
+
+            <nav class="sidebar-nav">
+                <a href="/" class="sidebar-item" data-tooltip="Dashboard">
+                    <span class="icon">&#128200;</span>
+                    <span class="label">Dashboard</span>
+                </a>
+
+                <div class="sidebar-section">
+                    <div class="sidebar-section-title">Observability</div>
+                    <a href="/traces.html" class="sidebar-item" data-tooltip="Traces">
+                        <span class="icon">&#128279;</span>
+                        <span class="label">Traces</span>
+                    </a>
+                    <a href="/logs.html" class="sidebar-item active" data-tooltip="Logs">
+                        <span class="icon">&#128220;</span>
+                        <span class="label">Logs</span>
+                    </a>
+                    <a href="/query-builder.html" class="sidebar-item" data-tooltip="Query">
+                        <span class="icon">&#9889;</span>
+                        <span class="label">Query</span>
+                    </a>
+                </div>
+
+                <div class="sidebar-section">
+                    <div class="sidebar-section-title">Infrastructure</div>
+                    <a href="/my-services" class="sidebar-item" data-tooltip="Services">
+                        <span class="icon">&#128736;</span>
+                        <span class="label">Services</span>
+                    </a>
+                    <a href="/entities" class="sidebar-item" data-tooltip="Entities">
+                        <span class="icon">&#127970;</span>
+                        <span class="label">Entities</span>
+                    </a>
+                </div>
+
+                <div class="sidebar-section">
+                    <div class="sidebar-section-title">Monitoring</div>
+                    <a href="/lookout" class="sidebar-item" data-tooltip="Lookout">
+                        <span class="icon">&#128065;</span>
+                        <span class="label">Lookout</span>
+                    </a>
+                    <a href="/bubbleup.html" class="sidebar-item" data-tooltip="BubbleUp">
+                        <span class="icon">&#128200;</span>
+                        <span class="label">BubbleUp</span>
+                    </a>
+                </div>
+            </nav>
+
+            <div class="sidebar-footer">
+                <button class="sidebar-toggle" onclick="toggleSidebar()" title="Toggle sidebar (Cmd+B)">
+                    <span class="icon">&#9664;</span>
+                </button>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <header class="header-compact">
+                <div class="header-left">
+                    <span class="page-title">Log Explorer</span>
+                </div>
+                <div class="header-right">
+                    <div class="quick-links" style="display: flex; gap: 0.5rem;">
+                        <a href="#patterns" class="btn" onclick="togglePatterns(); return false;">&#128202; Patterns</a>
+                        <a href="#compare" class="btn" onclick="toggleCompare(); return false;">&#8596; Compare</a>
+                        <a href="/api/logs?limit=1000&format=csv" class="btn" download>&#128229; Export</a>
+                    </div>
+                </div>
+            </header>
+
+            <div class="container">
 
         <div class="main-panel">
             <log-explorer id="log-explorer"></log-explorer>
@@ -312,9 +349,95 @@
                 </div>
             </div>
         </div>
+            </div>
+        </main>
     </div>
 
     <script src="/js/components/log-explorer.js"></script>
+    <script>
+        // Sidebar Resize
+        (function() {
+            const sidebar = document.getElementById('sidebar');
+            const handle = document.getElementById('sidebar-resize-handle');
+            const mainContent = document.querySelector('.main-content');
+
+            let isResizing = false;
+            let startX, startWidth;
+
+            // Restore saved width
+            const savedWidth = localStorage.getItem('sidebar-width');
+            if (savedWidth) {
+                const width = parseInt(savedWidth);
+                if (width <= 56) {
+                    sidebar.classList.add('collapsed');
+                    sidebar.style.setProperty('--sidebar-width', '56px');
+                    mainContent.style.marginLeft = '56px';
+                } else {
+                    sidebar.classList.remove('collapsed');
+                    sidebar.style.setProperty('--sidebar-width', savedWidth + 'px');
+                    mainContent.style.marginLeft = savedWidth + 'px';
+                }
+            }
+
+            handle.addEventListener('mousedown', (e) => {
+                isResizing = true;
+                startX = e.clientX;
+                startWidth = sidebar.offsetWidth;
+                document.body.classList.add('sidebar-resizing');
+                handle.classList.add('dragging');
+                e.preventDefault();
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (!isResizing) return;
+                const diff = e.clientX - startX;
+                let newWidth = startWidth + diff;
+                if (newWidth < 80) {
+                    newWidth = 56;
+                    sidebar.classList.add('collapsed');
+                } else {
+                    sidebar.classList.remove('collapsed');
+                    newWidth = Math.min(300, Math.max(120, newWidth));
+                }
+                sidebar.style.setProperty('--sidebar-width', newWidth + 'px');
+                mainContent.style.marginLeft = newWidth + 'px';
+            });
+
+            document.addEventListener('mouseup', () => {
+                if (isResizing) {
+                    isResizing = false;
+                    document.body.classList.remove('sidebar-resizing');
+                    handle.classList.remove('dragging');
+                    localStorage.setItem('sidebar-width', sidebar.offsetWidth);
+                }
+            });
+
+            // Toggle function
+            window.toggleSidebar = function() {
+                if (sidebar.classList.contains('collapsed')) {
+                    sidebar.classList.remove('collapsed');
+                    const saved = localStorage.getItem('sidebar-width');
+                    const width = (saved && parseInt(saved) > 56) ? saved : 200;
+                    sidebar.style.setProperty('--sidebar-width', width + 'px');
+                    mainContent.style.marginLeft = width + 'px';
+                    localStorage.setItem('sidebar-width', width);
+                } else {
+                    sidebar.classList.add('collapsed');
+                    sidebar.style.setProperty('--sidebar-width', '56px');
+                    mainContent.style.marginLeft = '56px';
+                    localStorage.setItem('sidebar-width', 56);
+                }
+            };
+
+            // Keyboard shortcut
+            document.addEventListener('keydown', (e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
+                    e.preventDefault();
+                    window.toggleSidebar();
+                }
+            });
+        })();
+    </script>
     <script>
         // Toggle patterns panel
         function togglePatterns() {

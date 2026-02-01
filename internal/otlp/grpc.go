@@ -16,12 +16,13 @@ import (
 // TraceService implements the OTLP trace collector service
 type TraceService struct {
 	coltracepb.UnimplementedTraceServiceServer
-	store *trace.Store
+	store        *trace.Store
+	spanCallback SpanCallback
 }
 
 // Export receives trace data from OTLP clients
 func (s *TraceService) Export(ctx context.Context, req *coltracepb.ExportTraceServiceRequest) (*coltracepb.ExportTraceServiceResponse, error) {
-	if err := processTraces(s.store, req.ResourceSpans); err != nil {
+	if err := processTraces(s.store, req.ResourceSpans, s.spanCallback); err != nil {
 		return &coltracepb.ExportTraceServiceResponse{}, err
 	}
 	return &coltracepb.ExportTraceServiceResponse{}, nil
@@ -56,8 +57,8 @@ func (s *LogsService) Export(ctx context.Context, req *collogspb.ExportLogsServi
 }
 
 // registerTraceService registers the trace service with gRPC server
-func registerTraceService(server *grpc.Server, store *trace.Store) {
-	coltracepb.RegisterTraceServiceServer(server, &TraceService{store: store})
+func registerTraceService(server *grpc.Server, store *trace.Store, spanCallback SpanCallback) {
+	coltracepb.RegisterTraceServiceServer(server, &TraceService{store: store, spanCallback: spanCallback})
 }
 
 // registerMetricsService registers the metrics service with gRPC server

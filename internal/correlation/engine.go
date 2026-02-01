@@ -146,7 +146,7 @@ func (e *Engine) GetIncidentContext(incidentID string) (*IncidentContext, error)
 			Limit:     100,
 		})
 		if err == nil {
-			ctx.RelatedLogs = result.Entries
+			ctx.RelatedLogs = result.LogEntries()
 		}
 	}
 
@@ -623,7 +623,7 @@ func (e *Engine) GetAlertContext(alertID string, service string, triggeredAt tim
 			Limit:     100,
 		})
 		if err == nil {
-			ctx.TriggerLogs = result.Entries
+			ctx.TriggerLogs = result.LogEntries()
 		}
 	}
 

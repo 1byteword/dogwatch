@@ -30,12 +30,17 @@ func DefaultConfig() Config {
 	}
 }
 
+// SpanCallback is called for each span processed
+type SpanCallback func(span trace.Span)
+
 // Server is the unified OTLP receiver server
 type Server struct {
 	config       Config
 	traceStore   *trace.Store
 	metricsStore *custommetrics.Store
 	logStore     *logs.Store
+
+	spanCallback SpanCallback
 
 	grpcServer *grpc.Server
 	httpServer *http.Server
@@ -52,6 +57,13 @@ func NewServer(cfg Config, traceStore *trace.Store, metricsStore *custommetrics.
 		metricsStore: metricsStore,
 		logStore:     logStore,
 	}
+}
+
+// SetSpanCallback sets a callback to be invoked for each span received
+func (s *Server) SetSpanCallback(cb SpanCallback) {
+	s.mu.Lock()
+	s.spanCallback = cb
+	s.mu.Unlock()
 }
 
 // Start starts both gRPC and HTTP OTLP receivers
@@ -115,7 +127,7 @@ func (s *Server) startGRPC() error {
 	s.grpcServer = grpc.NewServer()
 
 	// Register OTLP services
-	registerTraceService(s.grpcServer, s.traceStore)
+	registerTraceService(s.grpcServer, s.traceStore, s.spanCallback)
 	registerMetricsService(s.grpcServer, s.metricsStore)
 	registerLogsService(s.grpcServer, s.logStore)
 

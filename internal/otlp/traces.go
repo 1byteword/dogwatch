@@ -13,19 +13,24 @@ import (
 )
 
 // processTraces converts OTLP resource spans and stores them
-func processTraces(traceStore *trace.Store, resourceSpans []*tracepb.ResourceSpans) error {
-	if traceStore == nil {
-		return nil
-	}
-
+func processTraces(traceStore *trace.Store, resourceSpans []*tracepb.ResourceSpans, spanCallback SpanCallback) error {
 	for _, rs := range resourceSpans {
 		serviceName := extractServiceName(rs.Resource)
 
 		for _, scopeSpans := range rs.ScopeSpans {
 			for _, span := range scopeSpans.Spans {
 				internalSpan := convertProtoSpan(span, serviceName)
-				if err := traceStore.RecordSpan(internalSpan); err != nil {
-					return err
+
+				// Store the span if we have a trace store
+				if traceStore != nil {
+					if err := traceStore.RecordSpan(internalSpan); err != nil {
+						return err
+					}
+				}
+
+				// Call the span callback for entity synthesis
+				if spanCallback != nil {
+					spanCallback(internalSpan)
 				}
 			}
 		}
