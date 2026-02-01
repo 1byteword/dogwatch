@@ -17,6 +17,25 @@ func SetLogReduceStore(store *logreduce.Store) {
 	logReduceStore = store
 }
 
+// ProcessLogsForPatterns processes log entries through the pattern miner
+// Call this when logs are ingested to build up patterns
+func ProcessLogsForPatterns(entries []logs.LogEntry) {
+	if logReduceStore == nil {
+		return
+	}
+	// Convert to logreduce.LogEntry format
+	reduceEntries := make([]logreduce.LogEntry, len(entries))
+	for i, e := range entries {
+		reduceEntries[i] = logreduce.LogEntry{
+			Message:   e.Message,
+			Level:     string(e.Level),
+			Service:   e.Service,
+			Timestamp: e.Timestamp,
+		}
+	}
+	logReduceStore.ProcessBatch(reduceEntries)
+}
+
 // RegisterLogReduceRoutes registers log reduction API routes
 func RegisterLogReduceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/logs/patterns", handleLogPatterns)

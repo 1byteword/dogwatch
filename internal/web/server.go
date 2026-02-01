@@ -2283,6 +2283,8 @@ func (s *Server) handleLogIngest(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
+			// Process logs for pattern detection (LogReduce)
+			ProcessLogsForPatterns(entries)
 			// Broadcast to WebSocket subscribers (real-time log streaming)
 			if s.wsHub != nil && s.wsHub.TopicSubscriberCount(TopicLogs) > 0 {
 				for _, entry := range entries {
@@ -2311,6 +2313,8 @@ func (s *Server) handleLogIngest(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// Process log for pattern detection (LogReduce)
+		ProcessLogsForPatterns([]logs.LogEntry{entry})
 		// Broadcast to WebSocket subscribers
 		if s.wsHub != nil && s.wsHub.TopicSubscriberCount(TopicLogs) > 0 {
 			s.wsHub.BroadcastLog(map[string]interface{}{
