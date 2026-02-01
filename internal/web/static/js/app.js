@@ -97,7 +97,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             // Initialize grid and show app
             initGrid();
             loadLayout();
-            startDataRefresh();
+
+            // Wait for GridStack to finish rendering before loading data
+            requestAnimationFrame(() => {
+                startDataRefresh();
+            });
 
             // Reveal app with smooth fade-in
             const app = document.getElementById('app');
