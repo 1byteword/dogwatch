@@ -204,6 +204,69 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 
 ---
 
+## Technical Moats (Competitive Differentiators)
+
+These are the deep technical capabilities that create defensible competitive advantage. See [VISION.md Technical Moats](VISION.md#technical-moats) for full context.
+
+### Moat 1-3: eBPF Deep Compatibility (Partially Done)
+
+| Task | Complexity | Status | VISION.md Reference |
+|------|------------|--------|---------------------|
+| Kernel version compatibility (4.x - 6.x) | 4-6 weeks | ⏳ Partial | [Kernel Compatibility](VISION.md#moat-1-kernel-version-compatibility) |
+| TLS interception (OpenSSL, BoringSSL, Go crypto) | 6-8 weeks | ⏳ Partial | [TLS Interception](VISION.md#moat-2-tls-interception) |
+| Protocol edge cases (prepared statements, pipelining) | 3-4 weeks | ⏳ Partial | [Protocol Edge Cases](VISION.md#moat-3-protocol-edge-cases) |
+
+*Note: Base probes work. Edge cases and broad compatibility need hardening.*
+
+### Moat 4-6: Intelligent Analysis (Partially Done)
+
+| Task | Complexity | Status | VISION.md Reference |
+|------|------------|--------|---------------------|
+| Correlation without trace headers (socket/timing-based) | 4-6 weeks | ❌ Not started | [Headerless Correlation](VISION.md#moat-4-correlation-without-trace-headers) |
+| Low-overhead continuous profiling (all languages) | 3-4 weeks | ⏳ Partial | [Continuous Profiling](VISION.md#moat-5-low-overhead-continuous-profiling) |
+| Security detection without false positives (baseline learning) | 2-3 weeks | ⏳ Partial | [Security Detection](VISION.md#moat-6-security-detection-without-false-positives) |
+
+*Note: CPU profiling and basic security detection done. Symbol resolution and baseline learning need work.*
+
+### Moat 7-9: Data Intelligence (Not Started)
+
+| Task | Complexity | Status | VISION.md Reference |
+|------|------------|--------|---------------------|
+| Migration fidelity (template variables, composite monitors) | 4-6 weeks | ❌ Not started | [Migration Fidelity](VISION.md#moat-7-migration-fidelity) |
+| Intelligent tail sampling (adaptive, retroactive for errors) | 3-4 weeks | ❌ Not started | [Tail Sampling](VISION.md#moat-8-intelligent-tail-sampling) |
+| Automatic log field extraction (pattern learning) | 3-4 weeks | ❌ Not started | [Field Extraction](VISION.md#moat-9-automatic-log-field-extraction) |
+
+### Moat 10-12: Scale & Efficiency (Partially Done)
+
+| Task | Complexity | Status | VISION.md Reference |
+|------|------------|--------|---------------------|
+| Multi-signal correlation engine (exemplars, fuzzy matching) | 2-3 weeks | ⏳ Partial | [Multi-Signal Correlation](VISION.md#moat-10-multi-signal-correlation-engine) |
+| SQLite time-series optimization | 2-3 weeks | ❌ Not started | [SQLite Optimization](VISION.md#moat-11-sqlite-time-series-optimization) |
+| Cardinality bomb prevention (auto-detection, circuit breaker) | 2 weeks | ❌ Not started | [Cardinality Prevention](VISION.md#moat-12-cardinality-bomb-prevention) |
+
+*Note: Basic correlation done. Need exemplars, fuzzy matching, and cardinality protection.*
+
+### Moat 13-15: Operational Excellence (Not Started)
+
+| Task | Complexity | Status | VISION.md Reference |
+|------|------------|--------|---------------------|
+| Hot probe reload (update eBPF without restart) | 2 weeks | ❌ Not started | [Hot Reload](VISION.md#moat-13-hot-probe-reload) |
+| Clock skew tolerance (distributed clock handling) | 1-2 weeks | ❌ Not started | [Clock Skew](VISION.md#moat-14-clock-skew-tolerance) |
+| Memory-efficient operation (<500MB for 10K eps) | 2-3 weeks | ❌ Not started | [Memory Efficiency](VISION.md#moat-15-memory-efficient-operation) |
+
+### Technical Moats Summary
+
+| Category | Status | Total Effort |
+|----------|--------|--------------|
+| eBPF Compatibility (1-3) | ⏳ 40% | ~14 weeks |
+| Intelligent Analysis (4-6) | ⏳ 30% | ~10 weeks |
+| Data Intelligence (7-9) | ❌ 0% | ~11 weeks |
+| Scale & Efficiency (10-12) | ⏳ 20% | ~7 weeks |
+| Operational Excellence (13-15) | ❌ 0% | ~6 weeks |
+| **Total** | **~25%** | **~48 weeks** |
+
+---
+
 ## Completed ✅
 
 | Category | Items |
