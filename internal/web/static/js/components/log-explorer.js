@@ -117,17 +117,54 @@ class LogExplorer extends HTMLElement {
     }
 
     startLiveTail() {
-        // Poll every 2 seconds for new logs
-        this.liveTailInterval = setInterval(() => {
-            this.search();
-        }, 2000);
+        // Use WebSocket for real-time log streaming if available
+        if (typeof dwSocket !== 'undefined' && dwSocket.subscribe) {
+            this.liveTailUnsubscribe = dwSocket.subscribe('logs', (msg) => {
+                if (msg.payload) {
+                    // Add new log to the top
+                    const newLog = {
+                        id: Date.now().toString(),
+                        timestamp: msg.payload.timestamp || new Date().toISOString(),
+                        level: msg.payload.level || 'info',
+                        message: msg.payload.message || '',
+                        service: msg.payload.service || '',
+                        host: msg.payload.host || ''
+                    };
+                    // Check if log matches current filters
+                    if (this.matchesFilters(newLog)) {
+                        this.logs.unshift(newLog);
+                        if (this.logs.length > 500) this.logs.pop();
+                        this.renderResults();
+                    }
+                }
+            });
+        } else {
+            // Fallback to polling
+            this.liveTailInterval = setInterval(() => {
+                this.search();
+            }, 2000);
+        }
     }
 
     stopLiveTail() {
+        if (this.liveTailUnsubscribe) {
+            this.liveTailUnsubscribe();
+            this.liveTailUnsubscribe = null;
+        }
         if (this.liveTailInterval) {
             clearInterval(this.liveTailInterval);
             this.liveTailInterval = null;
         }
+    }
+
+    matchesFilters(log) {
+        if (this.filters.level && log.level !== this.filters.level) return false;
+        if (this.filters.service && log.service !== this.filters.service) return false;
+        if (this.filters.query) {
+            const q = this.filters.query.toLowerCase();
+            if (!log.message.toLowerCase().includes(q)) return false;
+        }
+        return true;
     }
 
     setFilter(key, value) {

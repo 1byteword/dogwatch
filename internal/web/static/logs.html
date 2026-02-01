@@ -372,6 +372,7 @@
 
                 const data = await resp.json();
                 const patterns = data.patterns || [];
+                const totalLogs = data.total_logs || 1;
 
                 if (!patterns.length) {
                     list.innerHTML = `
@@ -382,16 +383,19 @@
                     return;
                 }
 
-                list.innerHTML = patterns.slice(0, 20).map(p => `
+                list.innerHTML = patterns.slice(0, 20).map(p => {
+                    const pct = ((p.count || 0) / totalLogs * 100).toFixed(1);
+                    const sample = p.sample_message || p.sample || '';
+                    return `
                     <div class="pattern-item" onclick="searchPattern('${escapeHtml(p.template || '')}')">
                         <div class="pattern-template">${escapeHtml(p.template || 'Unknown pattern')}</div>
                         <div class="pattern-stats">
                             <span><span class="pattern-count">${p.count || 0}</span> occurrences</span>
-                            <span>${(p.percentage || 0).toFixed(1)}% of logs</span>
-                            ${p.sample ? `<span style="color: var(--text-muted);">Sample: ${escapeHtml(p.sample.substring(0, 50))}...</span>` : ''}
+                            <span>${pct}% of logs</span>
+                            ${sample ? `<span style="color: var(--text-muted);">Sample: ${escapeHtml(sample.substring(0, 50))}...</span>` : ''}
                         </div>
-                    </div>
-                `).join('');
+                    </div>`;
+                }).join('');
             } catch (e) {
                 list.innerHTML = `
                     <div style="text-align: center; padding: 2rem; color: var(--error);">
