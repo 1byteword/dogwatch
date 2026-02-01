@@ -1919,6 +1919,87 @@ function widgetIncidents() {
         </div>`;
 }
 
+function widgetSecurity() {
+    return `<div class="widget-header">
+            <span class="widget-title">Security</span>
+            <div style="display:flex;gap:0.3rem;">
+                <a href="/security.html" class="btn">Full Dashboard</a>
+                <button class="btn" onclick="loadSecurityWidget()">Refresh</button>
+            </div>
+        </div>
+        <div class="security-summary" id="security-summary" style="display:flex;gap:1rem;padding:0.5rem 0;border-bottom:1px solid #2f3336;">
+            <div class="security-stat" style="text-align:center;flex:1;">
+                <span class="security-stat-value" id="sec-critical" style="font-size:1.5rem;font-weight:700;color:#f4212e;">0</span>
+                <span class="security-stat-label" style="display:block;font-size:0.7rem;color:#71767b;">Critical</span>
+            </div>
+            <div class="security-stat" style="text-align:center;flex:1;">
+                <span class="security-stat-value" id="sec-high" style="font-size:1.5rem;font-weight:700;color:#ff6b35;">0</span>
+                <span class="security-stat-label" style="display:block;font-size:0.7rem;color:#71767b;">High</span>
+            </div>
+            <div class="security-stat" style="text-align:center;flex:1;">
+                <span class="security-stat-value" id="sec-open" style="font-size:1.5rem;font-weight:700;color:#ffd400;">0</span>
+                <span class="security-stat-label" style="display:block;font-size:0.7rem;color:#71767b;">Open Alerts</span>
+            </div>
+            <div class="security-stat" style="text-align:center;flex:1;">
+                <span class="security-stat-value" id="sec-today" style="font-size:1.5rem;font-weight:700;color:#1d9bf0;">0</span>
+                <span class="security-stat-label" style="display:block;font-size:0.7rem;color:#71767b;">Today</span>
+            </div>
+        </div>
+        <div class="widget-body no-pad" id="security-alerts-list" style="overflow:auto;max-height:200px;">
+            <div class="empty-state">No security alerts</div>
+        </div>`;
+}
+
+async function loadSecurityWidget() {
+    try {
+        // Load stats
+        const statsResp = await fetch('/api/security/stats?hours=24');
+        if (statsResp.ok) {
+            const stats = await statsResp.json();
+            const critEl = document.getElementById('sec-critical');
+            const highEl = document.getElementById('sec-high');
+            const openEl = document.getElementById('sec-open');
+            const todayEl = document.getElementById('sec-today');
+            if (critEl) critEl.textContent = stats.critical_alerts || 0;
+            if (highEl) highEl.textContent = stats.high_alerts || 0;
+            if (openEl) openEl.textContent = stats.open_alerts || 0;
+            if (todayEl) todayEl.textContent = stats.threats_today || 0;
+        }
+
+        // Load recent critical alerts
+        const alertsResp = await fetch('/api/security/alerts?status=open&limit=5');
+        if (alertsResp.ok) {
+            const alerts = await alertsResp.json() || [];
+            const container = document.getElementById('security-alerts-list');
+            if (container) {
+                if (alerts.length === 0) {
+                    container.innerHTML = '<div class="empty-state" style="padding:1rem;">No open security alerts</div>';
+                } else {
+                    container.innerHTML = alerts.map(alert => `
+                        <div style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0.75rem;border-bottom:1px solid #2f3336;">
+                            <span style="display:inline-block;padding:0.15rem 0.4rem;border-radius:4px;font-size:0.65rem;font-weight:600;text-transform:uppercase;background:${getSeverityBg(alert.severity)};color:${getSeverityColor(alert.severity)};">${alert.severity}</span>
+                            <span style="flex:1;font-size:0.8rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(alert.title)}</span>
+                            <span style="font-size:0.7rem;color:#71767b;">${formatTimeAgo(new Date(alert.detected_at))}</span>
+                        </div>
+                    `).join('');
+                }
+            }
+        }
+    } catch (e) {
+        console.error('Failed to load security widget:', e);
+    }
+}
+
+function getSeverityColor(severity) {
+    const colors = { critical: '#f4212e', high: '#ff6b35', medium: '#ffd400', low: '#00ba7c', info: '#1d9bf0' };
+    return colors[severity] || '#71767b';
+}
+
+function getSeverityBg(severity) {
+    const bgs = { critical: 'rgba(244,33,46,0.2)', high: 'rgba(255,107,53,0.2)', medium: 'rgba(255,212,0,0.2)', low: 'rgba(0,186,124,0.2)', info: 'rgba(29,155,240,0.2)' };
+    return bgs[severity] || 'rgba(113,118,123,0.2)';
+}
+
 function widgetCluster() {
     return `<div class="widget-header">
             <span class="widget-title">Federation Cluster</span>
@@ -2438,7 +2519,8 @@ function getWidgetContent(id) {
         flamegraph: widgetFlameGraph,
         costintel: widgetCostIntel,
         dbwatch: widgetDBWatch,
-        cardinality: widgetCardinality
+        cardinality: widgetCardinality,
+        security: widgetSecurity
     };
     return map[id] ? map[id]() : '';
 }
@@ -4641,6 +4723,7 @@ function startDataRefresh() {
     setTimeout(loadDBWatch, 1100);
     setTimeout(loadCardinality, 1150);
     setTimeout(loadNotifyWidget, 1200);
+    setTimeout(loadSecurityWidget, 1250);
 
     // Set up WebSocket real-time updates (reduces polling overhead)
     setupWebSocketUpdates();

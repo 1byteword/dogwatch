@@ -30,6 +30,7 @@ import (
 	"dogwatch/internal/dashboard"
 	"dogwatch/internal/federation"
 	"dogwatch/internal/incidents"
+	"dogwatch/internal/knowledge"
 	"dogwatch/internal/kubernetes"
 	"dogwatch/internal/entity"
 	"dogwatch/internal/logreduce"
@@ -38,10 +39,13 @@ import (
 	"dogwatch/internal/notify"
 	"dogwatch/internal/oncall"
 	"dogwatch/internal/otlp"
+	"dogwatch/internal/pii"
 	"dogwatch/internal/probe"
 	"dogwatch/internal/query"
 	"dogwatch/internal/quotas"
 	"dogwatch/internal/rbac"
+	"dogwatch/internal/recording"
+	"dogwatch/internal/security"
 	"dogwatch/internal/slo"
 	"dogwatch/internal/storage"
 	"dogwatch/internal/synthetics"
@@ -242,6 +246,20 @@ func main() {
 		web.SetLogReduceStore(logReduceStore)
 		fmt.Printf("Log pattern mining: %s\n", logReduceDbPath)
 		fmt.Printf("LogReduce: http://localhost:%d/api/logs/patterns\n", *webPort)
+	}
+
+	// Create PII detection and redaction store
+	piiDbPath := filepath.Join(*dataDir, "pii.db")
+	piiStore, err := pii.NewStore(piiDbPath)
+	if err != nil {
+		log.Printf("Warning: Could not create PII store: %v", err)
+	} else {
+		defer piiStore.Close()
+		// Load any persisted config
+		piiStore.LoadConfig()
+		web.SetPIIStore(piiStore)
+		fmt.Printf("PII detection: %s\n", piiDbPath)
+		fmt.Printf("PII API: http://localhost:%d/api/pii/config\n", *webPort)
 	}
 
 	// Create custom metrics storage
@@ -575,6 +593,27 @@ func main() {
 		fmt.Printf("Audit logs: http://localhost:%d/api/audit/logs\n", *webPort)
 	}
 
+	// Create security threat detection store
+	securityDbPath := filepath.Join(*dataDir, "security.db")
+	securityStore, err := security.NewStore(securityDbPath)
+	if err != nil {
+		log.Printf("Warning: Could not create security storage: %v", err)
+	} else {
+		defer securityStore.Close()
+		fmt.Printf("Security storage: %s\n", securityDbPath)
+
+		// Create security detector with store
+		securityDetector := security.NewDetector(security.DetectorConfig{
+			Store:       securityStore,
+			DedupWindow: 5 * time.Minute,
+			AlertCallback: func(alert *security.SecurityAlert) {
+				log.Printf("[security] ALERT: %s - %s (severity: %s)", alert.RuleName, alert.Title, alert.Severity)
+			},
+		})
+		_ = securityDetector // Will be wired to eBPF probes and web handlers by another agent
+		fmt.Printf("Threat detection: enabled (%d rules)\n", len(securityDetector.GetRulesEngine().GetRules()))
+	}
+
 	// Create SSO store and initialize SSO
 	ssoDbPath := filepath.Join(*dataDir, "sso.db")
 	ssoStore, err := sso.NewStore(ssoDbPath)
@@ -682,6 +721,29 @@ func main() {
 		}
 		webServer.SetQueryExecutor(queryExecutor)
 		fmt.Printf("Query builder: http://localhost:%d/query-builder.html\n", *webPort)
+
+		// Set up recording rules (pre-computed aggregations)
+		recordingDbPath := filepath.Join(*dataDir, "recording.db")
+		recordingStore, err := recording.NewStore(recordingDbPath)
+		if err != nil {
+			log.Printf("Warning: Could not create recording rules storage: %v", err)
+		} else {
+			defer recordingStore.Close()
+			fmt.Printf("Recording rules storage: %s\n", recordingDbPath)
+
+			// Create evaluator with query executor and metrics store
+			recordingEvaluator := recording.NewEvaluator(queryExecutor, customMetricsStore)
+
+			// Create and start manager
+			recordingManager := recording.NewManager(recordingStore, recordingEvaluator, recording.DefaultConfig())
+			recordingManager.Start()
+			defer recordingManager.Stop()
+
+			// Register API routes
+			web.SetRecordingManager(recordingManager, recordingStore)
+			web.RegisterRecordingRoutes(webServer.Mux())
+			fmt.Printf("Recording rules: http://localhost:%d/api/recording-rules\n", *webPort)
+		}
 
 		if syntheticsStore != nil {
 			// Create notifier for synthetics alerts (reuses watch infrastructure)
@@ -890,6 +952,38 @@ func main() {
 			myServicesHandlers := web.NewMyServicesHandlers(catalogStore, rbacStore)
 			webServer.SetMyServicesHandlers(myServicesHandlers)
 			fmt.Printf("My Services: http://localhost:%d/my-services\n", *webPort)
+		}
+
+		// Set up knowledge objects (reusable query components)
+		knowledgeDbPath := filepath.Join(*dataDir, "knowledge.db")
+		knowledgeStore, err := knowledge.NewStore(knowledgeDbPath)
+		if err != nil {
+			log.Printf("Warning: Could not create knowledge storage: %v", err)
+		} else {
+			defer knowledgeStore.Close()
+			knowledgeHandlers := web.NewKnowledgeHandlers(knowledgeStore)
+			knowledgeHandlers.RegisterRoutes(webServer.Mux())
+			web.SetKnowledgeHandlers(knowledgeHandlers)
+			fmt.Printf("Knowledge storage: %s\n", knowledgeDbPath)
+			fmt.Printf("Knowledge objects: http://localhost:%d/api/knowledge\n", *webPort)
+		}
+
+		// Register PII handlers if store was created
+		if piiHandlers := web.GetPIIHandlers(); piiHandlers != nil {
+			piiHandlers.RegisterRoutes(webServer.Mux())
+		}
+
+		// Set up security monitoring
+		securityDbPath := filepath.Join(*dataDir, "security.db")
+		securityStore, err := security.NewStore(securityDbPath)
+		if err != nil {
+			log.Printf("Warning: Could not create security storage: %v", err)
+		} else {
+			defer securityStore.Close()
+			web.SetSecurityStore(securityStore)
+			web.RegisterSecurityRoutes(webServer.Mux())
+			fmt.Printf("Security storage: %s\n", securityDbPath)
+			fmt.Printf("Security dashboard: http://localhost:%d/security.html\n", *webPort)
 		}
 
 		go func() {

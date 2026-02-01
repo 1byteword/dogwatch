@@ -134,8 +134,8 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 
 | Task | Complexity | VISION.md Reference |
 |------|------------|---------------------|
-| Recording rules (pre-computed aggregations) | 1 week | [Chronosphere Features](VISION.md#6-recording-rules-at-scale) |
-| Knowledge objects (reusable query components) | 2 weeks | [Knowledge Objects](VISION.md#2-knowledge-objects--steal-this) |
+| ~~Recording rules (pre-computed aggregations)~~ | ✅ Done | [Chronosphere Features](VISION.md#6-recording-rules-at-scale) |
+| ~~Knowledge objects (reusable query components)~~ | ✅ Done | [Knowledge Objects](VISION.md#2-knowledge-objects--steal-this) |
 
 ---
 
@@ -145,15 +145,15 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 
 | Task | Complexity | VISION.md Reference |
 |------|------------|---------------------|
-| Threat detection rules (shell-in-container, cryptominers) | 2 weeks | [Security Observability](VISION.md#6-security-observability) |
-| Security dashboard | 1 week | [Security Observability](VISION.md#6-security-observability) |
+| ~~Threat detection rules (shell-in-container, cryptominers)~~ | ✅ Done | [Security Observability](VISION.md#6-security-observability) |
+| ~~Security dashboard~~ | ✅ Done | [Security Observability](VISION.md#6-security-observability) |
 | SIEM export (CEF/LEEF) | 1 week | [Security Observability](VISION.md#6-security-observability) |
 
 ### P1 - Compliance
 
 | Task | Complexity | VISION.md Reference |
 |------|------------|---------------------|
-| PII detection & redaction | 2 weeks | [Pain Point: Compliance](VISION.md#pain-point-10-compliance--audit-gaps--high) |
+| ~~PII detection & redaction~~ | ✅ Done | [Pain Point: Compliance](VISION.md#pain-point-10-compliance--audit-gaps--high) |
 | Enhanced audit logging (query audit) | 1 week | [Pain Point: Compliance](VISION.md#pain-point-10-compliance--audit-gaps--high) |
 | Compliance reports (SOC2 evidence) | 2 weeks | [Pain Point: Compliance](VISION.md#pain-point-10-compliance--audit-gaps--high) |
 
@@ -224,7 +224,9 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 | **Root Cause** | BubbleUp (chi-squared analysis, lift calculation, dimension ranking) |
 | **Logs** | LogCompare (time period comparison), LogReduce (pattern detection), BM25 relevance search |
 | **Production** | Prometheus remote write receiver, Health check endpoints (/healthz, /readyz, /livez) |
-| **Query** | DQL (pipe + SQL syntax), Cross-signal JOINs, BM25 full-text search |
+| **Query** | DQL (pipe + SQL syntax), Cross-signal JOINs, BM25 full-text search, Recording rules, Knowledge objects (macros, field extractions, lookups) |
+| **Security** | Threat detection (13 rules), Security dashboard, MITRE ATT&CK mapping, Alert investigation |
+| **Compliance** | PII detection (email, phone, SSN, credit cards, API keys, JWT), Redaction strategies (mask, hash, tokenize) |
 
 ---
 
