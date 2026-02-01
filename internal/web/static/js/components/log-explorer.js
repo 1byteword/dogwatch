@@ -76,7 +76,7 @@ class LogExplorer extends HTMLElement {
             if (!resp.ok) throw new Error('Search failed');
 
             const data = await resp.json();
-            this.logs = data.entries || [];
+            this.logs = data.data || data.entries || [];
             this.renderResults();
         } catch (e) {
             this.showError(e.message);
