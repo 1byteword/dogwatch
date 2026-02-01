@@ -188,8 +188,17 @@ func (n *PlanWindowNode) String() string {
 type PlanJoinNode struct {
 	Left          PlanNode
 	Right         PlanNode
+	JoinType      JoinType
 	JoinFields    []string
 	TimeTolerance time.Duration
+	TimeCondition *TimeJoinCondition
+}
+
+// TimeJoinCondition represents a time-based join condition (BETWEEN)
+type TimeJoinCondition struct {
+	LeftField  string
+	StartField string
+	EndField   string
 }
 
 func (n *PlanJoinNode) NodeType() PlanNodeType { return PlanJoinType }
@@ -198,7 +207,18 @@ func (n *PlanJoinNode) EstimatedCost() float64 {
 	return (n.Left.EstimatedCost() + n.Right.EstimatedCost()) * 3.0
 }
 func (n *PlanJoinNode) String() string {
-	return fmt.Sprintf("Join(on=%v, time±%s)", n.JoinFields, n.TimeTolerance)
+	joinTypes := []string{"INNER", "LEFT", "RIGHT", "FULL"}
+	jt := "INNER"
+	if int(n.JoinType) < len(joinTypes) {
+		jt = joinTypes[n.JoinType]
+	}
+	if n.TimeCondition != nil {
+		return fmt.Sprintf("%s Join(on=%v, time=%s BETWEEN %s AND %s)", jt, n.JoinFields, n.TimeCondition.LeftField, n.TimeCondition.StartField, n.TimeCondition.EndField)
+	}
+	if n.TimeTolerance > 0 {
+		return fmt.Sprintf("%s Join(on=%v, time±%s)", jt, n.JoinFields, n.TimeTolerance)
+	}
+	return fmt.Sprintf("%s Join(on=%v)", jt, n.JoinFields)
 }
 
 // PlanAnomalyNode detects anomalies
@@ -276,8 +296,15 @@ func NewPlanner() *Planner {
 
 // Plan creates an execution plan from a query
 func (p *Planner) Plan(query *Query) (*Plan, error) {
-	// Build initial plan
-	root, err := p.buildPlan(query)
+	var root PlanNode
+	var err error
+
+	// Check if this is a SQL query
+	if query.SQL != nil {
+		root, err = p.buildSQLPlan(query.SQL)
+	} else {
+		root, err = p.buildPlan(query)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -297,6 +324,220 @@ func (p *Planner) Plan(query *Query) (*Plan, error) {
 	}
 
 	return plan, nil
+}
+
+// buildSQLPlan builds a plan from a SQL query
+func (p *Planner) buildSQLPlan(sql *SQLQuery) (PlanNode, error) {
+	// Start with FROM clause scan
+	var node PlanNode
+	var err error
+
+	if sql.From.Subquery != nil {
+		node, err = p.buildSQLPlan(sql.From.Subquery)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		node = &PlanScanNode{
+			Source:     sql.From.Source.SourceType,
+			MetricName: sql.From.Source.MetricName,
+		}
+	}
+
+	// Process JOINs
+	for _, join := range sql.Joins {
+		var rightNode PlanNode
+		if join.Source.Subquery != nil {
+			rightNode, err = p.buildSQLPlan(join.Source.Subquery)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			rightNode = &PlanScanNode{
+				Source:     join.Source.Source.SourceType,
+				MetricName: join.Source.Source.MetricName,
+			}
+		}
+
+		joinNode := &PlanJoinNode{
+			Left:     node,
+			Right:    rightNode,
+			JoinType: join.JoinType,
+		}
+
+		// Extract join fields from condition
+		if join.Condition != nil {
+			if join.Condition.Op == "=" {
+				joinNode.JoinFields = p.extractJoinFields(join.Condition)
+			} else if join.Condition.Op == "BETWEEN" {
+				joinNode.TimeCondition = p.extractTimeCondition(join.Condition)
+			}
+		}
+
+		node = joinNode
+	}
+
+	// Add WHERE filter
+	if sql.Where != nil {
+		node = &PlanFilterNode{
+			Input:     node,
+			Condition: sql.Where,
+		}
+	}
+
+	// Add GROUP BY and aggregations
+	if len(sql.GroupBy) > 0 || p.hasAggregations(sql.Select) {
+		aggNode := &PlanAggregateNode{
+			Input: node,
+		}
+
+		// Extract group by fields
+		for _, expr := range sql.GroupBy {
+			if ident, ok := expr.(*IdentifierExpr); ok {
+				aggNode.GroupBy = append(aggNode.GroupBy, ident.Name)
+			}
+		}
+
+		// Extract aggregations from SELECT
+		for _, field := range sql.Select.Fields {
+			if fc, ok := field.Expr.(*FunctionCallExpr); ok {
+				if p.isAggFunction(fc.Name) {
+					spec := AggSpec{
+						Function: strings.ToLower(fc.Name),
+						Alias:    field.Alias,
+					}
+					if len(fc.Args) > 0 {
+						if ident, ok := fc.Args[0].(*IdentifierExpr); ok {
+							spec.Field = ident.Name
+						}
+					}
+					if spec.Alias == "" {
+						spec.Alias = spec.Function
+						if spec.Field != "" {
+							spec.Alias += "_" + spec.Field
+						}
+					}
+					aggNode.Aggregations = append(aggNode.Aggregations, spec)
+				}
+			}
+		}
+
+		node = aggNode
+
+		// Add HAVING filter (post-aggregation)
+		if sql.Having != nil {
+			node = &PlanFilterNode{
+				Input:     node,
+				Condition: sql.Having,
+			}
+		}
+	}
+
+	// Add projection (SELECT)
+	if len(sql.Select.Fields) > 0 && !p.isSelectStar(sql.Select) {
+		fields := make([]ProjectField, 0, len(sql.Select.Fields))
+		for _, f := range sql.Select.Fields {
+			// Skip aggregations - already handled
+			if fc, ok := f.Expr.(*FunctionCallExpr); ok && p.isAggFunction(fc.Name) {
+				continue
+			}
+			fields = append(fields, ProjectField{
+				Expr:  f.Expr,
+				Alias: f.Alias,
+			})
+		}
+		if len(fields) > 0 {
+			node = &PlanProjectNode{
+				Input:  node,
+				Fields: fields,
+			}
+		}
+	}
+
+	// Add ORDER BY
+	if sql.OrderBy != nil {
+		fields := make([]SortField, len(sql.OrderBy.Fields))
+		for i, f := range sql.OrderBy.Fields {
+			fields[i] = SortField{Field: f.Field, Desc: f.Desc}
+		}
+		node = &PlanSortNode{
+			Input:  node,
+			Fields: fields,
+		}
+	}
+
+	// Add LIMIT
+	if sql.Limit != nil {
+		node = &PlanLimitNode{
+			Input:  node,
+			Count:  sql.Limit.Count,
+			Offset: sql.Limit.Offset,
+		}
+	}
+
+	return node, nil
+}
+
+// extractJoinFields extracts field names from a join condition
+func (p *Planner) extractJoinFields(cond *SQLJoinCondition) []string {
+	var fields []string
+
+	if ident, ok := cond.Left.(*IdentifierExpr); ok {
+		fields = append(fields, ident.Name)
+	}
+	if ident, ok := cond.Right.(*IdentifierExpr); ok {
+		fields = append(fields, ident.Name)
+	}
+
+	return fields
+}
+
+// extractTimeCondition extracts time condition from a BETWEEN join
+func (p *Planner) extractTimeCondition(cond *SQLJoinCondition) *TimeJoinCondition {
+	tc := &TimeJoinCondition{}
+
+	if ident, ok := cond.Left.(*IdentifierExpr); ok {
+		tc.LeftField = ident.Name
+	}
+	if ident, ok := cond.Right.(*IdentifierExpr); ok {
+		tc.StartField = ident.Name
+	}
+	if ident, ok := cond.RightEnd.(*IdentifierExpr); ok {
+		tc.EndField = ident.Name
+	}
+
+	return tc
+}
+
+// hasAggregations checks if SELECT has any aggregation functions
+func (p *Planner) hasAggregations(sel *SQLSelectClause) bool {
+	for _, field := range sel.Fields {
+		if fc, ok := field.Expr.(*FunctionCallExpr); ok {
+			if p.isAggFunction(fc.Name) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isAggFunction checks if a function name is an aggregation function
+func (p *Planner) isAggFunction(name string) bool {
+	switch strings.ToLower(name) {
+	case "count", "sum", "avg", "min", "max", "p50", "p90", "p95", "p99":
+		return true
+	}
+	return false
+}
+
+// isSelectStar checks if SELECT is just *
+func (p *Planner) isSelectStar(sel *SQLSelectClause) bool {
+	if len(sel.Fields) == 1 {
+		if ident, ok := sel.Fields[0].Expr.(*IdentifierExpr); ok {
+			return ident.Name == "*"
+		}
+	}
+	return false
 }
 
 func (p *Planner) buildPlan(query *Query) (PlanNode, error) {
@@ -395,6 +636,7 @@ func (p *Planner) buildPipeNode(input PlanNode, pipe PipeNode) (PlanNode, error)
 		return &PlanJoinNode{
 			Left:          input,
 			Right:         rightScan,
+			JoinType:      JoinInner,
 			JoinFields:    n.JoinFields,
 			TimeTolerance: n.TimeTolerance,
 		}, nil

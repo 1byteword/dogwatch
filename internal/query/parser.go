@@ -22,12 +22,20 @@ type ParseError struct {
 	Token    Token
 	Expected string
 	Got      string
+	Context  string // Source snippet around error
+	Hint     string // Suggestion for fixing
 }
 
 func (e ParseError) Error() string {
 	s := fmt.Sprintf("parse error at %s: %s", e.Position, e.Message)
 	if e.Expected != "" {
 		s += fmt.Sprintf(" (expected %s, got %s)", e.Expected, e.Got)
+	}
+	if e.Context != "" {
+		s += fmt.Sprintf("\n  %s", e.Context)
+	}
+	if e.Hint != "" {
+		s += fmt.Sprintf("\n  Hint: %s", e.Hint)
 	}
 	return s
 }
@@ -52,7 +60,7 @@ func Parse(input string) (*Query, error) {
 	return parser.Parse()
 }
 
-// Parse parses a query
+// Parse parses a query (SQL or pipe syntax)
 func (p *Parser) Parse() (*Query, error) {
 	// Handle define statements first
 	for p.check(TokenDefine) {
@@ -63,13 +71,23 @@ func (p *Parser) Parse() (*Query, error) {
 		p.defines[def.Name] = def
 	}
 
-	query, err := p.parseQuery()
+	// Detect SQL vs pipe syntax
+	if p.check(TokenSelect) {
+		return p.parseSQLQuery()
+	}
+
+	query, err := p.parsePipeQuery()
 	if err != nil {
 		return nil, err
 	}
 
 	query.Definitions = p.defines
 	return query, nil
+}
+
+// parsePipeQuery parses pipe-based WatchQL syntax
+func (p *Parser) parsePipeQuery() (*Query, error) {
+	return p.parseQuery()
 }
 
 func (p *Parser) parseQuery() (*Query, error) {
@@ -917,6 +935,10 @@ func (p *Parser) parsePrimary() (Expr, error) {
 	case p.check(TokenIdent):
 		return p.parseIdentifierOrCall()
 
+	// Handle aggregation keywords as function calls in SQL expressions
+	case p.checkAggregation():
+		return p.parseAggregationAsFunction()
+
 	case p.match(TokenLParen):
 		// Could be a subquery or grouped expression or list
 		if p.check(TokenMetrics) || p.check(TokenLogs) || p.check(TokenTraces) || p.check(TokenEvents) {
@@ -972,6 +994,39 @@ func (p *Parser) parseList(pos Position) (Expr, error) {
 	}
 
 	return &ListExpr{Values: values, Pos: pos}, nil
+}
+
+// parseAggregationAsFunction parses aggregation keywords (count, sum, etc.) as function calls
+func (p *Parser) parseAggregationAsFunction() (Expr, error) {
+	pos := p.current().Pos
+	tok := p.advance() // consume the aggregation keyword
+	name := tok.Value
+
+	// Must be followed by (
+	if !p.match(TokenLParen) {
+		return nil, p.error("expected '(' after %s", name)
+	}
+
+	// Parse arguments
+	var args []Expr
+	if !p.check(TokenRParen) {
+		for {
+			arg, err := p.parseExpression()
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, arg)
+			if !p.match(TokenComma) {
+				break
+			}
+		}
+	}
+
+	if !p.match(TokenRParen) {
+		return nil, p.error("expected ')' after function arguments")
+	}
+
+	return &FunctionCallExpr{Name: name, Args: args, Pos: pos}, nil
 }
 
 func (p *Parser) parseIdentifierOrCall() (Expr, error) {
@@ -1049,12 +1104,364 @@ func (p *Parser) advance() Token {
 
 func (p *Parser) error(format string, args ...interface{}) error {
 	tok := p.current()
-	return ParseError{
+	err := ParseError{
 		Message:  fmt.Sprintf(format, args...),
 		Position: tok.Pos,
 		Token:    tok,
 		Got:      TokenName(tok.Type),
 	}
+
+	// Add context and hints based on common errors
+	err.Hint = p.suggestHint(tok, err.Message)
+
+	return err
+}
+
+// suggestHint provides helpful suggestions for common errors
+func (p *Parser) suggestHint(tok Token, msg string) string {
+	switch {
+	case strings.Contains(msg, "expected data source"):
+		return "Query should start with 'metrics', 'logs', 'traces', 'events', or 'SELECT'"
+	case strings.Contains(msg, "expected FROM"):
+		return "SQL queries require a FROM clause after SELECT, e.g., 'SELECT * FROM logs'"
+	case strings.Contains(msg, "expected BY after GROUP"):
+		return "GROUP requires BY, e.g., 'GROUP BY service'"
+	case strings.Contains(msg, "expected JOIN"):
+		return "Use 'INNER JOIN', 'LEFT JOIN', 'RIGHT JOIN', or 'FULL JOIN'"
+	case strings.Contains(msg, "expected '=' or BETWEEN"):
+		return "JOIN conditions should use '=' for equality or 'BETWEEN' for time ranges"
+	case strings.Contains(msg, "unexpected token"):
+		if tok.Type == TokenIdent {
+			return fmt.Sprintf("'%s' is not a recognized keyword at this position", tok.Value)
+		}
+	}
+	return ""
+}
+
+// errorWithHint creates an error with a specific hint
+func (p *Parser) errorWithHint(hint string, format string, args ...interface{}) error {
+	tok := p.current()
+	return ParseError{
+		Message:  fmt.Sprintf(format, args...),
+		Position: tok.Pos,
+		Token:    tok,
+		Got:      TokenName(tok.Type),
+		Hint:     hint,
+	}
+}
+
+// parseSQLQuery parses SQL-style DQL query
+func (p *Parser) parseSQLQuery() (*Query, error) {
+	pos := p.current().Pos
+
+	sql := &SQLQuery{Pos: pos}
+
+	// Parse SELECT clause
+	selectClause, err := p.parseSQLSelect()
+	if err != nil {
+		return nil, err
+	}
+	sql.Select = selectClause
+
+	// Parse FROM clause
+	if !p.match(TokenFrom) {
+		return nil, p.error("expected FROM after SELECT")
+	}
+	fromClause, err := p.parseSQLFrom()
+	if err != nil {
+		return nil, err
+	}
+	sql.From = fromClause
+
+	// Parse JOINs
+	for p.checkJoin() {
+		joinClause, err := p.parseSQLJoin()
+		if err != nil {
+			return nil, err
+		}
+		sql.Joins = append(sql.Joins, joinClause)
+	}
+
+	// Parse WHERE clause
+	if p.match(TokenWhere) {
+		cond, err := p.parseExpression()
+		if err != nil {
+			return nil, err
+		}
+		sql.Where = cond
+	}
+
+	// Parse GROUP BY clause
+	if p.match(TokenGroup) {
+		if !p.match(TokenBy) {
+			return nil, p.error("expected BY after GROUP")
+		}
+		groupBy, err := p.parseSQLGroupBy()
+		if err != nil {
+			return nil, err
+		}
+		sql.GroupBy = groupBy
+	}
+
+	// Parse HAVING clause
+	if p.match(TokenHaving) {
+		having, err := p.parseExpression()
+		if err != nil {
+			return nil, err
+		}
+		sql.Having = having
+	}
+
+	// Parse ORDER BY clause
+	if p.check(TokenOrder) {
+		orderBy, err := p.parseOrderBy()
+		if err != nil {
+			return nil, err
+		}
+		sql.OrderBy = orderBy
+	}
+
+	// Parse LIMIT clause
+	if p.check(TokenLimit) {
+		limit, err := p.parseLimit()
+		if err != nil {
+			return nil, err
+		}
+		sql.Limit = limit
+	}
+
+	query := &Query{
+		SQL:         sql,
+		Pos:         pos,
+		Definitions: p.defines,
+	}
+
+	return query, nil
+}
+
+// parseSQLSelect parses the SELECT clause
+func (p *Parser) parseSQLSelect() (*SQLSelectClause, error) {
+	pos := p.current().Pos
+	p.advance() // consume SELECT
+
+	clause := &SQLSelectClause{Pos: pos}
+
+	// Check for DISTINCT
+	if p.match(TokenDistinct) {
+		clause.Distinct = true
+	}
+
+	// Parse fields
+	for {
+		field, err := p.parseSQLSelectField()
+		if err != nil {
+			return nil, err
+		}
+		clause.Fields = append(clause.Fields, field)
+
+		if !p.match(TokenComma) {
+			break
+		}
+	}
+
+	return clause, nil
+}
+
+// parseSQLSelectField parses a single field in SELECT
+func (p *Parser) parseSQLSelectField() (SQLSelectField, error) {
+	expr, err := p.parseExpression()
+	if err != nil {
+		return SQLSelectField{}, err
+	}
+
+	field := SQLSelectField{Expr: expr}
+
+	// Check for AS alias
+	if p.match(TokenAs) {
+		if !p.check(TokenIdent) {
+			return field, p.error("expected alias name after AS")
+		}
+		field.Alias = p.advance().Value
+	} else if p.check(TokenIdent) && !p.checkKeyword() {
+		// Handle implicit alias (without AS)
+		field.Alias = p.advance().Value
+	}
+
+	return field, nil
+}
+
+// parseSQLFrom parses the FROM clause
+func (p *Parser) parseSQLFrom() (*SQLFromClause, error) {
+	pos := p.current().Pos
+	clause := &SQLFromClause{Pos: pos}
+
+	// Check for subquery
+	if p.match(TokenLParen) {
+		if p.check(TokenSelect) {
+			subquery, err := p.parseSQLQuery()
+			if err != nil {
+				return nil, err
+			}
+			clause.Subquery = subquery.SQL
+			if !p.match(TokenRParen) {
+				return nil, p.error("expected ')' after subquery")
+			}
+		} else {
+			return nil, p.error("expected SELECT in subquery")
+		}
+	} else {
+		// Parse source (metrics, logs, traces, events)
+		source, err := p.parseSource()
+		if err != nil {
+			return nil, err
+		}
+		clause.Source = source
+	}
+
+	// Parse optional alias
+	if p.check(TokenIdent) && !p.checkKeyword() {
+		clause.Alias = p.advance().Value
+	} else if p.match(TokenAs) {
+		if !p.check(TokenIdent) {
+			return nil, p.error("expected alias after AS")
+		}
+		clause.Alias = p.advance().Value
+	}
+
+	return clause, nil
+}
+
+// parseSQLJoin parses a JOIN clause
+func (p *Parser) parseSQLJoin() (*SQLJoinClause, error) {
+	pos := p.current().Pos
+	clause := &SQLJoinClause{Pos: pos}
+
+	// Determine join type
+	if p.match(TokenInner) {
+		clause.JoinType = JoinInner
+		if !p.match(TokenJoin) {
+			return nil, p.error("expected JOIN after INNER")
+		}
+	} else if p.match(TokenLeft) {
+		clause.JoinType = JoinLeft
+		p.match(TokenOuter) // optional OUTER
+		if !p.match(TokenJoin) {
+			return nil, p.error("expected JOIN after LEFT")
+		}
+	} else if p.match(TokenRight) {
+		clause.JoinType = JoinRight
+		p.match(TokenOuter) // optional OUTER
+		if !p.match(TokenJoin) {
+			return nil, p.error("expected JOIN after RIGHT")
+		}
+	} else if p.match(TokenFull) {
+		clause.JoinType = JoinFull
+		p.match(TokenOuter) // optional OUTER
+		if !p.match(TokenJoin) {
+			return nil, p.error("expected JOIN after FULL")
+		}
+	} else if p.match(TokenJoin) {
+		clause.JoinType = JoinInner // Default to INNER JOIN
+	} else {
+		return nil, p.error("expected JOIN keyword")
+	}
+
+	// Parse source
+	source, err := p.parseSQLFrom()
+	if err != nil {
+		return nil, err
+	}
+	clause.Source = source
+
+	// Parse ON condition
+	if p.match(TokenOn) {
+		cond, err := p.parseSQLJoinCondition()
+		if err != nil {
+			return nil, err
+		}
+		clause.Condition = cond
+	}
+
+	return clause, nil
+}
+
+// parseSQLJoinCondition parses the ON condition for a JOIN
+// It supports: expr = expr, expr BETWEEN expr AND expr, and compound conditions with AND
+func (p *Parser) parseSQLJoinCondition() (*SQLJoinCondition, error) {
+	// Parse the full expression - will handle =, BETWEEN, etc.
+	expr, err := p.parseExpression()
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert expression to join condition
+	return p.exprToJoinCondition(expr)
+}
+
+// exprToJoinCondition converts a parsed expression into a SQLJoinCondition
+func (p *Parser) exprToJoinCondition(expr Expr) (*SQLJoinCondition, error) {
+	switch e := expr.(type) {
+	case *BinaryExpr:
+		switch e.Operator {
+		case "=":
+			return &SQLJoinCondition{
+				Left:  e.Left,
+				Op:    "=",
+				Right: e.Right,
+				Pos:   e.Pos,
+			}, nil
+		case "and":
+			// For compound conditions, just use the first one for the join
+			// TODO: support multiple join conditions
+			return p.exprToJoinCondition(e.Left)
+		default:
+			return nil, p.errorWithHint(
+				"Use '=' for equality joins or 'BETWEEN' for time-based joins",
+				"unsupported join operator: %s", e.Operator)
+		}
+	default:
+		return nil, p.errorWithHint(
+			"JOIN conditions should be in the form: t1.column = t2.column",
+			"invalid join condition")
+	}
+}
+
+// parseSQLGroupBy parses the GROUP BY fields
+func (p *Parser) parseSQLGroupBy() ([]Expr, error) {
+	var fields []Expr
+
+	for {
+		expr, err := p.parseExpression()
+		if err != nil {
+			return nil, err
+		}
+		fields = append(fields, expr)
+
+		if !p.match(TokenComma) {
+			break
+		}
+	}
+
+	return fields, nil
+}
+
+// checkJoin checks if the current token starts a JOIN clause
+func (p *Parser) checkJoin() bool {
+	switch p.current().Type {
+	case TokenJoin, TokenInner, TokenLeft, TokenRight, TokenFull:
+		return true
+	}
+	return false
+}
+
+// checkKeyword checks if the current token is a keyword (not an identifier to use as alias)
+func (p *Parser) checkKeyword() bool {
+	switch p.current().Type {
+	case TokenFrom, TokenWhere, TokenGroup, TokenHaving, TokenOrder, TokenLimit, TokenJoin,
+		TokenInner, TokenLeft, TokenRight, TokenFull, TokenOn, TokenAnd, TokenOr:
+		return true
+	}
+	return false
 }
 
 // parseDuration parses duration strings like "1h", "30m", "1d"

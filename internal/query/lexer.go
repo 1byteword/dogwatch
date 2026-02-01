@@ -98,6 +98,17 @@ const (
 	TokenP90
 	TokenP95
 	TokenP99
+
+	// SQL Keywords
+	TokenFrom
+	TokenJoin
+	TokenInner
+	TokenLeft
+	TokenRight
+	TokenFull
+	TokenOuter
+	TokenGroup
+	TokenHaving
 )
 
 var keywords = map[string]TokenType{
@@ -155,6 +166,16 @@ var keywords = map[string]TokenType{
 	"p90":         TokenP90,
 	"p95":         TokenP95,
 	"p99":         TokenP99,
+	// SQL keywords
+	"from":   TokenFrom,
+	"join":   TokenJoin,
+	"inner":  TokenInner,
+	"left":   TokenLeft,
+	"right":  TokenRight,
+	"full":   TokenFull,
+	"outer":  TokenOuter,
+	"group":  TokenGroup,
+	"having": TokenHaving,
 }
 
 // Token represents a lexical token
@@ -540,6 +561,15 @@ func TokenName(t TokenType) string {
 		TokenTrue:        "'true'",
 		TokenFalse:       "'false'",
 		TokenNull:        "'null'",
+		TokenFrom:        "'from'",
+		TokenJoin:        "'join'",
+		TokenInner:       "'inner'",
+		TokenLeft:        "'left'",
+		TokenRight:       "'right'",
+		TokenFull:        "'full'",
+		TokenOuter:       "'outer'",
+		TokenGroup:       "'group'",
+		TokenHaving:      "'having'",
 	}
 	if name, ok := names[t]; ok {
 		return name

@@ -2,6 +2,7 @@ package query
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -29,6 +30,18 @@ const (
 	NodeLiteral
 	NodeTimeRange
 	NodePattern
+	NodeSQLQuery
+	NodeSQLJoin
+)
+
+// JoinType represents SQL join types
+type JoinType int
+
+const (
+	JoinInner JoinType = iota
+	JoinLeft
+	JoinRight
+	JoinFull
 )
 
 // Node is the interface for all AST nodes
@@ -49,13 +62,173 @@ func (p Position) String() string {
 	return fmt.Sprintf("line %d, column %d", p.Line, p.Column)
 }
 
-// Query represents a complete WatchQL query
+// Query represents a complete WatchQL query (pipe syntax or SQL syntax)
 type Query struct {
-	Source     *SourceNode
-	Pipes      []PipeNode
-	TimeRange  *TimeRangeNode
-	Pos        Position
+	Source      *SourceNode
+	Pipes       []PipeNode
+	TimeRange   *TimeRangeNode
+	Pos         Position
 	Definitions map[string]*DefineNode
+
+	// SQL syntax support
+	SQL *SQLQuery
+}
+
+// SQLQuery represents a SQL-style query
+type SQLQuery struct {
+	Select   *SQLSelectClause
+	From     *SQLFromClause
+	Joins    []*SQLJoinClause
+	Where    Expr
+	GroupBy  []Expr
+	Having   Expr
+	OrderBy  *OrderByNode
+	Limit    *LimitNode
+	Pos      Position
+}
+
+func (n *SQLQuery) Type() NodeType     { return NodeSQLQuery }
+func (n *SQLQuery) Position() Position { return n.Pos }
+func (n *SQLQuery) String() string {
+	var sb strings.Builder
+	sb.WriteString("SELECT ")
+	sb.WriteString(n.Select.String())
+	sb.WriteString(" FROM ")
+	sb.WriteString(n.From.String())
+	for _, j := range n.Joins {
+		sb.WriteString(" ")
+		sb.WriteString(j.String())
+	}
+	if n.Where != nil {
+		sb.WriteString(" WHERE ")
+		sb.WriteString(n.Where.String())
+	}
+	if len(n.GroupBy) > 0 {
+		sb.WriteString(" GROUP BY ")
+		for i, g := range n.GroupBy {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(g.String())
+		}
+	}
+	if n.Having != nil {
+		sb.WriteString(" HAVING ")
+		sb.WriteString(n.Having.String())
+	}
+	if n.OrderBy != nil {
+		sb.WriteString(" ")
+		sb.WriteString(n.OrderBy.String())
+	}
+	if n.Limit != nil {
+		sb.WriteString(" ")
+		sb.WriteString(n.Limit.String())
+	}
+	return sb.String()
+}
+
+// SQLSelectClause represents the SELECT clause
+type SQLSelectClause struct {
+	Distinct bool
+	Fields   []SQLSelectField
+	Pos      Position
+}
+
+func (n *SQLSelectClause) String() string {
+	var sb strings.Builder
+	if n.Distinct {
+		sb.WriteString("DISTINCT ")
+	}
+	for i, f := range n.Fields {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(f.String())
+	}
+	return sb.String()
+}
+
+// SQLSelectField represents a field in SELECT clause
+type SQLSelectField struct {
+	Expr  Expr
+	Alias string
+}
+
+func (f SQLSelectField) String() string {
+	s := f.Expr.String()
+	if f.Alias != "" {
+		s += " AS " + f.Alias
+	}
+	return s
+}
+
+// SQLFromClause represents the FROM clause
+type SQLFromClause struct {
+	Source   *SourceNode
+	Subquery *SQLQuery
+	Alias    string
+	Pos      Position
+}
+
+func (n *SQLFromClause) String() string {
+	if n.Subquery != nil {
+		s := "(" + n.Subquery.String() + ")"
+		if n.Alias != "" {
+			s += " " + n.Alias
+		}
+		return s
+	}
+	s := n.Source.String()
+	if n.Alias != "" {
+		s += " " + n.Alias
+	}
+	return s
+}
+
+// SQLJoinClause represents a JOIN clause
+type SQLJoinClause struct {
+	JoinType  JoinType
+	Source    *SQLFromClause
+	Condition *SQLJoinCondition
+	Pos       Position
+}
+
+func (n *SQLJoinClause) Type() NodeType     { return NodeSQLJoin }
+func (n *SQLJoinClause) Position() Position { return n.Pos }
+func (n *SQLJoinClause) String() string {
+	var sb strings.Builder
+	switch n.JoinType {
+	case JoinInner:
+		sb.WriteString("INNER JOIN ")
+	case JoinLeft:
+		sb.WriteString("LEFT JOIN ")
+	case JoinRight:
+		sb.WriteString("RIGHT JOIN ")
+	case JoinFull:
+		sb.WriteString("FULL JOIN ")
+	}
+	sb.WriteString(n.Source.String())
+	if n.Condition != nil {
+		sb.WriteString(" ON ")
+		sb.WriteString(n.Condition.String())
+	}
+	return sb.String()
+}
+
+// SQLJoinCondition represents the ON condition for a JOIN
+type SQLJoinCondition struct {
+	Left      Expr
+	Op        string // "=", "BETWEEN"
+	Right     Expr
+	RightEnd  Expr   // For BETWEEN: Right AND RightEnd
+	Pos       Position
+}
+
+func (n *SQLJoinCondition) String() string {
+	if n.Op == "BETWEEN" {
+		return fmt.Sprintf("%s BETWEEN %s AND %s", n.Left.String(), n.Right.String(), n.RightEnd.String())
+	}
+	return fmt.Sprintf("%s %s %s", n.Left.String(), n.Op, n.Right.String())
 }
 
 func (q *Query) Type() NodeType    { return NodeSource }

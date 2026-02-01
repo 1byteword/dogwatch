@@ -532,6 +532,9 @@ func (e *Executor) executeJoin(ctx context.Context, node *PlanJoinNode, timeRang
 		rightIndex[key] = append(rightIndex[key], row)
 	}
 
+	// Track which right rows matched for RIGHT/FULL joins
+	rightRowMatched := make([]bool, len(rightRows))
+
 	// Join
 	var result []Row
 	for _, leftRow := range leftRows {
@@ -559,25 +562,109 @@ func (e *Executor) executeJoin(ctx context.Context, node *PlanJoinNode, timeRang
 			}
 		}
 
-		for _, rightRow := range matches {
-			// Merge rows
+		// Time condition matching (BETWEEN)
+		if node.TimeCondition != nil && len(matches) > 0 {
+			leftTs := e.getFieldAsTime(leftRow, node.TimeCondition.LeftField)
+			if !leftTs.IsZero() {
+				var filtered []Row
+				for _, m := range matches {
+					startTs := e.getFieldAsTime(m, node.TimeCondition.StartField)
+					endTs := e.getFieldAsTime(m, node.TimeCondition.EndField)
+					if !startTs.IsZero() && !endTs.IsZero() {
+						if (leftTs.Equal(startTs) || leftTs.After(startTs)) &&
+							(leftTs.Equal(endTs) || leftTs.Before(endTs)) {
+							filtered = append(filtered, m)
+						}
+					}
+				}
+				matches = filtered
+			}
+		}
+
+		// Mark matched right rows
+		for _, matchRow := range matches {
+			for i, rightRow := range rightRows {
+				if e.rowEquals(matchRow, rightRow) {
+					rightRowMatched[i] = true
+					break
+				}
+			}
+		}
+
+		if len(matches) > 0 {
+			for _, rightRow := range matches {
+				merged := e.mergeRows(leftRow, rightRow)
+				result = append(result, merged)
+			}
+		} else if node.JoinType == JoinLeft || node.JoinType == JoinFull {
+			// LEFT or FULL JOIN: include left row with NULL right values
 			merged := make(Row)
 			for k, v := range leftRow {
 				merged[k] = v
-			}
-			for k, v := range rightRow {
-				if _, exists := merged[k]; !exists {
-					merged[k] = v
-				} else {
-					// Prefix with right source
-					merged["right_"+k] = v
-				}
 			}
 			result = append(result, merged)
 		}
 	}
 
+	// For RIGHT or FULL JOIN: add unmatched right rows
+	if node.JoinType == JoinRight || node.JoinType == JoinFull {
+		for i, rightRow := range rightRows {
+			if !rightRowMatched[i] {
+				merged := make(Row)
+				for k, v := range rightRow {
+					merged[k] = v
+				}
+				result = append(result, merged)
+			}
+		}
+	}
+
 	return result, nil
+}
+
+// getFieldAsTime extracts a field value as time.Time
+func (e *Executor) getFieldAsTime(row Row, field string) time.Time {
+	if v, ok := row[field]; ok {
+		switch t := v.(type) {
+		case time.Time:
+			return t
+		case int64:
+			return time.Unix(0, t)
+		case float64:
+			return time.Unix(0, int64(t))
+		}
+	}
+	return time.Time{}
+}
+
+// rowEquals checks if two rows are equal (for tracking matched rows)
+func (e *Executor) rowEquals(a, b Row) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if bv, ok := b[k]; !ok || !equals(v, bv) {
+			return false
+		}
+	}
+	return true
+}
+
+// mergeRows merges two rows, prefixing duplicate keys
+func (e *Executor) mergeRows(left, right Row) Row {
+	merged := make(Row)
+	for k, v := range left {
+		merged[k] = v
+	}
+	for k, v := range right {
+		if _, exists := merged[k]; !exists {
+			merged[k] = v
+		} else {
+			// Prefix with right source
+			merged["right_"+k] = v
+		}
+	}
+	return merged
 }
 
 func (e *Executor) joinKey(row Row, fields []string) string {
@@ -1101,6 +1188,156 @@ func (e *Executor) registerBuiltins() {
 		}
 		return math.Sqrt(toFloat(args[0])), nil
 	}
+
+	// time_bucket truncates a timestamp to the given interval
+	e.functions["time_bucket"] = func(args ...interface{}) (interface{}, error) {
+		if len(args) < 2 {
+			return nil, fmt.Errorf("time_bucket requires 2 arguments: interval, timestamp")
+		}
+
+		// Parse interval
+		var interval time.Duration
+		switch v := args[0].(type) {
+		case time.Duration:
+			interval = v
+		case string:
+			d, err := parseDurationArg(v)
+			if err != nil {
+				return nil, fmt.Errorf("invalid interval: %w", err)
+			}
+			interval = d
+		case int64:
+			interval = time.Duration(v)
+		case float64:
+			interval = time.Duration(int64(v))
+		default:
+			return nil, fmt.Errorf("invalid interval type: %T", args[0])
+		}
+
+		// Parse timestamp
+		var ts time.Time
+		switch v := args[1].(type) {
+		case time.Time:
+			ts = v
+		case int64:
+			ts = time.Unix(0, v)
+		case float64:
+			ts = time.Unix(0, int64(v))
+		default:
+			return nil, fmt.Errorf("invalid timestamp type: %T", args[1])
+		}
+
+		// Truncate to interval
+		return ts.Truncate(interval), nil
+	}
+
+	// date_trunc truncates a timestamp to the given precision
+	e.functions["date_trunc"] = func(args ...interface{}) (interface{}, error) {
+		if len(args) < 2 {
+			return nil, fmt.Errorf("date_trunc requires 2 arguments: precision, timestamp")
+		}
+
+		precision := strings.ToLower(fmt.Sprintf("%v", args[0]))
+
+		var ts time.Time
+		switch v := args[1].(type) {
+		case time.Time:
+			ts = v
+		case int64:
+			ts = time.Unix(0, v)
+		case float64:
+			ts = time.Unix(0, int64(v))
+		default:
+			return nil, fmt.Errorf("invalid timestamp type: %T", args[1])
+		}
+
+		switch precision {
+		case "second":
+			return time.Date(ts.Year(), ts.Month(), ts.Day(), ts.Hour(), ts.Minute(), ts.Second(), 0, ts.Location()), nil
+		case "minute":
+			return time.Date(ts.Year(), ts.Month(), ts.Day(), ts.Hour(), ts.Minute(), 0, 0, ts.Location()), nil
+		case "hour":
+			return time.Date(ts.Year(), ts.Month(), ts.Day(), ts.Hour(), 0, 0, 0, ts.Location()), nil
+		case "day":
+			return time.Date(ts.Year(), ts.Month(), ts.Day(), 0, 0, 0, 0, ts.Location()), nil
+		case "week":
+			weekday := int(ts.Weekday())
+			if weekday == 0 {
+				weekday = 7
+			}
+			return time.Date(ts.Year(), ts.Month(), ts.Day()-weekday+1, 0, 0, 0, 0, ts.Location()), nil
+		case "month":
+			return time.Date(ts.Year(), ts.Month(), 1, 0, 0, 0, 0, ts.Location()), nil
+		case "year":
+			return time.Date(ts.Year(), 1, 1, 0, 0, 0, 0, ts.Location()), nil
+		default:
+			return nil, fmt.Errorf("unknown precision: %s", precision)
+		}
+	}
+
+	// extract extracts a part from a timestamp
+	e.functions["extract"] = func(args ...interface{}) (interface{}, error) {
+		if len(args) < 2 {
+			return nil, fmt.Errorf("extract requires 2 arguments: part, timestamp")
+		}
+
+		part := strings.ToLower(fmt.Sprintf("%v", args[0]))
+
+		var ts time.Time
+		switch v := args[1].(type) {
+		case time.Time:
+			ts = v
+		case int64:
+			ts = time.Unix(0, v)
+		case float64:
+			ts = time.Unix(0, int64(v))
+		default:
+			return nil, fmt.Errorf("invalid timestamp type: %T", args[1])
+		}
+
+		switch part {
+		case "year":
+			return ts.Year(), nil
+		case "month":
+			return int(ts.Month()), nil
+		case "day":
+			return ts.Day(), nil
+		case "hour":
+			return ts.Hour(), nil
+		case "minute":
+			return ts.Minute(), nil
+		case "second":
+			return ts.Second(), nil
+		case "dow", "dayofweek":
+			return int(ts.Weekday()), nil
+		case "doy", "dayofyear":
+			return ts.YearDay(), nil
+		case "epoch":
+			return ts.Unix(), nil
+		default:
+			return nil, fmt.Errorf("unknown part: %s", part)
+		}
+	}
+}
+
+// parseDurationArg parses a duration string argument
+func parseDurationArg(s string) (time.Duration, error) {
+	s = strings.ToLower(s)
+	if strings.HasSuffix(s, "d") {
+		n, err := strconv.Atoi(s[:len(s)-1])
+		if err != nil {
+			return 0, err
+		}
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	if strings.HasSuffix(s, "w") {
+		n, err := strconv.Atoi(s[:len(s)-1])
+		if err != nil {
+			return 0, err
+		}
+		return time.Duration(n) * 7 * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(s)
 }
 
 // Helper functions
