@@ -180,10 +180,8 @@ func (s *Store) Process(entry LogEntry) *Pattern {
 func (s *Store) ProcessBatch(entries []LogEntry) *ReduceResult {
 	result := s.miner.ProcessBatch(entries)
 
-	// Periodically save to database
-	if s.miner.totalProcessed%1000 == 0 {
-		go s.savePatterns()
-	}
+	// Save patterns after each batch to ensure persistence
+	go s.savePatterns()
 
 	return result
 }
