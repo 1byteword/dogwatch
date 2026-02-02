@@ -371,8 +371,7 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	// Cardinality explorer endpoints
 	RegisterCardinalityRoutes(mux)
 
-	// Cardinality controller endpoints (circuit breaker, alerts, quarantine)
-	RegisterCardinalityControllerRoutes(mux)
+	// Cardinality controller endpoints registered in main.go (needs store setup)
 
 	// Usage analytics endpoints
 	RegisterUsageRoutes(mux)
@@ -395,8 +394,7 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	// Log field extraction endpoints
 	RegisterExtractionRoutes(mux)
 
-	// Migration endpoints
-	RegisterMigrationRoutes(mux)
+	// Migration endpoints registered in main.go (needs store setup)
 
 	// Migration fidelity analysis endpoints
 	RegisterFidelityRoutes(mux)
