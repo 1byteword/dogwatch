@@ -302,7 +302,20 @@ func (m *Manager) saveConfig() error {
 		return err
 	}
 
-	_, err = m.db.Exec(`
+	return m.saveConfigJSON(configJSON)
+}
+
+// saveConfigLocked saves config when lock is already held (avoids deadlock)
+func (m *Manager) saveConfigLocked() error {
+	configJSON, err := json.Marshal(m.config)
+	if err != nil {
+		return err
+	}
+	return m.saveConfigJSON(configJSON)
+}
+
+func (m *Manager) saveConfigJSON(configJSON []byte) error {
+	_, err := m.db.Exec(`
 		INSERT INTO sampling_config (id, config, updated_at)
 		VALUES (1, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -545,7 +558,7 @@ func (m *Manager) SetAdaptiveTargetTPS(targetTPS float64) {
 	}
 
 	m.config.AdaptiveSamplerConfig.TargetTracesPerSecond = targetTPS
-	m.saveConfig()
+	m.saveConfigLocked()
 }
 
 // SetServiceSampleRate sets a manual sample rate for a specific service
@@ -572,7 +585,7 @@ func (m *Manager) AddTailPriorityService(service string) {
 		m.config.TailSamplerConfig.PriorityServices,
 		service,
 	)
-	m.saveConfig()
+	m.saveConfigLocked()
 }
 
 // GetAdaptiveRateStats returns statistics about adaptive rate changes
