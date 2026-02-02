@@ -668,13 +668,16 @@ func TestCardinalityEndpoints_JSONContentType(t *testing.T) {
 func TestDashboard_DataAggregation(t *testing.T) {
 	ts := setupCardinalityTestServer(t)
 
-	// Add diverse data
-	for i := 0; i < 100; i++ {
-		ts.controller.RecordSeries(fmt.Sprintf("metric_%d", i%20), map[string]string{
-			"env":     "prod",
-			"host":    fmt.Sprintf("host_%d", i%10),
-			"version": fmt.Sprintf("v%d", i%3),
-		})
+	// Add diverse data - create unique series for each metric
+	// 20 metrics * 5 series each = 100 unique series
+	for m := 0; m < 20; m++ {
+		for s := 0; s < 5; s++ {
+			ts.controller.RecordSeries(fmt.Sprintf("metric_%d", m), map[string]string{
+				"env":     "prod",
+				"host":    fmt.Sprintf("host_%d", s),
+				"version": fmt.Sprintf("v%d", s%3),
+			})
+		}
 	}
 
 	w := ts.makeRequest(t, http.MethodGet, "/api/cardinality/dashboard", nil)
