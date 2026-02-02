@@ -218,15 +218,15 @@ These are the deep technical capabilities that create defensible competitive adv
 
 *Features: Kernel version detection (4.4-6.x), BTF availability check, BPF feature probing, perf/ring buffer detection, OpenSSL 1.1/3.x uprobes, Go crypto/tls symbol extraction, prepared statement tracking (MySQL/PostgreSQL), connection state caching.*
 
-### Moat 4-6: Intelligent Analysis (Mostly Done)
+### Moat 4-6: Intelligent Analysis (Done)
 
 | Task | Complexity | Status | VISION.md Reference |
 |------|------------|--------|---------------------|
-| Correlation without trace headers (socket/timing-based) | 4-6 weeks | ❌ Not started | [Headerless Correlation](VISION.md#moat-4-correlation-without-trace-headers) |
+| ~~Correlation without trace headers (socket/timing-based)~~ | 4-6 weeks | ✅ Done | [Headerless Correlation](VISION.md#moat-4-correlation-without-trace-headers) |
 | ~~Low-overhead continuous profiling (all languages)~~ | 3-4 weeks | ✅ Done | [Continuous Profiling](VISION.md#moat-5-low-overhead-continuous-profiling) |
 | ~~Security detection without false positives (baseline learning)~~ | 2-3 weeks | ✅ Done | [Security Detection](VISION.md#moat-6-security-detection-without-false-positives) |
 
-*Features: Full symbol resolution (kernel + userspace ELF), /proc/[pid]/maps parsing, symbol caching, readable flame graphs. Security baseline learning per-container, process/network/file pattern learning, anomaly detection after warmup, false positive feedback handling, parent-child relationship tracking.*
+*Features: Headerless correlation via socket-based (same thread inbound→outbound), timing-based (same PID within time window), and content-based (X-Request-ID headers) methods; connection pooling detection; async worker pattern detection; confidence scoring by method. Full symbol resolution (kernel + userspace ELF), /proc/[pid]/maps parsing, symbol caching, readable flame graphs. Security baseline learning per-container, process/network/file pattern learning, anomaly detection after warmup, false positive feedback handling, parent-child relationship tracking.*
 
 ### Moat 7-9: Data Intelligence (Not Started)
 
@@ -259,11 +259,11 @@ These are the deep technical capabilities that create defensible competitive adv
 | Category | Status | Total Effort |
 |----------|--------|--------------|
 | eBPF Compatibility (1-3) | ✅ 100% | ~14 weeks |
-| Intelligent Analysis (4-6) | ⏳ 67% | ~10 weeks |
+| Intelligent Analysis (4-6) | ✅ 100% | ~10 weeks |
 | Data Intelligence (7-9) | ❌ 0% | ~11 weeks |
 | Scale & Efficiency (10-12) | ✅ 100% | ~7 weeks |
 | Operational Excellence (13-15) | ✅ 100% | ~6 weeks |
-| **Total** | **~73%** | **~48 weeks** |
+| **Total** | **~80%** | **~48 weeks** |
 
 ---
 
@@ -283,7 +283,7 @@ These are the deep technical capabilities that create defensible competitive adv
 | **APM SDK** | HTTP middleware, SQL/Redis/gRPC instrumentation |
 | **UI** | Web server, Service map, History graphs, Demo data, Lookout homepage, Entity synthesis/mapping, My On-Call dashboard, My Services developer view |
 | **Cost Intel** | Datadog/New Relic/Splunk calculators, Cost trending, Recommendations, Cardinality explorer, Usage analytics, Data shaping, Team quotas, Cardinality bomb prevention (circuit breaker, quarantine, alerts, auto-aggregation) |
-| **Correlation** | Change correlation engine, Alert auto-enrichment, Deploy-incident correlation, Dependency graph, Multi-signal correlation (exemplars, fuzzy matching, log-to-trace, metric-to-trace, cross-signal timeline) |
+| **Correlation** | Change correlation engine, Alert auto-enrichment, Deploy-incident correlation, Dependency graph, Multi-signal correlation (exemplars, fuzzy matching, log-to-trace, metric-to-trace, cross-signal timeline), Headerless correlation (socket/timing/content-based, connection pooling detection, async worker detection) |
 | **Root Cause** | BubbleUp (chi-squared analysis, lift calculation, dimension ranking) |
 | **Logs** | LogCompare (time period comparison), LogReduce (pattern detection), BM25 relevance search |
 | **Production** | Prometheus remote write receiver, Health check endpoints (/healthz, /readyz, /livez) |
