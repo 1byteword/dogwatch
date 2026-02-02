@@ -596,6 +596,11 @@ func (d *DatadogImporter) ParseMonitors(data []byte) ([]DatadogMonitor, error) {
 
 // ConvertMonitor converts a Datadog monitor to dogwatch alert rule
 func (d *DatadogImporter) ConvertMonitor(monitor *DatadogMonitor, opts AlertImportOptions) (*ConvertedAlert, *AlertResult) {
+	return d.ConvertMonitorWithContext(monitor, opts, nil)
+}
+
+// ConvertMonitorWithContext converts a Datadog monitor with composite monitor context
+func (d *DatadogImporter) ConvertMonitorWithContext(monitor *DatadogMonitor, opts AlertImportOptions, ctx *CompositeMonitorContext) (*ConvertedAlert, *AlertResult) {
 	result := &AlertResult{
 		SourceName: monitor.Name,
 		SourceID:   fmt.Sprintf("%d", monitor.ID),
@@ -605,6 +610,11 @@ func (d *DatadogImporter) ConvertMonitor(monitor *DatadogMonitor, opts AlertImpo
 	ruleID := uuid.New().String()
 	result.TargetID = ruleID
 
+	// Register this monitor in the composite context for later resolution
+	if ctx != nil {
+		ctx.RegisterMonitor(monitor.ID, ruleID)
+	}
+
 	// Build rule name
 	name := monitor.Name
 	if opts.AlertNamePrefix != "" {
@@ -613,6 +623,8 @@ func (d *DatadogImporter) ConvertMonitor(monitor *DatadogMonitor, opts AlertImpo
 
 	// Determine rule type based on monitor type
 	ruleType := alerting.RuleTypeThreshold
+	isComposite := IsCompositeMonitor(monitor)
+
 	switch monitor.Type {
 	case "metric alert":
 		ruleType = alerting.RuleTypeThreshold
@@ -626,11 +638,24 @@ func (d *DatadogImporter) ConvertMonitor(monitor *DatadogMonitor, opts AlertImpo
 		ruleType = alerting.RuleTypeThreshold
 	case "composite":
 		ruleType = alerting.RuleTypeComposite
+		isComposite = true
 	case "anomaly":
 		ruleType = alerting.RuleTypeAnomaly
 	default:
+		// Check if query looks like a composite query even if type doesn't say so
+		if isComposite {
+			ruleType = alerting.RuleTypeComposite
+		} else {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("Unknown monitor type '%s', defaulting to threshold", monitor.Type))
+		}
+	}
+
+	// Add composite monitor to pending resolution if context provided
+	if isComposite && ctx != nil {
+		ctx.AddPendingComposite(monitor, ruleID)
 		result.Warnings = append(result.Warnings,
-			fmt.Sprintf("Unknown monitor type '%s', defaulting to threshold", monitor.Type))
+			"Composite monitor - sub-rule references will be resolved after all monitors are imported")
 	}
 
 	// Determine severity based on thresholds (stored in labels)
@@ -785,4 +810,69 @@ func (d *DatadogImporter) ImportMonitors(data []byte, opts AlertImportOptions) (
 	}
 
 	return alerts, results, nil
+}
+
+// ImportMonitorsWithCompositeResolution imports monitors and resolves composite references
+// This is the preferred method when importing multiple monitors that may reference each other
+func (d *DatadogImporter) ImportMonitorsWithCompositeResolution(data []byte, opts AlertImportOptions) (*MonitorImportResult, error) {
+	monitors, err := d.ParseMonitors(data)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &MonitorImportResult{
+		Alerts:  make([]*ConvertedAlert, 0, len(monitors)),
+		Results: make([]AlertResult, 0, len(monitors)),
+	}
+
+	// Create composite context
+	ctx := NewCompositeMonitorContext()
+
+	// First pass: convert all monitors and register IDs
+	for i := range monitors {
+		m := &monitors[i]
+		alert, alertResult := d.ConvertMonitorWithContext(m, opts, ctx)
+		result.Alerts = append(result.Alerts, alert)
+		result.Results = append(result.Results, *alertResult)
+	}
+
+	// Second pass: resolve composite monitor references
+	resolutions := ctx.ResolvePendingComposites()
+	for _, resolution := range resolutions {
+		result.CompositeResolutions = append(result.CompositeResolutions, resolution)
+
+		// Find and update the corresponding rule
+		for _, alert := range result.Alerts {
+			if alert.Rule.ID == resolution.RuleID {
+				if resolution.Success {
+					alert.Rule.Expression = resolution.Expression
+					alert.Rule.SubRules = resolution.SubRuleIDs
+					alert.ConversionNote += fmt.Sprintf("; Composite: %s", resolution.Expression)
+				} else {
+					alert.ConversionNote += fmt.Sprintf("; Composite resolution failed: %s", resolution.Error)
+				}
+
+				// Add warnings to the corresponding result
+				for i, r := range result.Results {
+					if r.TargetID == resolution.RuleID {
+						result.Results[i].Warnings = append(result.Results[i].Warnings, resolution.Warnings...)
+						if !resolution.Success {
+							result.Results[i].Warnings = append(result.Results[i].Warnings,
+								fmt.Sprintf("Composite resolution failed: %s", resolution.Error))
+						}
+					}
+				}
+				break
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// MonitorImportResult contains the full result of a monitor batch import
+type MonitorImportResult struct {
+	Alerts               []*ConvertedAlert     `json:"alerts"`
+	Results              []AlertResult         `json:"results"`
+	CompositeResolutions []CompositeResolution `json:"composite_resolutions,omitempty"`
 }

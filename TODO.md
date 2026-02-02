@@ -228,13 +228,15 @@ These are the deep technical capabilities that create defensible competitive adv
 
 *Features: Headerless correlation via socket-based (same thread inbound→outbound), timing-based (same PID within time window), and content-based (X-Request-ID headers) methods; connection pooling detection; async worker pattern detection; confidence scoring by method. Full symbol resolution (kernel + userspace ELF), /proc/[pid]/maps parsing, symbol caching, readable flame graphs. Security baseline learning per-container, process/network/file pattern learning, anomaly detection after warmup, false positive feedback handling, parent-child relationship tracking.*
 
-### Moat 7-9: Data Intelligence (Not Started)
+### Moat 7-9: Data Intelligence (Done)
 
 | Task | Complexity | Status | VISION.md Reference |
 |------|------------|--------|---------------------|
-| Migration fidelity (template variables, composite monitors) | 4-6 weeks | ❌ Not started | [Migration Fidelity](VISION.md#moat-7-migration-fidelity) |
-| Intelligent tail sampling (adaptive, retroactive for errors) | 3-4 weeks | ❌ Not started | [Tail Sampling](VISION.md#moat-8-intelligent-tail-sampling) |
-| Automatic log field extraction (pattern learning) | 3-4 weeks | ❌ Not started | [Field Extraction](VISION.md#moat-9-automatic-log-field-extraction) |
+| ~~Migration fidelity (template variables, composite monitors)~~ | 4-6 weeks | ✅ Done | [Migration Fidelity](VISION.md#moat-7-migration-fidelity) |
+| ~~Intelligent tail sampling (adaptive, retroactive for errors)~~ | 3-4 weeks | ✅ Done | [Tail Sampling](VISION.md#moat-8-intelligent-tail-sampling) |
+| ~~Automatic log field extraction (pattern learning)~~ | 3-4 weeks | ✅ Done | [Field Extraction](VISION.md#moat-9-automatic-log-field-extraction) |
+
+*Features: Composite monitor query parsing (AND/OR/NOT operators, monitor reference resolution), batch import with composite resolution, retroactive trace capture (error/high-latency triggers, parent/child relationship tracking), anomaly detection callbacks, pattern learning for log extraction (signature computation, candidate generation, confidence scoring), log structure analysis (JSON/KV/syslog detection), field detection (IP/email/UUID/key-value patterns).*
 
 ### Moat 10-12: Scale & Efficiency (Done)
 
@@ -260,10 +262,10 @@ These are the deep technical capabilities that create defensible competitive adv
 |----------|--------|--------------|
 | eBPF Compatibility (1-3) | ✅ 100% | ~14 weeks |
 | Intelligent Analysis (4-6) | ✅ 100% | ~10 weeks |
-| Data Intelligence (7-9) | ❌ 0% | ~11 weeks |
+| Data Intelligence (7-9) | ✅ 100% | ~11 weeks |
 | Scale & Efficiency (10-12) | ✅ 100% | ~7 weeks |
 | Operational Excellence (13-15) | ✅ 100% | ~6 weeks |
-| **Total** | **~80%** | **~48 weeks** |
+| **Total** | **✅ 100%** | **~48 weeks** |
 
 ---
 
@@ -291,8 +293,9 @@ These are the deep technical capabilities that create defensible competitive adv
 | **Security** | Threat detection (13 rules), Security dashboard, MITRE ATT&CK mapping, Alert investigation |
 | **Compliance** | PII detection (email, phone, SSN, credit cards, API keys, JWT), Redaction strategies (mask, hash, tokenize) |
 | **Data Arch** | WAL (write-ahead log), Hot/warm/cold tiering, Pluggable backends (LocalFS, S3, GCS), SQLite time-series optimization (partitioning, downsampling, batch inserts, covering indexes) |
-| **Sampling** | Head sampling (priority rules), Tail sampling (error/latency detection), Adaptive sampling (per-service rates) |
-| **Migration** | Datadog import (dashboards, monitors), Grafana import (dashboards, alerts), Prometheus rules, Auto-format detection |
+| **Sampling** | Head sampling (priority rules), Tail sampling (error/latency detection), Adaptive sampling (per-service rates), Retroactive capture (error/high-latency triggers, parent/child tracking), Anomaly detection (Z-score, baseline learning) |
+| **Migration** | Datadog import (dashboards, monitors), Grafana import (dashboards, alerts), Prometheus rules, Auto-format detection, Composite monitor parsing (AND/OR/NOT, batch resolution), Template variables |
+| **Log Intelligence** | Pattern learning (signature computation, candidate generation), Log structure analysis (JSON/KV/syslog detection), Field extraction (IP/email/UUID/key-value patterns), Confidence scoring |
 | **Operational** | Hot probe reload (versioning, graceful swap, rollback), Clock skew tolerance (detection, correction, NTP drift), Memory efficiency (object pools, buffer recycling, backpressure) |
 
 ---

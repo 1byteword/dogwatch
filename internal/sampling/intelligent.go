@@ -428,7 +428,10 @@ func (s *IntelligentSampler) handleKeptTrace(spans []trace.Span) {
 		SpanCount: len(spans),
 	}
 
-	// Analyze spans
+	// Analyze spans and extract relationships
+	parentTraces := make(map[string]bool)
+	childTraces := make(map[string]bool)
+
 	for _, span := range spans {
 		if span.Status == "ERROR" {
 			decision.HasError = true
@@ -439,6 +442,36 @@ func (s *IntelligentSampler) handleKeptTrace(spans []trace.Span) {
 		if span.ParentSpanID == "" && decision.RootService == "" {
 			decision.RootService = span.ServiceName
 		}
+
+		// Calculate anomaly score for this span
+		anomalyScore := s.calculateAnomalyScore(&span)
+		if anomalyScore > decision.AnomalyScore {
+			decision.AnomalyScore = anomalyScore
+		}
+
+		// Extract parent/child trace relationships from attributes
+		if span.Attributes != nil {
+			// Check for parent trace references
+			for _, key := range []string{"_parent_trace_id", "parent_trace_id", "uber-trace-parent"} {
+				if parentID, ok := span.Attributes[key]; ok && parentID != "" && parentID != traceID {
+					parentTraces[parentID] = true
+				}
+			}
+			// Check for linked/child traces
+			for _, key := range []string{"_linked_traces", "linked_trace_id", "child_trace_id"} {
+				if linkedID, ok := span.Attributes[key]; ok && linkedID != "" && linkedID != traceID {
+					childTraces[linkedID] = true
+				}
+			}
+		}
+	}
+
+	// Convert maps to slices
+	for id := range parentTraces {
+		decision.ParentTraces = append(decision.ParentTraces, id)
+	}
+	for id := range childTraces {
+		decision.ChildTraces = append(decision.ChildTraces, id)
 	}
 
 	s.recordDecision(decision)
@@ -454,8 +487,21 @@ func (s *IntelligentSampler) handleKeptTrace(spans []trace.Span) {
 	}
 
 	// Check for retroactive capture triggers
-	if s.config.RetroactiveEnabled && decision.HasError {
-		s.triggerRetroactiveCapture(traceID, "error_in_trace")
+	if s.config.RetroactiveEnabled {
+		// Trigger on error
+		if decision.HasError {
+			s.triggerRetroactiveCapture(traceID, "error_in_trace")
+		}
+
+		// Trigger on high latency (> 5 seconds)
+		if decision.MaxLatency > 5000 {
+			s.triggerRetroactiveCapture(traceID, "high_latency")
+		}
+
+		// Trigger on anomaly detection
+		if decision.AnomalyScore > s.anomalyThreshold {
+			s.triggerRetroactiveCapture(traceID, "anomaly_detected")
+		}
 	}
 }
 
@@ -655,6 +701,11 @@ func (p *PatternLearner) record(spans []trace.Span) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	now := time.Now()
+	hour := now.Hour()
+	var totalLatency float64
+	var errorCount int
+
 	for _, span := range spans {
 		// Update service latency stats
 		stats, ok := p.serviceLatency[span.ServiceName]
@@ -671,16 +722,97 @@ func (p *PatternLearner) record(spans []trace.Span) {
 		if span.DurationMs > stats.Max {
 			stats.Max = span.DurationMs
 		}
-		stats.LastUpdated = time.Now()
+		stats.LastUpdated = now
+
+		// Update span count stats
+		scStats, ok := p.serviceSpanCount[span.ServiceName]
+		if !ok {
+			scStats = &SpanCountStats{}
+			p.serviceSpanCount[span.ServiceName] = scStats
+		}
+		scStats.Count++
+		scStats.Sum += 1
+		scStats.SumSquares += 1
+
+		totalLatency += span.DurationMs
+		if span.Status == "ERROR" {
+			errorCount++
+		}
 	}
 
 	if len(spans) > 0 {
-		// Update hourly pattern
-		hour := time.Now().Hour()
-		p.hourlyPatterns[hour].SampleCount++
+		// Update hourly pattern with moving average
+		pattern := p.hourlyPatterns[hour]
+		pattern.SampleCount++
+
+		// Calculate averages using exponential moving average for smoothing
+		alpha := 0.1 // Smoothing factor
+		avgLatency := totalLatency / float64(len(spans))
+		if pattern.SampleCount == 1 {
+			pattern.AvgLatency = avgLatency
+		} else {
+			pattern.AvgLatency = alpha*avgLatency + (1-alpha)*pattern.AvgLatency
+		}
+
+		// Update error rate
+		traceErrorRate := float64(errorCount) / float64(len(spans))
+		if pattern.SampleCount == 1 {
+			pattern.ErrorRate = traceErrorRate
+		} else {
+			pattern.ErrorRate = alpha*traceErrorRate + (1-alpha)*pattern.ErrorRate
+		}
 	}
 
 	atomic.AddInt64(&p.samplesCollected, int64(len(spans)))
+	p.lastUpdate = now
+
+	// Mark learning complete after sufficient samples
+	if !p.learningComplete && p.samplesCollected > 10000 {
+		p.learningComplete = true
+	}
+}
+
+// isLearningComplete returns whether baseline learning is done
+func (p *PatternLearner) isLearningComplete() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.learningComplete
+}
+
+// getServiceBaseline returns the baseline stats for a service
+func (p *PatternLearner) getServiceBaseline(service string) (*LatencyStats, bool) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	stats, ok := p.serviceLatency[service]
+	if !ok || stats.Count < 100 {
+		return nil, false
+	}
+	return stats, true
+}
+
+// getHourlyPattern returns the pattern for a specific hour
+func (p *PatternLearner) getHourlyPattern(hour int) *HourlyPattern {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if hour < 0 || hour > 23 {
+		return nil
+	}
+	return p.hourlyPatterns[hour]
+}
+
+// isAnomalousForService checks if a latency is anomalous for a given service
+func (p *PatternLearner) isAnomalousForService(service string, latencyMs float64, threshold float64) bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	stats, ok := p.serviceLatency[service]
+	if !ok || stats.Count < 100 {
+		// Not enough data to determine
+		return false
+	}
+
+	zScore := stats.ZScore(latencyMs)
+	return math.Abs(zScore) > threshold
 }
 
 // Cost tracker methods
