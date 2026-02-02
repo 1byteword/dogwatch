@@ -8,6 +8,8 @@
     <link rel="stylesheet" href="/css/base.css">
     <link rel="stylesheet" href="/css/components.css">
     <link rel="stylesheet" href="/css/sidebar.css">
+    <link rel="stylesheet" href="/css/logo.css">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
             --bg: #0f1419;
@@ -213,6 +215,16 @@
             position: relative;
         }
 
+        multisignal-timeline {
+            display: block;
+            width: 100%;
+            height: 250px;
+        }
+
+        .timeline-panel {
+            margin-top: 1rem;
+        }
+
         .empty-state {
             display: flex;
             flex-direction: column;
@@ -256,7 +268,7 @@
             <div class="sidebar-resize-handle" id="sidebar-resize-handle"></div>
             <div class="sidebar-header">
                 <span class="logo-icon">&#128021;</span>
-                <span class="logo-text">dogwatch</span>
+                <span class="logo-text">DOGWATCH</span>
             </div>
 
             <nav class="sidebar-nav">
@@ -302,6 +314,26 @@
                     <a href="/bubbleup.html" class="sidebar-item" data-tooltip="BubbleUp">
                         <span class="icon">&#128200;</span>
                         <span class="label">BubbleUp</span>
+                    </a>
+                    <a href="/security.html" class="sidebar-item" data-tooltip="Security">
+                        <span class="icon">&#128737;</span>
+                        <span class="label">Security</span>
+                    </a>
+                </div>
+
+                <div class="sidebar-section">
+                    <div class="sidebar-section-title">System</div>
+                    <a href="/admin.html" class="sidebar-item" data-tooltip="Admin">
+                        <span class="icon">&#9881;</span>
+                        <span class="label">Admin</span>
+                    </a>
+                    <a href="/settings.html" class="sidebar-item" data-tooltip="Settings">
+                        <span class="icon">&#128295;</span>
+                        <span class="label">Settings</span>
+                    </a>
+                    <a href="/import.html" class="sidebar-item" data-tooltip="Import">
+                        <span class="icon">&#128230;</span>
+                        <span class="label">Import</span>
                     </a>
                 </div>
             </nav>
@@ -395,12 +427,22 @@
                     </div>
                     <trace-waterfall id="waterfall" style="flex: 1;"></trace-waterfall>
                 </div>
+
+                <!-- Multi-Signal Timeline -->
+                <div class="panel timeline-panel">
+                    <div class="panel-header">
+                        <span>Multi-Signal Timeline</span>
+                        <span style="font-size: 0.75rem; color: var(--text-muted);">Correlated logs, metrics, and events</span>
+                    </div>
+                    <multisignal-timeline id="timeline"></multisignal-timeline>
+                </div>
                 </div>
             </div>
         </main>
     </div>
 
     <script src="/js/components/trace-waterfall.js"></script>
+    <script src="/js/components/multisignal-timeline.js"></script>
     <script>
         // Sidebar Resize
         (function() {

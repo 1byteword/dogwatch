@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 64" fill="none">
+  <!-- Dog icon - sitting puppy, line art style -->
+  <g stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <!-- Body outline -->
+    <path d="M12 52 C12 52 14 42 18 38 C20 36 22 36 24 38 L26 44 L28 44 C30 44 32 42 32 40 L32 36"/>
+
+    <!-- Back and tail -->
+    <path d="M12 52 C8 50 6 46 8 42 C10 38 14 36 18 38"/>
+
+    <!-- Tail curving up -->
+    <path d="M8 42 C4 40 2 36 4 32 C5 30 7 30 8 32"/>
+
+    <!-- Head -->
+    <path d="M32 36 C32 30 34 26 38 24 C42 22 46 24 48 28 C50 32 48 38 44 40 C40 42 34 42 32 40"/>
+
+    <!-- Ear left -->
+    <path d="M34 26 C32 22 32 18 34 14 C36 12 38 14 38 18 L38 24"/>
+
+    <!-- Ear right -->
+    <path d="M42 24 C44 20 46 16 48 14 C50 14 50 16 48 20 L46 26"/>
+
+    <!-- Snout -->
+    <path d="M48 28 L52 30 C54 32 54 36 52 38 L48 38"/>
+
+    <!-- Eye -->
+    <circle cx="42" cy="32" r="1.5" fill="currentColor"/>
+
+    <!-- Nose -->
+    <ellipse cx="52" cy="33" rx="2" ry="1.5" fill="currentColor"/>
+
+    <!-- Front leg -->
+    <path d="M26 44 L26 52 L30 52"/>
+
+    <!-- Chest/sitting position -->
+    <path d="M32 40 L32 48 C32 50 30 52 28 52"/>
+  </g>
+</svg>

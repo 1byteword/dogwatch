@@ -48,7 +48,9 @@
         .skeleton-text {
             font-size: 1.5rem;
             font-weight: 600;
-            letter-spacing: -0.02em;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            font-family: 'Orbitron', sans-serif;
         }
 
         .skeleton-spinner {
@@ -109,7 +111,7 @@
         }
 
         .logo-icon { font-size: 1.5rem; }
-        .logo h1 { font-size: 1.1rem; font-weight: 600; }
+        .logo h1 { font-size: 1.1rem; font-weight: 600; font-family: 'Orbitron', sans-serif; letter-spacing: 0.05em; text-transform: uppercase; }
         .logo span { color: var(--text-muted); font-size: 0.7rem; margin-left: 0.5rem; }
 
         .header-controls {
@@ -159,24 +161,30 @@
         }
 
         .login-logo .logo-icon { font-size: 3rem; }
-        .login-logo h1 { font-size: 1.5rem; margin-top: 0.5rem; }
+        .login-logo h1 { font-size: 1.5rem; margin-top: 0.5rem; font-family: 'Orbitron', sans-serif; letter-spacing: 0.05em; text-transform: uppercase; }
         .login-logo p { color: var(--text-muted); font-size: 0.85rem; margin-top: 0.3rem; }
     </style>
 
     <!-- Preload critical resources -->
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preload" href="/css/bundle.css" as="style">
     <link rel="preload" href="/js/components.bundle.js" as="script">
+
+    <!-- Space Age font for logo -->
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&display=swap" rel="stylesheet">
 
     <!-- Bundled CSS (6 files -> 1 request, 111KB -> 15KB gzipped) -->
     <link rel="stylesheet" href="/css/bundle.css">
     <link rel="stylesheet" href="/css/sidebar.css">
+    <link rel="stylesheet" href="/css/logo.css">
 </head>
 <body>
     <!-- Loading skeleton - shows instantly -->
     <div class="skeleton" id="loading-skeleton">
         <div class="skeleton-logo">&#128021;</div>
-        <div class="skeleton-text">dogwatch</div>
+        <div class="skeleton-text">DOGWATCH</div>
         <div class="skeleton-spinner"></div>
     </div>
 
@@ -185,7 +193,7 @@
         <div class="login-card">
             <div class="login-logo">
                 <span class="logo-icon">&#128021;</span>
-                <h1>dogwatch</h1>
+                <h1>DOGWATCH</h1>
                 <p>eBPF Observability Platform</p>
             </div>
             <div class="login-error" id="login-error"></div>
@@ -234,7 +242,7 @@
                 <div class="sidebar-resize-handle" id="sidebar-resize-handle"></div>
                 <div class="sidebar-header">
                     <span class="logo-icon">&#128021;</span>
-                    <span class="logo-text">dogwatch</span>
+                    <span class="logo-text">DOGWATCH</span>
                 </div>
 
                 <nav class="sidebar-nav">
@@ -288,6 +296,23 @@
                         <a href="/security.html" class="sidebar-item" data-tooltip="Security">
                             <span class="icon">&#128737;</span>
                             <span class="label">Security</span>
+                        </a>
+                    </div>
+
+                    <!-- System Section -->
+                    <div class="sidebar-section">
+                        <div class="sidebar-section-title">System</div>
+                        <a href="/admin.html" class="sidebar-item" data-tooltip="Admin">
+                            <span class="icon">&#9881;</span>
+                            <span class="label">Admin</span>
+                        </a>
+                        <a href="/settings.html" class="sidebar-item" data-tooltip="Settings">
+                            <span class="icon">&#128295;</span>
+                            <span class="label">Settings</span>
+                        </a>
+                        <a href="/import.html" class="sidebar-item" data-tooltip="Import">
+                            <span class="icon">&#128230;</span>
+                            <span class="label">Import</span>
                         </a>
                     </div>
                 </nav>
@@ -735,7 +760,7 @@
             // Analytics
             { id: 'patterns', name: 'Log Patterns', desc: 'Automated log clustering', icon: '&#129520;', category: 'Analytics' },
             { id: 'dbwatch', name: 'Database Watch', desc: 'Slow query analysis', icon: '&#128451;', category: 'Analytics' },
-            { id: 'cardinality', name: 'Cardinality', desc: 'Metric cardinality explorer', icon: '&#128202;', category: 'Analytics' },
+            { id: 'cardinality', name: 'Cardinality', desc: 'Metric cardinality explorer', icon: '&#128202;', category: 'Analytics', component: 'cardinality-controller' },
             { id: 'costintel', name: 'Cost Intelligence', desc: 'Observability cost analysis', icon: '&#128176;', category: 'Analytics' },
 
             // New Visualizations

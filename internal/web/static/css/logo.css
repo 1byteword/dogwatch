@@ -1,0 +1,80 @@
+/* Space Age Logo Styling for Dogwatch */
+
+/* Import a space-age style font - Orbitron is similar to the Space Age look */
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&display=swap');
+
+/* Logo text styling */
+.logo-text,
+.logo h1,
+.brand-text {
+    font-family: 'Orbitron', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+/* Dog icon styling */
+.logo-icon-svg {
+    width: 1.5em;
+    height: 1.5em;
+    color: currentColor;
+}
+
+/* Large logo variant (for login screen, etc) */
+.logo-large .logo-icon-svg {
+    width: 3em;
+    height: 3em;
+}
+
+.logo-large .logo-text {
+    font-size: 2rem;
+}
+
+/* Sidebar logo */
+.sidebar-header .logo-icon-svg {
+    width: 1.25em;
+    height: 1.25em;
+    flex-shrink: 0;
+}
+
+.sidebar-header .logo-text {
+    font-size: 0.95rem;
+}
+
+/* Loading skeleton */
+.skeleton-logo-svg {
+    width: 4rem;
+    height: 4rem;
+    color: var(--accent, #1d9bf0);
+    animation: pulse 2s ease-in-out infinite;
+}
+
+.skeleton-text.brand {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+/* Accent color variants */
+.logo-accent {
+    color: var(--accent, #1d9bf0);
+}
+
+.logo-gradient {
+    background: linear-gradient(135deg, #1d9bf0, #00ba7c);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+/* Animation for logo icon */
+@keyframes wag {
+    0%, 100% { transform: rotate(0deg); }
+    25% { transform: rotate(-5deg); }
+    75% { transform: rotate(5deg); }
+}
+
+.logo-icon-svg:hover {
+    animation: wag 0.5s ease-in-out;
+}

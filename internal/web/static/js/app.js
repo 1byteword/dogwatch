@@ -122,7 +122,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (skeleton) {
             skeleton.innerHTML = `
                 <div class="skeleton-logo">&#128021;</div>
-                <div class="skeleton-text" style="color: var(--error)">Failed to load</div>
+                <div class="skeleton-text" style="color: var(--error); font-family: 'Orbitron', sans-serif; text-transform: uppercase;">Failed to load</div>
                 <button class="btn btn-primary" onclick="location.reload()">Retry</button>
             `;
         }
