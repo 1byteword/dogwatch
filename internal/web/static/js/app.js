@@ -200,8 +200,18 @@ async function loadOAuthProviders() {
 }
 
 function startOAuth(provider) {
+    // Validate OAuth provider against whitelist to prevent arbitrary redirects
+    if (!isValidOAuthProvider(provider)) {
+        console.error('Invalid OAuth provider:', provider);
+        const errorEl = document.getElementById('login-error');
+        if (errorEl) {
+            errorEl.textContent = 'Invalid authentication provider';
+            errorEl.classList.add('show');
+        }
+        return;
+    }
     // Redirect to OAuth start endpoint
-    window.location.href = '/api/auth/oauth/' + provider;
+    window.location.href = '/api/auth/oauth/' + encodeURIComponent(provider);
 }
 
 // Check for OAuth callback success (token in URL or cookie)
@@ -389,22 +399,79 @@ function showUserSettings() {
 }
 
 async function saveUserSettings() {
-    const name = document.getElementById('settings-name').value;
-    const timezone = document.getElementById('settings-timezone').value;
-    const oldPassword = document.getElementById('settings-old-password').value;
-    const newPassword = document.getElementById('settings-new-password').value;
+    const nameEl = document.getElementById('settings-name');
+    const timezoneEl = document.getElementById('settings-timezone');
+    const oldPasswordEl = document.getElementById('settings-old-password');
+    const newPasswordEl = document.getElementById('settings-new-password');
+
+    const name = nameEl?.value?.trim() || '';
+    const timezone = timezoneEl?.value || '';
+    const oldPassword = oldPasswordEl?.value || '';
+    const newPassword = newPasswordEl?.value || '';
+
+    // Client-side validation
+    const errors = [];
+
+    // Validate name
+    if (name.length > 0 && name.length < 2) {
+        errors.push('Name must be at least 2 characters');
+    }
+    if (name.length > 100) {
+        errors.push('Name must be less than 100 characters');
+    }
+    // Check for potentially dangerous characters in name
+    if (name && !/^[a-zA-Z0-9\s\-'.]+$/.test(name)) {
+        errors.push('Name contains invalid characters');
+    }
+
+    // Validate password change
+    if (oldPassword || newPassword) {
+        if (!oldPassword) {
+            errors.push('Current password is required to change password');
+        }
+        if (!newPassword) {
+            errors.push('New password is required');
+        }
+        if (newPassword && newPassword.length < 8) {
+            errors.push('New password must be at least 8 characters');
+        }
+        if (newPassword && newPassword.length > 128) {
+            errors.push('New password is too long');
+        }
+    }
+
+    // Show validation errors
+    if (errors.length > 0) {
+        showSettingsError(errors.join('. '));
+        return;
+    }
 
     try {
         // Update user info
-        const resp = await fetch(`/api/users/${currentUser.id}`, {
+        if (!currentUser?.id) {
+            showSettingsError('User session invalid. Please log in again.');
+            return;
+        }
+
+        const resp = await fetch(`/api/users/${encodeURIComponent(currentUser.id)}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name, timezone })
         });
+
         if (resp.ok) {
-            const updatedUser = await resp.json();
-            currentUser = updatedUser;
-            showAuthenticatedUI();
+            const data = await resp.json();
+            // Validate response structure before using
+            if (data && typeof data === 'object' && (data.id || data.email)) {
+                currentUser = data;
+                showAuthenticatedUI();
+            } else {
+                console.warn('Unexpected user response structure');
+            }
+        } else {
+            const errorText = await resp.text().catch(() => 'Unknown error');
+            showSettingsError('Failed to update profile: ' + errorText);
+            return;
         }
 
         // Change password if provided
@@ -415,14 +482,38 @@ async function saveUserSettings() {
                 body: JSON.stringify({ old_password: oldPassword, new_password: newPassword })
             });
             if (!pwResp.ok) {
-                alert('Failed to change password. Check your current password.');
+                showSettingsError('Failed to change password. Check your current password.');
                 return;
             }
         }
 
         document.querySelector('.modal-overlay')?.remove();
+        if (typeof showToast === 'function') {
+            showToast({ type: 'success', message: 'Settings saved successfully' });
+        }
     } catch (e) {
-        alert('Failed to save settings');
+        console.error('Save settings error:', e);
+        showSettingsError('Failed to save settings. Please try again.');
+    }
+}
+
+function showSettingsError(message) {
+    // Look for existing error element or create one
+    let errorEl = document.querySelector('.modal-overlay .settings-error');
+    if (!errorEl) {
+        const modal = document.querySelector('.modal-overlay .modal-body');
+        if (modal) {
+            errorEl = document.createElement('div');
+            errorEl.className = 'settings-error';
+            errorEl.style.cssText = 'color: #f4212e; background: rgba(244, 33, 46, 0.1); padding: 0.5rem 0.75rem; border-radius: 4px; margin-bottom: 0.75rem; font-size: 0.85rem;';
+            modal.insertBefore(errorEl, modal.firstChild);
+        }
+    }
+    if (errorEl) {
+        errorEl.textContent = message;
+        errorEl.style.display = 'block';
+    } else {
+        alert(message);
     }
 }
 
@@ -479,7 +570,7 @@ async function loadUsersList() {
                     </div>
                     <div class="user-item-email">${escapeHtml(u.email)}</div>
                 </div>
-                <span class="user-item-role ${u.role}">${u.role}</span>
+                <span class="user-item-role ${escapeHtml(u.role || '')}">${escapeHtml(u.role || '')}</span>
                 <div class="user-item-actions">
                     ${u.id !== currentUser?.id ? `
                         <button class="btn" onclick="editUser('${u.id}')" style="padding: 0.2rem 0.4rem; font-size: 0.65rem;">Edit</button>
@@ -572,7 +663,7 @@ async function showPendingInvites() {
                         <div style="padding: 0.6rem 0; border-bottom: 1px solid #2f3336; display: flex; justify-content: space-between; align-items: center;">
                             <div>
                                 <div style="font-weight: 500;">${escapeHtml(inv.email)}</div>
-                                <div style="font-size: 0.7rem; color: #71767b;">Role: ${inv.role} | Expires: ${new Date(inv.expires_at).toLocaleDateString()}</div>
+                                <div style="font-size: 0.7rem; color: #71767b;">Role: ${escapeHtml(inv.role || '')} | Expires: ${new Date(inv.expires_at).toLocaleDateString()}</div>
                             </div>
                             <button class="btn" style="background: #4a1919; color: #f4212e; padding: 0.2rem 0.4rem; font-size: 0.65rem;" onclick="deleteInvite('${inv.id}')">Revoke</button>
                         </div>
@@ -2466,23 +2557,42 @@ function initGrid() {
 }
 
 function loadLayout() {
-    const saved = localStorage.getItem('dogwatch-layout');
-    let items = saved ? JSON.parse(saved) : defaultLayout;
+    // Use SafeStorage for safe JSON parsing with validation
+    let items = SafeStorage.getJSON('dogwatch-layout', null, StorageValidators.dashboardLayout);
+
+    // Fall back to default layout if saved layout is invalid or doesn't exist
+    if (!items || !Array.isArray(items) || items.length === 0) {
+        items = defaultLayout;
+    }
 
     // Merge with defaults to ensure minW/minH constraints are preserved
     const defaultsById = {};
     defaultLayout.forEach(d => defaultsById[d.id] = d);
 
     items = items.map(item => {
+        // Validate item structure
+        if (!item || typeof item !== 'object' || typeof item.id !== 'string') {
+            return null;
+        }
         const defaults = defaultsById[item.id] || {};
         return {
             ...defaults,
             ...item,
             content: `<div class="gs-item-content">${getWidgetContent(item.id)}</div>`
         };
-    });
+    }).filter(Boolean); // Remove any null items
 
-    grid.load(items);
+    // Only load if we have valid items
+    if (items.length > 0) {
+        grid.load(items);
+    } else {
+        // Fall back to default layout
+        const defaultItems = defaultLayout.map(item => ({
+            ...item,
+            content: `<div class="gs-item-content">${getWidgetContent(item.id)}</div>`
+        }));
+        grid.load(defaultItems);
+    }
 }
 
 function getWidgetContent(id) {
@@ -2527,13 +2637,17 @@ function getWidgetContent(id) {
 
 function saveLayout() {
     const items = grid.save(false);
-    localStorage.setItem('dogwatch-layout', JSON.stringify(items));
+    // Use SafeStorage for safe localStorage operations
+    SafeStorage.setJSON('dogwatch-layout', items);
 }
 
 function resetLayout() {
-    localStorage.removeItem('dogwatch-layout');
+    SafeStorage.remove('dogwatch-layout');
     currentDashboardId = null;
-    document.getElementById('dashboard-select').value = '';
+    const selectEl = document.getElementById('dashboard-select');
+    if (selectEl) {
+        selectEl.value = '';
+    }
     grid.removeAll();
     loadLayout();
     setTimeout(initCharts, 100);
@@ -2546,21 +2660,33 @@ function resetLayout() {
 async function loadDashboards() {
     try {
         const resp = await fetch('/api/dashboards');
-        dashboards = await resp.json() || [];
+        if (!resp.ok) {
+            throw new Error('Failed to fetch dashboards');
+        }
+        const data = await resp.json();
+        // Validate API response structure
+        dashboards = Array.isArray(data) ? data : (data?.dashboards || []);
         const select = document.getElementById('dashboard-select');
+        if (!select) return;
+
         select.innerHTML = '<option value="">Default Layout</option>';
         dashboards.forEach(d => {
-            const opt = document.createElement('option');
-            opt.value = d.id;
-            opt.textContent = d.name + (d.is_default ? ' *' : '');
-            select.appendChild(opt);
+            if (d && d.id && d.name) {
+                const opt = document.createElement('option');
+                opt.value = d.id;
+                opt.textContent = escapeHtml(d.name) + (d.is_default ? ' *' : '');
+                select.appendChild(opt);
+            }
         });
-        // Load default dashboard if exists
-        const defaultDash = dashboards.find(d => d.is_default);
-        if (defaultDash && !localStorage.getItem('dogwatch-layout')) {
+        // Load default dashboard if exists and no saved layout
+        const defaultDash = dashboards.find(d => d && d.is_default);
+        const savedLayout = SafeStorage.getJSON('dogwatch-layout', null, StorageValidators.dashboardLayout);
+        if (defaultDash && !savedLayout) {
             currentDashboardId = defaultDash.id;
             select.value = defaultDash.id;
-            applyDashboardLayout(defaultDash.layout);
+            if (defaultDash.layout) {
+                applyDashboardLayout(defaultDash.layout);
+            }
         }
     } catch (e) { console.error('Failed to load dashboards:', e); }
 }
@@ -2714,6 +2840,27 @@ function formatLatency(ms) {
 }
 function getLatencyClass(ms) { return !ms ? '' : ms < 100 ? 'good' : ms < 500 ? 'warn' : 'bad'; }
 function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+
+// CSRF token helper - gets token from cookie for state-changing requests
+function getCSRFToken() {
+    const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
+    return match ? decodeURIComponent(match[1]) : '';
+}
+
+// Enhanced fetch wrapper that includes CSRF token for state-changing methods
+function secureFetch(url, options = {}) {
+    const method = (options.method || 'GET').toUpperCase();
+    const csrfMethods = ['POST', 'PUT', 'DELETE', 'PATCH'];
+
+    if (csrfMethods.includes(method)) {
+        const token = getCSRFToken();
+        if (token) {
+            options.headers = options.headers || {};
+            options.headers['X-CSRF-Token'] = token;
+        }
+    }
+    return fetch(url, options);
+}
 
 // Demo/Simulated Data Generator (reassigns the placeholder from top)
 DemoData = {
@@ -3446,7 +3593,7 @@ function renderServiceMap() {
 
             tooltip.innerHTML = `
                 <div class="svcmap-tooltip-title">${escapeHtml(n.name)}</div>
-                <div class="svcmap-tooltip-row"><span>Type</span><span class="svcmap-tooltip-value">${n.type}</span></div>
+                <div class="svcmap-tooltip-row"><span>Type</span><span class="svcmap-tooltip-value">${escapeHtml(n.type || '')}</span></div>
                 <div class="svcmap-tooltip-row"><span>Requests</span><span class="svcmap-tooltip-value">${n.count || 0}</span></div>
                 ${n.latency ? `<div class="svcmap-tooltip-row"><span>Avg Latency</span><span class="svcmap-tooltip-value">${n.latency}ms</span></div>` : ''}
                 ${n.errors ? `<div class="svcmap-tooltip-row"><span>Errors</span><span class="svcmap-tooltip-value" style="color:#f4212e">${n.errors}</span></div>` : ''}
@@ -4556,7 +4703,7 @@ function showChannels() {
             <div class="watch-item">
                 <div class="watch-info">
                     <div class="watch-name">${escapeHtml(c.name)}</div>
-                    <div class="watch-condition">${c.type} - ${c.type === 'webhook' ? JSON.parse(c.config).url : 'Slack'}</div>
+                    <div class="watch-condition">${escapeHtml(c.type)} - ${c.type === 'webhook' ? escapeHtml(JSON.parse(c.config).url || '') : 'Slack'}</div>
                 </div>
                 <div class="watch-actions">
                     <button class="btn" onclick="testChannel('${c.id}')">Test</button>
@@ -4870,9 +5017,9 @@ function setupWebSocketUpdates() {
                 row.className = `log-row ${levelClass}`;
                 row.innerHTML = `
                     <span class="log-time">${new Date(entry.timestamp).toLocaleTimeString()}</span>
-                    <span class="log-level">${(entry.level || 'INFO').toUpperCase()}</span>
-                    <span class="log-service">${entry.service || '-'}</span>
-                    <span class="log-message">${entry.message || ''}</span>
+                    <span class="log-level">${escapeHtml((entry.level || 'INFO').toUpperCase())}</span>
+                    <span class="log-service">${escapeHtml(entry.service || '-')}</span>
+                    <span class="log-message">${escapeHtml(entry.message || '')}</span>
                 `;
                 logsList.insertBefore(row, logsList.firstChild);
                 // Keep max 200 rows
@@ -6580,15 +6727,15 @@ function loadCluster() {
                 const uptime = node.started_at ? formatUptime(new Date(node.started_at)) : '-';
 
                 return `<div class="cluster-node-item">
-                    <div class="cluster-node-status ${stateClass}"></div>
+                    <div class="cluster-node-status ${escapeHtml(stateClass)}"></div>
                     <div class="cluster-node-info">
                         <div class="cluster-node-name">
-                            ${node.id || node.hostname || 'unknown'}
+                            ${escapeHtml(node.id || node.hostname || 'unknown')}
                             ${isLocal ? '<span class="local-badge">LOCAL</span>' : ''}
                         </div>
                         <div class="cluster-node-meta">
-                            <span>${node.address || '-'}</span>
-                            <span>v${node.version || '?'}</span>
+                            <span>${escapeHtml(node.address || '-')}</span>
+                            <span>v${escapeHtml(node.version || '?')}</span>
                             <span>Up ${uptime}</span>
                         </div>
                     </div>
@@ -6770,7 +6917,7 @@ function renderComponentItem(comp) {
         <div class="statuspage-info">
             <div class="statuspage-name">${escapeHtml(comp.name)}</div>
             <div class="statuspage-meta">
-                <span>${comp.description || ''}</span>
+                <span>${escapeHtml(comp.description || '')}</span>
             </div>
         </div>
         <div class="statuspage-uptime">${uptime}%</div>
@@ -7981,18 +8128,18 @@ function loadKubernetes() {
                     <div class="k8s-status ${statusClass}"></div>
                     <div class="k8s-info">
                         <div class="k8s-name">
-                            ${pod.name}
-                            <span class="k8s-namespace">${pod.namespace}</span>
+                            ${escapeHtml(pod.name || '')}
+                            <span class="k8s-namespace">${escapeHtml(pod.namespace || '')}</span>
                         </div>
                         <div class="k8s-meta">
-                            <span>${pod.phase || 'Unknown'}</span>
+                            <span>${escapeHtml(pod.phase || 'Unknown')}</span>
                             <span>Ready: ${readyContainers}/${totalContainers}</span>
                             <span>Restarts: ${restarts}</span>
-                            ${pod.node_name ? `<span>Node: ${pod.node_name}</span>` : ''}
+                            ${pod.node_name ? `<span>Node: ${escapeHtml(pod.node_name)}</span>` : ''}
                         </div>
                     </div>
                     <div class="k8s-metrics">
-                        ${pod.ip ? `<div class="k8s-metric"><span class="k8s-metric-value" style="font-size:0.65rem">${pod.ip}</span><span>IP</span></div>` : ''}
+                        ${pod.ip ? `<div class="k8s-metric"><span class="k8s-metric-value" style="font-size:0.65rem">${escapeHtml(pod.ip)}</span><span>IP</span></div>` : ''}
                     </div>
                 </div>`;
             }).join('');
@@ -8018,8 +8165,8 @@ function loadKubernetes() {
                     <div class="k8s-status ${statusClass}"></div>
                     <div class="k8s-info">
                         <div class="k8s-name">
-                            ${d.name}
-                            <span class="k8s-namespace">${d.namespace}</span>
+                            ${escapeHtml(d.name || '')}
+                            <span class="k8s-namespace">${escapeHtml(d.namespace || '')}</span>
                         </div>
                         <div class="k8s-meta">
                             <span>Ready: ${ready}/${desired}</span>
@@ -8055,13 +8202,13 @@ function loadKubernetes() {
                     <div class="k8s-status ready"></div>
                     <div class="k8s-info">
                         <div class="k8s-name">
-                            ${svc.name}
-                            <span class="k8s-namespace">${svc.namespace}</span>
+                            ${escapeHtml(svc.name || '')}
+                            <span class="k8s-namespace">${escapeHtml(svc.namespace || '')}</span>
                         </div>
                         <div class="k8s-meta">
-                            <span>${svc.type || 'ClusterIP'}</span>
-                            <span>IP: ${svc.cluster_ip || '-'}</span>
-                            <span>Ports: ${ports}</span>
+                            <span>${escapeHtml(svc.type || 'ClusterIP')}</span>
+                            <span>IP: ${escapeHtml(svc.cluster_ip || '-')}</span>
+                            <span>Ports: ${escapeHtml(ports)}</span>
                         </div>
                     </div>
                 </div>`;
@@ -8086,24 +8233,24 @@ function loadKubernetes() {
                 return `<div class="k8s-item">
                     <div class="k8s-status ${statusClass}"></div>
                     <div class="k8s-info">
-                        <div class="k8s-name">${node.name}</div>
+                        <div class="k8s-name">${escapeHtml(node.name || '')}</div>
                         <div class="k8s-meta">
                             <span>${node.ready ? 'Ready' : 'Not Ready'}</span>
-                            <span>Roles: ${roles || 'worker'}</span>
-                            <span>Version: ${node.kubelet_version || '-'}</span>
+                            <span>Roles: ${escapeHtml(roles || 'worker')}</span>
+                            <span>Version: ${escapeHtml(node.kubelet_version || '-')}</span>
                         </div>
                     </div>
                     <div class="k8s-metrics">
                         <div class="k8s-metric">
-                            <span class="k8s-metric-value">${node.allocatable_cpu || '-'}</span>
+                            <span class="k8s-metric-value">${escapeHtml(node.allocatable_cpu || '-')}</span>
                             <span>CPU</span>
                         </div>
                         <div class="k8s-metric">
-                            <span class="k8s-metric-value">${node.allocatable_memory || '-'}</span>
+                            <span class="k8s-metric-value">${escapeHtml(node.allocatable_memory || '-')}</span>
                             <span>Mem</span>
                         </div>
                         <div class="k8s-metric">
-                            <span class="k8s-metric-value">${node.allocatable_pods || '-'}</span>
+                            <span class="k8s-metric-value">${escapeHtml(node.allocatable_pods || '-')}</span>
                             <span>Pods</span>
                         </div>
                     </div>
@@ -8127,9 +8274,9 @@ function loadKubernetes() {
                 const timeAgo = evt.last_timestamp ? formatTimeAgo(new Date(evt.last_timestamp)) : '-';
 
                 return `<div class="k8s-event">
-                    <span class="k8s-event-type ${typeClass}">${evt.type || 'Normal'}</span>
-                    <strong>${evt.reason || '-'}</strong>: ${evt.message || '-'}
-                    <span class="k8s-event-time">${timeAgo} - ${evt.involved_object_kind || ''}/${evt.involved_object_name || ''}</span>
+                    <span class="k8s-event-type ${typeClass}">${escapeHtml(evt.type || 'Normal')}</span>
+                    <strong>${escapeHtml(evt.reason || '-')}</strong>: ${escapeHtml(evt.message || '-')}
+                    <span class="k8s-event-time">${timeAgo} - ${escapeHtml(evt.involved_object_kind || '')}/${escapeHtml(evt.involved_object_name || '')}</span>
                 </div>`;
             }).join('');
         })

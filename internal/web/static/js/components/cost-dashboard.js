@@ -29,9 +29,27 @@ class CostDashboard extends HTMLElement {
             if (recsResp.ok) this.recommendations = await recsResp.json() || [];
         } catch (e) {
             console.error('Failed to load cost data:', e);
+            this._showError('Failed to load cost data', e.message);
         } finally {
             this.loading = false;
             this.render();
+            this._setupEventListeners();
+        }
+    }
+
+    _showError(title, message) {
+        if (window.showToast) {
+            window.showToast({ type: 'error', title, message, duration: 5000 });
+        } else if (window.toast) {
+            window.toast.error(message, title);
+        }
+    }
+
+    _setupEventListeners() {
+        // Set up click handler for refresh button (safer than inline onclick with getRootNode)
+        const refreshBtn = this.querySelector('#cost-refresh-btn');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', () => this.loadData());
         }
     }
 
@@ -64,7 +82,7 @@ class CostDashboard extends HTMLElement {
                         <span class="title-icon">💰</span>
                         <span>Cost Intelligence</span>
                     </div>
-                    <button class="btn-refresh" onclick="this.getRootNode().host.loadData()">↻</button>
+                    <button class="btn-refresh" id="cost-refresh-btn">↻</button>
                 </div>
 
                 <div class="savings-banner">

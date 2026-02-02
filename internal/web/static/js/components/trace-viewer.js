@@ -178,9 +178,20 @@ class TraceViewer extends HTMLElement {
                 const data = await response.json();
                 this.traces = data.traces || [];
                 this.renderTraceList();
+            } else {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
         } catch (e) {
             console.error('[TraceViewer] Failed to fetch traces:', e);
+            this._showError('Failed to load traces', e.message);
+        }
+    }
+
+    _showError(title, message) {
+        if (window.showToast) {
+            window.showToast({ type: 'error', title, message, duration: 5000 });
+        } else if (window.toast) {
+            window.toast.error(message, title);
         }
     }
 
@@ -231,9 +242,12 @@ class TraceViewer extends HTMLElement {
             if (response.ok) {
                 const trace = await response.json();
                 this.selectTrace(trace);
+            } else {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
         } catch (e) {
             console.error('[TraceViewer] Failed to load trace:', e);
+            this._showError('Failed to load trace', e.message);
         }
     }
 

@@ -10,6 +10,13 @@ const Loader = {
     loaded: {},
     loading: {},
 
+    // Configuration
+    config: {
+        timeout: 15000,      // 15 second timeout per resource
+        maxRetries: 3,       // Max retry attempts
+        retryDelay: 1000,    // Base delay between retries (exponential backoff)
+    },
+
     // Library configurations
     libraries: {
         'd3': {
@@ -39,12 +46,54 @@ const Loader = {
     },
 
     /**
-     * Load a script
+     * Load a resource with timeout
      */
-    loadScript(url) {
+    _loadWithTimeout(loadFn, url, timeout) {
+        return new Promise((resolve, reject) => {
+            const timeoutId = setTimeout(() => {
+                reject(new Error(`Timeout loading: ${url}`));
+            }, timeout);
+
+            loadFn(url)
+                .then(result => {
+                    clearTimeout(timeoutId);
+                    resolve(result);
+                })
+                .catch(err => {
+                    clearTimeout(timeoutId);
+                    reject(err);
+                });
+        });
+    },
+
+    /**
+     * Load with retry logic
+     */
+    async _loadWithRetry(loadFn, url, retries = this.config.maxRetries) {
+        let lastError;
+        for (let attempt = 0; attempt <= retries; attempt++) {
+            try {
+                return await this._loadWithTimeout(loadFn, url, this.config.timeout);
+            } catch (err) {
+                lastError = err;
+                if (attempt < retries) {
+                    const delay = this.config.retryDelay * Math.pow(2, attempt);
+                    console.warn(`[Loader] Retry ${attempt + 1}/${retries} for ${url} in ${delay}ms`);
+                    await new Promise(r => setTimeout(r, delay));
+                }
+            }
+        }
+        throw lastError;
+    },
+
+    /**
+     * Load a script (internal, no retry)
+     */
+    _loadScriptOnce(url) {
         return new Promise((resolve, reject) => {
             // Check if already loaded
-            if (document.querySelector(`script[src="${url}"]`)) {
+            const existing = document.querySelector(`script[src="${url}"]`);
+            if (existing) {
                 resolve();
                 return;
             }
@@ -53,18 +102,23 @@ const Loader = {
             script.src = url;
             script.async = true;
             script.onload = () => resolve();
-            script.onerror = () => reject(new Error(`Failed to load script: ${url}`));
+            script.onerror = () => {
+                // Remove failed script so retry can add a new one
+                script.remove();
+                reject(new Error(`Failed to load script: ${url}`));
+            };
             document.head.appendChild(script);
         });
     },
 
     /**
-     * Load a stylesheet
+     * Load a stylesheet (internal, no retry)
      */
-    loadStyle(url) {
+    _loadStyleOnce(url) {
         return new Promise((resolve, reject) => {
             // Check if already loaded
-            if (document.querySelector(`link[href="${url}"]`)) {
+            const existing = document.querySelector(`link[href="${url}"]`);
+            if (existing) {
                 resolve();
                 return;
             }
@@ -73,9 +127,27 @@ const Loader = {
             link.rel = 'stylesheet';
             link.href = url;
             link.onload = () => resolve();
-            link.onerror = () => reject(new Error(`Failed to load stylesheet: ${url}`));
+            link.onerror = () => {
+                // Remove failed link so retry can add a new one
+                link.remove();
+                reject(new Error(`Failed to load stylesheet: ${url}`));
+            };
             document.head.appendChild(link);
         });
+    },
+
+    /**
+     * Load a script with retry
+     */
+    loadScript(url) {
+        return this._loadWithRetry(this._loadScriptOnce.bind(this), url);
+    },
+
+    /**
+     * Load a stylesheet with retry
+     */
+    loadStyle(url) {
+        return this._loadWithRetry(this._loadStyleOnce.bind(this), url);
     },
 
     /**
@@ -96,7 +168,9 @@ const Loader = {
 
         const lib = this.libraries[name];
         if (!lib) {
-            return Promise.reject(new Error(`Unknown library: ${name}`));
+            const error = new Error(`Unknown library: ${name}`);
+            this._showError(`Unknown library: ${name}`);
+            return Promise.reject(error);
         }
 
         // Already available (maybe loaded differently)
@@ -130,12 +204,34 @@ const Loader = {
 
                 this.loaded[name] = true;
                 console.log(`[Loader] Loaded: ${name}`);
+            } catch (err) {
+                // Show user-friendly error via toast
+                this._showError(`Failed to load ${name}: ${err.message}`);
+                throw err;
             } finally {
                 delete this.loading[name];
             }
         })();
 
         return this.loading[name];
+    },
+
+    /**
+     * Show error to user via toast notification
+     */
+    _showError(message) {
+        console.error('[Loader]', message);
+        // Use global toast if available
+        if (window.showToast) {
+            window.showToast({
+                type: 'error',
+                title: 'Library Load Error',
+                message: message,
+                duration: 10000
+            });
+        } else if (window.toast) {
+            window.toast.error(message, 'Library Load Error');
+        }
     },
 
     /**

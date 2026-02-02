@@ -164,6 +164,59 @@ class BaseComponent extends HTMLElement {
         const i = Math.floor(Math.log(bytes) / Math.log(1024));
         return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
     }
+
+    // Utility: show error toast notification
+    showError(title, message) {
+        if (window.showToast) {
+            window.showToast({ type: 'error', title, message, duration: 5000 });
+        } else if (window.toast) {
+            window.toast.error(message, title);
+        } else {
+            console.error(`[${this.constructor.componentName}] ${title}: ${message}`);
+        }
+    }
+
+    // Utility: show success toast notification
+    showSuccess(title, message) {
+        if (window.showToast) {
+            window.showToast({ type: 'success', title, message, duration: 3000 });
+        } else if (window.toast) {
+            window.toast.success(message, title);
+        }
+    }
+
+    // Utility: show warning toast notification
+    showWarning(title, message) {
+        if (window.showToast) {
+            window.showToast({ type: 'warning', title, message, duration: 5000 });
+        } else if (window.toast) {
+            window.toast.warning(message, title);
+        }
+    }
+
+    // Utility: show info toast notification
+    showInfo(title, message) {
+        if (window.showToast) {
+            window.showToast({ type: 'info', title, message, duration: 4000 });
+        } else if (window.toast) {
+            window.toast.info(message, title);
+        }
+    }
+
+    // Utility: fetch with error handling
+    async fetchWithErrorHandling(url, options = {}) {
+        try {
+            const response = await fetch(url, options);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            return response;
+        } catch (e) {
+            const errorTitle = options.errorTitle || 'Request Failed';
+            this.showError(errorTitle, e.message);
+            throw e;
+        }
+    }
 }
 
 // Export for use

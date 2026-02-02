@@ -7,6 +7,9 @@ class ToastContainer extends HTMLElement {
         super();
         this.toasts = [];
         this.maxToasts = 5;
+        this._timeouts = new Map(); // Track timeouts for cleanup
+        this._eventHandler = null;
+        this._wsUnsubscribe = null;
     }
 
     connectedCallback() {
@@ -15,24 +18,54 @@ class ToastContainer extends HTMLElement {
         window.showToast = this.addToast.bind(this);
 
         // Listen for custom events
-        window.addEventListener('toast', (e) => {
-            this.addToast(e.detail);
-        });
+        this._eventHandler = (e) => {
+            if (e.detail) {
+                this.addToast(e.detail);
+            }
+        };
+        window.addEventListener('toast', this._eventHandler);
 
         // Listen for WebSocket notifications
-        if (window.ws) {
-            window.ws.subscribe('notification', (data) => {
-                this.addToast({
-                    type: data.severity || 'info',
-                    title: data.title,
-                    message: data.message,
-                    duration: data.duration
-                });
+        if (window.ws && typeof window.ws.subscribe === 'function') {
+            this._wsUnsubscribe = window.ws.subscribe('notification', (data) => {
+                if (data && typeof data === 'object') {
+                    this.addToast({
+                        type: data.severity || 'info',
+                        title: data.title,
+                        message: data.message,
+                        duration: data.duration
+                    });
+                }
             });
         }
     }
 
+    disconnectedCallback() {
+        // Clear all pending timeouts to prevent memory leaks
+        this._timeouts.forEach((timeoutId) => {
+            clearTimeout(timeoutId);
+        });
+        this._timeouts.clear();
+
+        // Remove event listener
+        if (this._eventHandler) {
+            window.removeEventListener('toast', this._eventHandler);
+            this._eventHandler = null;
+        }
+
+        // Unsubscribe from WebSocket
+        if (this._wsUnsubscribe && typeof this._wsUnsubscribe === 'function') {
+            this._wsUnsubscribe();
+            this._wsUnsubscribe = null;
+        }
+    }
+
     addToast(options) {
+        // Validate options
+        if (!options || typeof options !== 'object') {
+            options = { message: String(options) };
+        }
+
         const toast = {
             id: Date.now() + Math.random(),
             type: options.type || 'info', // info, success, warning, error
@@ -47,30 +80,50 @@ class ToastContainer extends HTMLElement {
 
         // Limit visible toasts
         if (this.toasts.length > this.maxToasts) {
+            // Clear timeouts for removed toasts
+            const removedToasts = this.toasts.slice(this.maxToasts);
+            removedToasts.forEach(t => {
+                if (this._timeouts.has(t.id)) {
+                    clearTimeout(this._timeouts.get(t.id));
+                    this._timeouts.delete(t.id);
+                }
+            });
             this.toasts = this.toasts.slice(0, this.maxToasts);
         }
 
         this.render();
 
-        // Auto dismiss
+        // Auto dismiss with tracked timeout
         if (toast.duration > 0) {
-            setTimeout(() => this.removeToast(toast.id), toast.duration);
+            const timeoutId = setTimeout(() => {
+                this._timeouts.delete(toast.id);
+                this.removeToast(toast.id);
+            }, toast.duration);
+            this._timeouts.set(toast.id, timeoutId);
         }
 
         return toast.id;
     }
 
     removeToast(id) {
+        // Clear any pending timeout for this toast
+        if (this._timeouts.has(id)) {
+            clearTimeout(this._timeouts.get(id));
+            this._timeouts.delete(id);
+        }
+
         const index = this.toasts.findIndex(t => t.id === id);
         if (index !== -1) {
             // Add exit animation class
             const toastEl = this.querySelector(`[data-toast-id="${id}"]`);
             if (toastEl) {
                 toastEl.classList.add('exiting');
-                setTimeout(() => {
+                const animationTimeout = setTimeout(() => {
                     this.toasts = this.toasts.filter(t => t.id !== id);
                     this.render();
                 }, 300);
+                // Track animation timeout separately
+                this._timeouts.set(`anim_${id}`, animationTimeout);
             } else {
                 this.toasts = this.toasts.filter(t => t.id !== id);
                 this.render();
@@ -93,6 +146,20 @@ class ToastContainer extends HTMLElement {
                 ${this.toasts.map(toast => this.renderToast(toast)).join('')}
             </div>
         `;
+
+        // Set up event delegation for toast actions (safer than inline onclick with getRootNode)
+        this.querySelector('.toast-container')?.addEventListener('click', (e) => {
+            const actionBtn = e.target.closest('[data-toast-action]');
+            const closeBtn = e.target.closest('[data-toast-close]');
+
+            if (actionBtn) {
+                const id = parseFloat(actionBtn.dataset.toastAction);
+                this.handleAction(id);
+            } else if (closeBtn) {
+                const id = parseFloat(closeBtn.dataset.toastClose);
+                this.removeToast(id);
+            }
+        });
     }
 
     renderToast(toast) {
@@ -107,11 +174,11 @@ class ToastContainer extends HTMLElement {
                 </div>
                 <div class="toast-actions">
                     ${toast.action ? `
-                        <button class="toast-action-btn" onclick="this.getRootNode().host.handleAction(${toast.id})">
+                        <button class="toast-action-btn" data-toast-action="${toast.id}">
                             ${this.escapeHtml(toast.action.label)}
                         </button>
                     ` : ''}
-                    <button class="toast-close" onclick="this.getRootNode().host.removeToast(${toast.id})">×</button>
+                    <button class="toast-close" data-toast-close="${toast.id}">×</button>
                 </div>
                 ${toast.duration > 0 ? `
                     <div class="toast-progress">

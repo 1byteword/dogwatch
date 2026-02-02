@@ -436,8 +436,9 @@
                     </div>
                     <multisignal-timeline id="timeline"></multisignal-timeline>
                 </div>
-                </div>
             </div>
+        </div>
+        </div>
         </main>
     </div>
 
@@ -620,15 +621,15 @@
 
             list.innerHTML = traces.map(t => `
                 <div class="trace-item ${t.trace_id === selectedTraceId ? 'selected' : ''}"
-                     onclick="selectTrace('${t.trace_id}')">
+                     onclick="selectTrace('${escapeHtml(t.trace_id)}')">
                     <div class="trace-item-header">
                         <span class="trace-item-service">
                             <span class="trace-item-status ${t.has_error ? 'error' : 'ok'}"></span>
-                            ${t.service_name || 'unknown'}
+                            ${escapeHtml(t.service_name || 'unknown')}
                         </span>
                         <span class="trace-item-duration">${formatDuration(t.duration_ms)}</span>
                     </div>
-                    <div class="trace-item-operation">${t.root_span || 'unnamed'}</div>
+                    <div class="trace-item-operation">${escapeHtml(t.root_span || 'unnamed')}</div>
                     <div class="trace-item-meta">
                         <span>${t.span_count || 0} spans</span>
                         <span>${formatTime(t.start_time)}</span>
@@ -671,6 +672,17 @@
                 minute: '2-digit',
                 second: '2-digit'
             });
+        }
+
+        // Escape HTML to prevent XSS
+        function escapeHtml(str) {
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
         }
 
         // Initialize

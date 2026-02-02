@@ -546,57 +546,140 @@
 
     <!-- Lazy-loaded library loader -->
     <script>
-        // Lightweight library loader - loads heavy deps on demand
+        // Lightweight library loader - loads heavy deps on demand with retry/timeout
         const LibLoader = {
             loaded: {},
             loading: {},
+            config: {
+                timeout: 15000,      // 15 second timeout
+                maxRetries: 3,       // Max retry attempts
+                retryDelay: 1000     // Base delay (exponential backoff)
+            },
+
+            libs: {
+                'd3': 'https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js',
+                'flamegraph': 'https://cdn.jsdelivr.net/npm/d3-flame-graph@4.1.3/dist/d3-flamegraph.min.js',
+                'flamegraph-css': 'https://cdn.jsdelivr.net/npm/d3-flame-graph@4.1.3/dist/d3-flamegraph.css',
+                'chart': 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js',
+                'chart-date': 'https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js',
+                'gridstack': 'https://cdn.jsdelivr.net/npm/gridstack@10.0.1/dist/gridstack-all.min.js',
+                'gridstack-css': 'https://cdn.jsdelivr.net/npm/gridstack@10.0.1/dist/gridstack.min.css'
+            },
+
+            // Load a single resource with timeout
+            _loadResource(url) {
+                return new Promise((resolve, reject) => {
+                    const isCSS = url.endsWith('.css');
+                    const element = isCSS
+                        ? Object.assign(document.createElement('link'), { rel: 'stylesheet', href: url })
+                        : Object.assign(document.createElement('script'), { src: url });
+
+                    const timeoutId = setTimeout(() => {
+                        element.remove();
+                        reject(new Error(`Timeout loading: ${url}`));
+                    }, this.config.timeout);
+
+                    element.onload = () => {
+                        clearTimeout(timeoutId);
+                        resolve(true);
+                    };
+                    element.onerror = () => {
+                        clearTimeout(timeoutId);
+                        element.remove();
+                        reject(new Error(`Failed to load: ${url}`));
+                    };
+
+                    (isCSS ? document.head : document.body).appendChild(element);
+                });
+            },
+
+            // Load with retry
+            async _loadWithRetry(url, retries = this.config.maxRetries) {
+                let lastError;
+                for (let attempt = 0; attempt <= retries; attempt++) {
+                    try {
+                        return await this._loadResource(url);
+                    } catch (err) {
+                        lastError = err;
+                        if (attempt < retries) {
+                            const delay = this.config.retryDelay * Math.pow(2, attempt);
+                            console.warn(`[LibLoader] Retry ${attempt + 1}/${retries} for ${url} in ${delay}ms`);
+                            await new Promise(r => setTimeout(r, delay));
+                        }
+                    }
+                }
+                throw lastError;
+            },
+
+            // Show error to user
+            _showError(name, error) {
+                console.error(`[LibLoader] Failed to load ${name}:`, error);
+                if (window.showToast) {
+                    window.showToast({
+                        type: 'error',
+                        title: 'Failed to Load Library',
+                        message: `Could not load ${name}. Some features may not work. Please check your internet connection.`,
+                        duration: 10000
+                    });
+                }
+            },
 
             async load(name) {
                 if (this.loaded[name]) return this.loaded[name];
                 if (this.loading[name]) return this.loading[name];
 
-                const libs = {
-                    'd3': 'https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js',
-                    'flamegraph': 'https://cdn.jsdelivr.net/npm/d3-flame-graph@4.1.3/dist/d3-flamegraph.min.js',
-                    'flamegraph-css': 'https://cdn.jsdelivr.net/npm/d3-flame-graph@4.1.3/dist/d3-flamegraph.css',
-                    'chart': 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js',
-                    'chart-date': 'https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js',
-                    'gridstack': 'https://cdn.jsdelivr.net/npm/gridstack@10.0.1/dist/gridstack-all.min.js',
-                    'gridstack-css': 'https://cdn.jsdelivr.net/npm/gridstack@10.0.1/dist/gridstack.min.css'
-                };
+                const url = this.libs[name];
+                if (!url) {
+                    const err = new Error(`Unknown library: ${name}`);
+                    this._showError(name, err);
+                    throw err;
+                }
 
-                const url = libs[name];
-                if (!url) throw new Error(`Unknown library: ${name}`);
-
-                this.loading[name] = new Promise((resolve, reject) => {
-                    if (url.endsWith('.css')) {
-                        const link = document.createElement('link');
-                        link.rel = 'stylesheet';
-                        link.href = url;
-                        link.onload = () => { this.loaded[name] = true; resolve(true); };
-                        link.onerror = reject;
-                        document.head.appendChild(link);
-                    } else {
-                        const script = document.createElement('script');
-                        script.src = url;
-                        script.onload = () => { this.loaded[name] = true; resolve(true); };
-                        script.onerror = reject;
-                        document.body.appendChild(script);
+                this.loading[name] = (async () => {
+                    try {
+                        await this._loadWithRetry(url);
+                        this.loaded[name] = true;
+                        console.log(`[LibLoader] Loaded: ${name}`);
+                        return true;
+                    } catch (err) {
+                        this._showError(name, err);
+                        throw err;
+                    } finally {
+                        delete this.loading[name];
                     }
-                });
+                })();
 
                 return this.loading[name];
             },
 
             async loadAll(names) {
-                return Promise.all(names.map(n => this.load(n)));
+                const results = await Promise.allSettled(names.map(n => this.load(n)));
+                const failed = results.filter(r => r.status === 'rejected');
+                if (failed.length > 0) {
+                    console.warn(`[LibLoader] ${failed.length} libraries failed to load`);
+                }
+                // Return successfully loaded ones
+                return results.filter(r => r.status === 'fulfilled').map(r => r.value);
             }
         };
 
         // Load dashboard dependencies when app starts
         async function initDashboard() {
-            // Load GridStack and Chart.js (needed for layout and charts)
-            await LibLoader.loadAll(['gridstack', 'gridstack-css', 'chart', 'chart-date']);
+            try {
+                // Load GridStack and Chart.js (needed for layout and charts)
+                await LibLoader.loadAll(['gridstack', 'gridstack-css', 'chart', 'chart-date']);
+            } catch (e) {
+                console.error('[initDashboard] Critical library load failed:', e);
+                // Show persistent error for critical failures
+                if (window.showToast) {
+                    window.showToast({
+                        type: 'error',
+                        title: 'Dashboard Load Error',
+                        message: 'Failed to load required libraries. Please refresh the page.',
+                        duration: 0  // Don't auto-dismiss
+                    });
+                }
+            }
 
             // Load D3/flamegraph in background (only needed for specific widgets)
             LibLoader.loadAll(['d3', 'flamegraph', 'flamegraph-css']);
@@ -894,6 +977,11 @@
 
     <!-- WebSocket client for real-time updates -->
     <script src="/js/websocket.js" defer></script>
+
+    <!-- Utility libraries for safe storage and API handling -->
+    <script src="/js/utils/safe-storage.js" defer></script>
+    <script src="/js/utils/api-helpers.js" defer></script>
+    <script src="/js/utils/incident-helpers.js" defer></script>
 
     <!-- Web Components (bundled for single HTTP request) -->
     <script src="/js/components.bundle.js" defer></script>

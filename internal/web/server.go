@@ -371,6 +371,9 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	// Cardinality explorer endpoints
 	RegisterCardinalityRoutes(mux)
 
+	// Cardinality controller endpoints (circuit breaker, alerts, quarantine)
+	RegisterCardinalityControllerRoutes(mux)
+
 	// Usage analytics endpoints
 	RegisterUsageRoutes(mux)
 
@@ -389,6 +392,15 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	// Log pattern mining endpoints
 	RegisterLogReduceRoutes(mux)
 
+	// Log field extraction endpoints
+	RegisterExtractionRoutes(mux)
+
+	// Migration endpoints
+	RegisterMigrationRoutes(mux)
+
+	// Migration fidelity analysis endpoints
+	RegisterFidelityRoutes(mux)
+
 	// Query builder endpoints
 	RegisterQueryRoutes(mux, s)
 
@@ -403,9 +415,13 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	mux.HandleFunc("/readyz", s.handleReadyz)
 	mux.HandleFunc("/livez", s.handleLivez)
 
+	// Apply security middleware (headers + CSRF protection)
+	securityConfig := DefaultSecurityConfig()
+	securedHandler := SecurityMiddleware(securityConfig)(mux)
+
 	// Apply rate limiting middleware
 	rateLimitConfig := DefaultRateLimitConfig()
-	rateLimitedHandler := RateLimitMiddleware(rateLimitConfig)(mux)
+	rateLimitedHandler := RateLimitMiddleware(rateLimitConfig)(securedHandler)
 
 	s.server = &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),

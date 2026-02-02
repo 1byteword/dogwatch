@@ -249,9 +249,20 @@ class LogViewer extends HTMLElement {
                 this.logs = data.entries || [];
                 this.updateServiceFilter();
                 this.renderLogs();
+            } else {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
         } catch (e) {
             console.error('[LogViewer] Failed to fetch logs:', e);
+            this._showError('Failed to load logs', e.message);
+        }
+    }
+
+    _showError(title, message) {
+        if (window.showToast) {
+            window.showToast({ type: 'error', title, message, duration: 5000 });
+        } else if (window.toast) {
+            window.toast.error(message, title);
         }
     }
 

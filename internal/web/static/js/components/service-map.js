@@ -58,10 +58,16 @@ class ServiceMap extends HTMLElement {
     }
 
     async loadD3() {
-        if (window.Loader) {
-            await window.Loader.load('d3');
-        } else if (typeof d3 === 'undefined') {
-            throw new Error('D3 not available and Loader not found');
+        try {
+            if (window.Loader) {
+                await window.Loader.load('d3');
+            } else if (typeof d3 === 'undefined') {
+                throw new Error('D3 not available and Loader not found');
+            }
+        } catch (e) {
+            console.error('[ServiceMap] Failed to load D3:', e);
+            this._showError('Failed to load D3 library', 'Service map visualization requires D3. Please refresh the page.');
+            throw e;
         }
     }
 
@@ -233,9 +239,20 @@ class ServiceMap extends HTMLElement {
             if (response.ok) {
                 const data = await response.json();
                 this.updateData(data);
+            } else {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
         } catch (e) {
             console.error('[ServiceMap] Failed to fetch data:', e);
+            this._showError('Failed to load service map', e.message);
+        }
+    }
+
+    _showError(title, message) {
+        if (window.showToast) {
+            window.showToast({ type: 'error', title, message, duration: 5000 });
+        } else if (window.toast) {
+            window.toast.error(message, title);
         }
     }
 

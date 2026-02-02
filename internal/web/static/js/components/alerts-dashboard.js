@@ -248,10 +248,21 @@ class AlertsDashboard extends HTMLElement {
 
             this._renderContent();
         } catch (e) {
-            if (e.name !== 'AbortError') console.error('Failed to load alerts:', e);
+            if (e.name !== 'AbortError') {
+                console.error('Failed to load alerts:', e);
+                this._showError('Failed to load alerts', e.message);
+            }
         } finally {
             this._loading = false;
             this._pendingRequest = null;
+        }
+    }
+
+    _showError(title, message) {
+        if (window.showToast) {
+            window.showToast({ type: 'error', title, message, duration: 5000 });
+        } else if (window.toast) {
+            window.toast.error(message, title);
         }
     }
 
@@ -357,19 +368,37 @@ class AlertsDashboard extends HTMLElement {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ duration })
             });
-            if (resp.ok) this.loadData();
-            else alert('Failed to silence alert');
+            if (resp.ok) {
+                this._showSuccess('Alert silenced', `Alert will be silenced for ${duration}`);
+                this.loadData();
+            } else {
+                throw new Error(`HTTP ${resp.status}`);
+            }
         } catch (e) {
-            alert('Error: ' + e.message);
+            this._showError('Failed to silence alert', e.message);
         }
     }
 
     async unsilenceAlert(id) {
         try {
             const resp = await fetch(`/api/watches/${id}/unmute`, { method: 'POST' });
-            if (resp.ok) this.loadData();
+            if (resp.ok) {
+                this._showSuccess('Alert unsilenced', 'Alert notifications are now active');
+                this.loadData();
+            } else {
+                throw new Error(`HTTP ${resp.status}`);
+            }
         } catch (e) {
             console.error('Failed to unsilence:', e);
+            this._showError('Failed to unsilence alert', e.message);
+        }
+    }
+
+    _showSuccess(title, message) {
+        if (window.showToast) {
+            window.showToast({ type: 'success', title, message, duration: 3000 });
+        } else if (window.toast) {
+            window.toast.success(message, title);
         }
     }
 

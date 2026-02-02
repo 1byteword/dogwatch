@@ -47,20 +47,27 @@ class DogwatchSocket {
                 this.reconnectAttempts = 0;
                 this.reconnectDelay = 1000;
 
-                // Resubscribe to topics
-                this.pendingSubscriptions.forEach(topic => {
-                    this._sendSubscribe(topic);
-                });
+                // Collect all topics to subscribe (copy to avoid modification during iteration)
+                const topicsToSubscribe = new Set();
+
+                // Add pending subscriptions
+                this.pendingSubscriptions.forEach(topic => topicsToSubscribe.add(topic));
+
+                // Add existing subscriptions
+                this.subscriptions.forEach((_, topic) => topicsToSubscribe.add(topic));
+
+                // Clear pending AFTER collecting (prevents race condition on rapid reconnect)
                 this.pendingSubscriptions.clear();
 
-                // Resubscribe existing subscriptions
-                this.subscriptions.forEach((_, topic) => {
+                // Subscribe to all topics
+                topicsToSubscribe.forEach(topic => {
                     this._sendSubscribe(topic);
                 });
 
-                // Flush message queue
-                this.messageQueue.forEach(msg => this._send(msg));
+                // Flush message queue (copy to avoid modification during iteration)
+                const queuedMessages = [...this.messageQueue];
                 this.messageQueue = [];
+                queuedMessages.forEach(msg => this._send(msg));
 
                 if (this.onConnect) this.onConnect();
             };
@@ -164,13 +171,16 @@ class DogwatchSocket {
         if (!this.subscriptions.has(topic)) {
             this.subscriptions.set(topic, new Set());
         }
-        this.subscriptions.get(topic).add(callback);
+        const callbacks = this.subscriptions.get(topic);
+        const wasEmpty = callbacks.size === 0;
+        callbacks.add(callback);
 
         // Subscribe on server if this is the first subscriber
-        if (this.subscriptions.get(topic).size === 1) {
+        if (wasEmpty) {
             if (this.connected) {
                 this._sendSubscribe(topic);
             } else {
+                // Always add to pending, even if connecting (will be sent on connect)
                 this.pendingSubscriptions.add(topic);
             }
         }

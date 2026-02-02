@@ -16,11 +16,20 @@ class MigrationWizard extends HTMLElement {
         this.importing = false;
         this.error = null;
         this.reports = [];
+        this._progressInterval = null; // Track progress interval for cleanup
     }
 
     connectedCallback() {
         this.render();
         this.loadRecentReports();
+    }
+
+    disconnectedCallback() {
+        // Clean up any running intervals to prevent memory leaks
+        if (this._progressInterval) {
+            clearInterval(this._progressInterval);
+            this._progressInterval = null;
+        }
     }
 
     async loadRecentReports() {
@@ -175,8 +184,8 @@ class MigrationWizard extends HTMLElement {
         }
 
         try {
-            // Simulate progress updates
-            const progressInterval = setInterval(() => {
+            // Simulate progress updates - track interval for cleanup
+            this._progressInterval = setInterval(() => {
                 if (this.importProgress < 90) {
                     this.importProgress += 10;
                     this.render();
@@ -189,17 +198,32 @@ class MigrationWizard extends HTMLElement {
                 body: this.uploadedData
             });
 
-            clearInterval(progressInterval);
+            // Clear progress interval
+            if (this._progressInterval) {
+                clearInterval(this._progressInterval);
+                this._progressInterval = null;
+            }
             this.importProgress = 100;
 
             if (resp.ok) {
-                this.importResult = await resp.json();
-                this.currentStep = 5; // Go to summary
+                const data = await resp.json();
+                // Validate response structure before using
+                if (data && typeof data === 'object') {
+                    this.importResult = data;
+                    this.currentStep = 5; // Go to summary
+                } else {
+                    this.error = 'Import failed: Invalid response format';
+                }
             } else {
-                const errorText = await resp.text();
+                const errorText = await resp.text().catch(() => 'Unknown error');
                 this.error = 'Import failed: ' + errorText;
             }
         } catch (e) {
+            // Ensure interval is cleared on error
+            if (this._progressInterval) {
+                clearInterval(this._progressInterval);
+                this._progressInterval = null;
+            }
             this.error = 'Import failed: ' + e.message;
         } finally {
             this.importing = false;

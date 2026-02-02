@@ -914,23 +914,23 @@
 
             container.innerHTML = alerts.map(alert => `
                 <div class="alert-item">
-                    <div class="alert-icon ${alert.severity}">&#128680;</div>
+                    <div class="alert-icon ${escapeHtml(alert.severity)}">&#128680;</div>
                     <div class="alert-content">
                         <div class="alert-title">
-                            <span class="severity-badge ${alert.severity}">${alert.severity}</span>
+                            <span class="severity-badge ${escapeHtml(alert.severity)}">${escapeHtml(alert.severity)}</span>
                             ${escapeHtml(alert.title)}
                         </div>
                         <div class="alert-meta">
-                            <span>${alert.rule_name}</span>
-                            <span>${alert.hostname || 'Unknown host'}</span>
+                            <span>${escapeHtml(alert.rule_name)}</span>
+                            <span>${escapeHtml(alert.hostname || 'Unknown host')}</span>
                             <span>${formatTime(alert.detected_at)}</span>
                         </div>
                     </div>
                     <div class="alert-actions">
                         ${alert.state === 'open' ? `
-                            <button class="btn" onclick="acknowledgeAlert('${alert.id}')">Ack</button>
+                            <button class="btn" onclick="acknowledgeAlert('${escapeHtml(alert.id)}')">Ack</button>
                         ` : ''}
-                        <button class="btn" onclick="showAlertDetail('${alert.id}')">View</button>
+                        <button class="btn" onclick="showAlertDetail('${escapeHtml(alert.id)}')">View</button>
                     </div>
                 </div>
             `).join('');
@@ -970,9 +970,9 @@
             container.innerHTML = events.slice(0, 20).map(event => `
                 <div class="event-item">
                     <span class="event-time">${formatTime(event.timestamp)}</span>
-                    <span class="event-type">${event.type}</span>
+                    <span class="event-type">${escapeHtml(event.type)}</span>
                     <span class="event-desc">${escapeHtml(event.comm || event.file_path || event.src_ip || 'Unknown')}</span>
-                    <span class="severity-badge ${event.severity || 'info'}">${event.severity || 'info'}</span>
+                    <span class="severity-badge ${escapeHtml(event.severity || 'info')}">${escapeHtml(event.severity || 'info')}</span>
                 </div>
             `).join('');
         }
@@ -1002,18 +1002,18 @@
             tbody.innerHTML = rules.map(rule => `
                 <tr>
                     <td>
-                        <div class="rule-toggle ${rule.enabled ? 'enabled' : ''}" onclick="toggleRule('${rule.id}', ${!rule.enabled})"></div>
+                        <div class="rule-toggle ${rule.enabled ? 'enabled' : ''}" onclick="toggleRule('${escapeHtml(rule.id)}', ${!rule.enabled})"></div>
                     </td>
                     <td>
                         <strong>${escapeHtml(rule.name)}</strong>
                         <div style="font-size: 0.75rem; color: var(--text-muted);">${escapeHtml(rule.description || '')}</div>
                     </td>
-                    <td>${rule.type}</td>
-                    <td><span class="severity-badge ${rule.severity}">${rule.severity}</span></td>
+                    <td>${escapeHtml(rule.type)}</td>
+                    <td><span class="severity-badge ${escapeHtml(rule.severity)}">${escapeHtml(rule.severity)}</span></td>
                     <td>${escapeHtml(rule.mitre_tactic || '-')}</td>
                     <td>
-                        <button class="btn" onclick="editRule('${rule.id}')">Edit</button>
-                        <button class="btn" onclick="deleteRule('${rule.id}')">Delete</button>
+                        <button class="btn" onclick="editRule('${escapeHtml(rule.id)}')">Edit</button>
+                        <button class="btn" onclick="deleteRule('${escapeHtml(rule.id)}')">Delete</button>
                     </td>
                 </tr>
             `).join('');
