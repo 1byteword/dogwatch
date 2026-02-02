@@ -208,25 +208,25 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 
 These are the deep technical capabilities that create defensible competitive advantage. See [VISION.md Technical Moats](VISION.md#technical-moats) for full context.
 
-### Moat 1-3: eBPF Deep Compatibility (Partially Done)
+### Moat 1-3: eBPF Deep Compatibility (Done)
 
 | Task | Complexity | Status | VISION.md Reference |
 |------|------------|--------|---------------------|
-| Kernel version compatibility (4.x - 6.x) | 4-6 weeks | ⏳ Partial | [Kernel Compatibility](VISION.md#moat-1-kernel-version-compatibility) |
-| TLS interception (OpenSSL, BoringSSL, Go crypto) | 6-8 weeks | ⏳ Partial | [TLS Interception](VISION.md#moat-2-tls-interception) |
-| Protocol edge cases (prepared statements, pipelining) | 3-4 weeks | ⏳ Partial | [Protocol Edge Cases](VISION.md#moat-3-protocol-edge-cases) |
+| ~~Kernel version compatibility (4.x - 6.x)~~ | 4-6 weeks | ✅ Done | [Kernel Compatibility](VISION.md#moat-1-kernel-version-compatibility) |
+| ~~TLS interception (OpenSSL, BoringSSL, Go crypto)~~ | 6-8 weeks | ✅ Done | [TLS Interception](VISION.md#moat-2-tls-interception) |
+| ~~Protocol edge cases (prepared statements, pipelining)~~ | 3-4 weeks | ✅ Done | [Protocol Edge Cases](VISION.md#moat-3-protocol-edge-cases) |
 
-*Note: Base probes work. Edge cases and broad compatibility need hardening.*
+*Features: Kernel version detection (4.4-6.x), BTF availability check, BPF feature probing, perf/ring buffer detection, OpenSSL 1.1/3.x uprobes, Go crypto/tls symbol extraction, prepared statement tracking (MySQL/PostgreSQL), connection state caching.*
 
-### Moat 4-6: Intelligent Analysis (Partially Done)
+### Moat 4-6: Intelligent Analysis (Mostly Done)
 
 | Task | Complexity | Status | VISION.md Reference |
 |------|------------|--------|---------------------|
 | Correlation without trace headers (socket/timing-based) | 4-6 weeks | ❌ Not started | [Headerless Correlation](VISION.md#moat-4-correlation-without-trace-headers) |
-| Low-overhead continuous profiling (all languages) | 3-4 weeks | ⏳ Partial | [Continuous Profiling](VISION.md#moat-5-low-overhead-continuous-profiling) |
-| Security detection without false positives (baseline learning) | 2-3 weeks | ⏳ Partial | [Security Detection](VISION.md#moat-6-security-detection-without-false-positives) |
+| ~~Low-overhead continuous profiling (all languages)~~ | 3-4 weeks | ✅ Done | [Continuous Profiling](VISION.md#moat-5-low-overhead-continuous-profiling) |
+| ~~Security detection without false positives (baseline learning)~~ | 2-3 weeks | ✅ Done | [Security Detection](VISION.md#moat-6-security-detection-without-false-positives) |
 
-*Note: CPU profiling and basic security detection done. Symbol resolution and baseline learning need work.*
+*Features: Full symbol resolution (kernel + userspace ELF), /proc/[pid]/maps parsing, symbol caching, readable flame graphs. Security baseline learning per-container, process/network/file pattern learning, anomaly detection after warmup, false positive feedback handling, parent-child relationship tracking.*
 
 ### Moat 7-9: Data Intelligence (Not Started)
 
@@ -258,12 +258,12 @@ These are the deep technical capabilities that create defensible competitive adv
 
 | Category | Status | Total Effort |
 |----------|--------|--------------|
-| eBPF Compatibility (1-3) | ⏳ 40% | ~14 weeks |
-| Intelligent Analysis (4-6) | ⏳ 30% | ~10 weeks |
+| eBPF Compatibility (1-3) | ✅ 100% | ~14 weeks |
+| Intelligent Analysis (4-6) | ⏳ 67% | ~10 weeks |
 | Data Intelligence (7-9) | ❌ 0% | ~11 weeks |
 | Scale & Efficiency (10-12) | ✅ 100% | ~7 weeks |
 | Operational Excellence (13-15) | ✅ 100% | ~6 weeks |
-| **Total** | **~50%** | **~48 weeks** |
+| **Total** | **~73%** | **~48 weeks** |
 
 ---
 
