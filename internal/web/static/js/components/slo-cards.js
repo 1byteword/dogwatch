@@ -117,11 +117,12 @@ class SloCards extends HTMLElement {
         const budgetRemaining = this.getBudgetRemaining(slo);
         const burnRate = this.getBurnRate(slo);
         const status = this.getStatus(budgetRemaining);
-        const current = slo.current_value || 0;
-        const target = slo.target || 99.9;
+        const current = parseFloat(slo.current_value) || 0;
+        const target = parseFloat(slo.target) || 99.9;
+        const sloId = this.escapeAttr(slo.id);
 
         return `
-            <div class="slo-card status-${status}" onclick="this.getRootNode().host.showSLODetail('${slo.id}')">
+            <div class="slo-card status-${status}" data-slo-id="${sloId}" onclick="this.getRootNode().host.showSLODetail(this.dataset.sloId)">
                 <div class="card-header">
                     <span class="slo-name">${this.escapeHtml(slo.name)}</span>
                     <span class="slo-service">${this.escapeHtml(slo.service || '')}</span>
@@ -157,7 +158,7 @@ class SloCards extends HTMLElement {
                     </div>
                 </div>
                 <div class="card-footer">
-                    <span class="slo-window">${slo.window || '30d'} window</span>
+                    <span class="slo-window">${this.escapeHtml(slo.window || '30d')} window</span>
                     ${status === 'critical' ? '<span class="alert-badge">At Risk</span>' : ''}
                 </div>
             </div>
@@ -168,11 +169,12 @@ class SloCards extends HTMLElement {
         const budgetRemaining = this.getBudgetRemaining(slo);
         const burnRate = this.getBurnRate(slo);
         const status = this.getStatus(budgetRemaining);
-        const current = slo.current_value || 0;
-        const target = slo.target || 99.9;
+        const current = parseFloat(slo.current_value) || 0;
+        const target = parseFloat(slo.target) || 99.9;
+        const sloId = this.escapeAttr(slo.id);
 
         return `
-            <div class="slo-row status-${status}" onclick="this.getRootNode().host.showSLODetail('${slo.id}')">
+            <div class="slo-row status-${status}" data-slo-id="${sloId}" onclick="this.getRootNode().host.showSLODetail(this.dataset.sloId)">
                 <div class="row-status">
                     <span class="status-dot ${status}"></span>
                 </div>
@@ -251,7 +253,14 @@ Window: ${slo.window || '30d'}
 
     escapeHtml(str) {
         if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    escapeAttr(str) {
+        if (!str) return '';
+        return String(str).replace(/[&"'<>]/g, c => ({
+            '&': '&amp;', '"': '&quot;', "'": '&#39;', '<': '&lt;', '>': '&gt;'
+        }[c]));
     }
 
     getStyles() {

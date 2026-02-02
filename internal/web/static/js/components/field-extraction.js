@@ -12,15 +12,23 @@ class FieldExtraction extends HTMLElement {
         this.stats = null;
         this.selectedPattern = null;
         this.testResult = null;
+        this._mounted = false;
+        this._boundEventListeners = [];
     }
 
     connectedCallback() {
+        this._mounted = true;
         this.render();
         this.loadData();
     }
 
     disconnectedCallback() {
-        // Cleanup
+        this._mounted = false;
+        // Clean up event listeners
+        this._boundEventListeners.forEach(({ element, event, handler }) => {
+            if (element) element.removeEventListener(event, handler);
+        });
+        this._boundEventListeners = [];
     }
 
     render() {
@@ -554,42 +562,53 @@ class FieldExtraction extends HTMLElement {
     }
 
     setupEventListeners() {
+        // Helper to track event listeners for cleanup
+        const addListener = (selector, event, handler) => {
+            const element = this.querySelector(selector);
+            if (element) {
+                element.addEventListener(event, handler);
+                this._boundEventListeners.push({ element, event, handler });
+            }
+        };
+
         // Refresh
-        this.querySelector('#btn-refresh')?.addEventListener('click', () => this.loadData());
+        addListener('#btn-refresh', 'click', () => this.loadData());
 
         // Tab switching
         this.querySelectorAll('.tab').forEach(tab => {
-            tab.addEventListener('click', (e) => {
+            const handler = (e) => {
                 this.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
                 this.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
                 e.target.classList.add('active');
                 const tabId = e.target.dataset.tab;
                 this.querySelector(`#tab-${tabId}`)?.classList.add('active');
-            });
+            };
+            tab.addEventListener('click', handler);
+            this._boundEventListeners.push({ element: tab, event: 'click', handler });
         });
 
         // Test extraction
-        this.querySelector('#btn-test')?.addEventListener('click', () => this.testExtraction());
+        addListener('#btn-test', 'click', () => this.testExtraction());
 
         // Grok search
-        this.querySelector('#grok-search')?.addEventListener('input', (e) => {
+        addListener('#grok-search', 'input', (e) => {
             this.filterGrokPatterns(e.target.value);
         });
 
         // Add pattern modal
-        this.querySelector('#btn-add-pattern')?.addEventListener('click', () => {
+        addListener('#btn-add-pattern', 'click', () => {
             this.openPatternModal();
         });
 
-        this.querySelector('#btn-close-modal')?.addEventListener('click', () => {
+        addListener('#btn-close-modal', 'click', () => {
             this.querySelector('#pattern-modal').style.display = 'none';
         });
 
-        this.querySelector('#btn-cancel-pattern')?.addEventListener('click', () => {
+        addListener('#btn-cancel-pattern', 'click', () => {
             this.querySelector('#pattern-modal').style.display = 'none';
         });
 
-        this.querySelector('#btn-save-pattern')?.addEventListener('click', () => this.savePattern());
+        addListener('#btn-save-pattern', 'click', () => this.savePattern());
     }
 
     async loadData() {

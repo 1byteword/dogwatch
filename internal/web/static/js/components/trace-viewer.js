@@ -176,7 +176,8 @@ class TraceViewer extends HTMLElement {
             const response = await fetch('/api/traces?limit=20');
             if (response.ok) {
                 const data = await response.json();
-                this.traces = data.traces || [];
+                // Handle multiple response formats from API
+                this.traces = data.traces || data.data || (Array.isArray(data) ? data : []);
                 this.renderTraceList();
             } else {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -259,12 +260,29 @@ class TraceViewer extends HTMLElement {
         }
 
         const spans = trace.spans;
-        const minTime = Math.min(...spans.map(s => s.startTime || 0));
-        const maxTime = Math.max(...spans.map(s => (s.startTime || 0) + (s.duration || 0)));
-        const totalDuration = maxTime - minTime;
+
+        // Handle different time formats - API may return startTime in ns, ms, or as ISO string
+        const getStartTime = (span) => {
+            if (span.start_time) return new Date(span.start_time).getTime() * 1000000; // ISO to ns
+            if (span.startTime > 1e15) return span.startTime; // Already in ns
+            if (span.startTime > 1e12) return span.startTime * 1000; // ms to ns
+            return (span.startTime || 0) * 1000000; // s to ns
+        };
+
+        // Handle different duration formats - API may return in ns, ms, or us
+        const getDuration = (span) => {
+            if (span.duration_ms !== undefined) return span.duration_ms * 1000000; // ms to ns
+            if (span.duration > 1e9) return span.duration; // Already in ns
+            if (span.duration > 1e6) return span.duration * 1000; // us to ns
+            return (span.duration || 0) * 1000000; // ms to ns
+        };
+
+        const minTime = Math.min(...spans.map(s => getStartTime(s)));
+        const maxTime = Math.max(...spans.map(s => getStartTime(s) + getDuration(s)));
+        const totalDuration = maxTime - minTime || 1; // Avoid division by zero
 
         // Service colors
-        const services = [...new Set(spans.map(s => s.service || s.serviceName))];
+        const services = [...new Set(spans.map(s => s.service || s.serviceName || s.service_name))];
         const colors = ['#1d9bf0', '#00ba7c', '#ffd400', '#7c3aed', '#f97316', '#06b6d4'];
 
         waterfall.innerHTML = `
@@ -277,28 +295,42 @@ class TraceViewer extends HTMLElement {
             </div>
             <div class="waterfall-body">
                 ${spans.map((span, i) => {
-                    const start = ((span.startTime || 0) - minTime) / totalDuration * 100;
-                    const width = Math.max((span.duration || 0) / totalDuration * 100, 0.5);
-                    const serviceIndex = services.indexOf(span.service || span.serviceName);
+                    const startTime = getStartTime(span);
+                    const duration = getDuration(span);
+                    const start = ((startTime - minTime) / totalDuration * 100) || 0;
+                    const width = Math.max((duration / totalDuration * 100) || 0.5, 0.5);
+                    const serviceName = span.service || span.serviceName || span.service_name || '';
+                    const serviceIndex = services.indexOf(serviceName);
                     const color = colors[serviceIndex % colors.length];
+                    const spanStatus = span.status || span.statusCode || '';
+                    const isError = spanStatus === 'error' || spanStatus === 'ERROR' || spanStatus === 2;
 
                     return `
                         <div class="span-row" data-index="${i}">
                             <div class="span-info">
-                                <div class="span-name">${span.operationName || span.name || 'Unknown'}</div>
-                                <span class="span-service" style="color: ${color}">${span.service || span.serviceName || ''}</span>
+                                <div class="span-name">${this.escapeHtml(span.operationName || span.name || span.operation || 'Unknown')}</div>
+                                <span class="span-service" style="color: ${color}">${this.escapeHtml(serviceName)}</span>
                             </div>
                             <div class="span-timeline">
-                                <div class="span-bar ${span.status === 'error' ? 'error' : ''}"
+                                <div class="span-bar ${isError ? 'error' : ''}"
                                      style="left: ${start}%; width: ${width}%; background: ${color};">
                                 </div>
-                                <span class="span-duration">${this.formatDuration(span.duration / 1000000)}</span>
+                                <span class="span-duration">${this.formatDuration(duration / 1000000)}</span>
                             </div>
                         </div>
                     `;
                 }).join('')}
             </div>
         `;
+    }
+
+    escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
     }
 
     formatDuration(ms) {

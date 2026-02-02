@@ -6,15 +6,36 @@ class GeoMap extends HTMLElement {
     constructor() {
         super();
         this.data = null;
+        this.resizeObserver = null;
     }
 
     connectedCallback() {
         this.render();
         this.loadData();
+
+        // Handle resize
+        this.resizeObserver = new ResizeObserver(() => {
+            if (this.data) {
+                this.updateMap();
+            }
+        });
+        this.resizeObserver.observe(this);
+    }
+
+    disconnectedCallback() {
+        if (this.resizeObserver) {
+            this.resizeObserver.disconnect();
+        }
     }
 
     static get observedAttributes() {
         return ['metric', 'time-range'];
+    }
+
+    attributeChangedCallback(name, oldValue, newValue) {
+        if (oldValue !== newValue && this.isConnected) {
+            this.loadData();
+        }
     }
 
     get metric() { return this.getAttribute('metric') || 'requests'; }
@@ -106,6 +127,13 @@ class GeoMap extends HTMLElement {
                 .geomap-legend-labels {
                     display: flex;
                     justify-content: space-between;
+                    color: var(--text-muted, #71767b);
+                }
+                .geomap-empty {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    height: 100%;
                     color: var(--text-muted, #71767b);
                 }
                 .geomap-stats {
@@ -213,12 +241,20 @@ class GeoMap extends HTMLElement {
         if (!this.data) return;
 
         const svg = this.querySelector('#svg');
-        const dotsGroup = svg.querySelector('#dots');
+        const dotsGroup = svg?.querySelector('#dots');
         const tooltip = this.querySelector('#tooltip');
 
         if (!dotsGroup) return;
 
         const { regions, total } = this.data;
+
+        if (!regions || regions.length === 0) {
+            const body = this.querySelector('.geomap-body');
+            if (body) {
+                body.innerHTML = '<div class="geomap-empty">No geographic data available</div>';
+            }
+            return;
+        }
         const maxRequests = Math.max(...regions.map(r => r.requests));
 
         // Convert lat/lng to SVG coordinates (simple equirectangular projection)

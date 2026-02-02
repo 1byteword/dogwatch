@@ -12,21 +12,34 @@ class MemoryDashboard extends HTMLElement {
         this.config = null;
         this.refreshInterval = null;
         this.chart = null;
+        this._mounted = false;
+        this._boundEventListeners = [];
     }
 
     connectedCallback() {
+        this._mounted = true;
         this.render();
         this.loadData();
-        this.refreshInterval = setInterval(() => this.loadData(), 5000);
+        this.refreshInterval = setInterval(() => {
+            if (this._mounted) this.loadData();
+        }, 5000);
     }
 
     disconnectedCallback() {
+        this._mounted = false;
         if (this.refreshInterval) {
             clearInterval(this.refreshInterval);
+            this.refreshInterval = null;
         }
         if (this.chart) {
             this.chart.destroy();
+            this.chart = null;
         }
+        // Clean up event listeners
+        this._boundEventListeners.forEach(({ element, event, handler }) => {
+            if (element) element.removeEventListener(event, handler);
+        });
+        this._boundEventListeners = [];
     }
 
     render() {
@@ -531,27 +544,36 @@ class MemoryDashboard extends HTMLElement {
     }
 
     setupEventListeners() {
+        // Helper to track event listeners for cleanup
+        const addListener = (selector, event, handler) => {
+            const element = this.querySelector(selector);
+            if (element) {
+                element.addEventListener(event, handler);
+                this._boundEventListeners.push({ element, event, handler });
+            }
+        };
+
         // Refresh
-        this.querySelector('#btn-refresh')?.addEventListener('click', () => this.loadData());
+        addListener('#btn-refresh', 'click', () => this.loadData());
 
         // Force GC
-        this.querySelector('#btn-gc')?.addEventListener('click', () => this.forceGC());
+        addListener('#btn-gc', 'click', () => this.forceGC());
 
         // Config panel
-        this.querySelector('#btn-config')?.addEventListener('click', () => {
+        addListener('#btn-config', 'click', () => {
             const panel = this.querySelector('#config-panel');
             if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
         });
 
-        this.querySelector('#btn-close-config')?.addEventListener('click', () => {
+        addListener('#btn-close-config', 'click', () => {
             const panel = this.querySelector('#config-panel');
             if (panel) panel.style.display = 'none';
         });
 
-        this.querySelector('#btn-save-config')?.addEventListener('click', () => this.saveConfig());
+        addListener('#btn-save-config', 'click', () => this.saveConfig());
 
         // Chart range
-        this.querySelector('#chart-range')?.addEventListener('change', () => this.loadHistory());
+        addListener('#chart-range', 'change', () => this.loadHistory());
     }
 
     async loadData() {

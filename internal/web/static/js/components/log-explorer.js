@@ -73,16 +73,41 @@ class LogExplorer extends HTMLElement {
             params.append('end', endTime.toISOString());
 
             const resp = await fetch(`/api/logs?${params}`);
-            if (!resp.ok) throw new Error('Search failed');
+            if (!resp.ok) {
+                const errorText = await resp.text().catch(() => 'Unknown error');
+                throw new Error(`Search failed: ${resp.status} ${errorText.substring(0, 100)}`);
+            }
 
             const data = await resp.json();
-            this.logs = data.data || data.entries || [];
+            // Handle multiple response formats from API
+            this.logs = data.data || data.entries || data.logs || (Array.isArray(data) ? data : []);
+
+            // Normalize log entries to ensure consistent field names
+            this.logs = this.logs.map(log => this.normalizeLog(log));
+
             this.renderResults();
         } catch (e) {
-            this.showError(e.message);
+            console.error('[LogExplorer] Search error:', e);
+            this.showError(e.message || 'Failed to search logs');
         } finally {
             this.loading = false;
         }
+    }
+
+    // Normalize log entry to handle different field name conventions
+    normalizeLog(log) {
+        return {
+            id: log.id || log._id || log.log_id || Date.now().toString(),
+            timestamp: log.timestamp || log.time || log.ts || log['@timestamp'] || new Date().toISOString(),
+            level: (log.level || log.severity || log.log_level || 'info').toLowerCase(),
+            message: log.message || log.msg || log.body || log.text || '',
+            service: log.service || log.service_name || log.serviceName || log.app || '',
+            host: log.host || log.hostname || log.host_name || '',
+            trace_id: log.trace_id || log.traceId || log.trace || '',
+            span_id: log.span_id || log.spanId || log.span || '',
+            logger: log.logger || log.logger_name || '',
+            attributes: log.attributes || log.fields || log.extra || {}
+        };
     }
 
     parseTimeRange(range) {
@@ -311,6 +336,23 @@ class LogExplorer extends HTMLElement {
                 </div>
             </div>
         `;
+
+        // Add click handlers for copy JSON buttons (avoid inline JS XSS)
+        container.querySelectorAll('.copy-log-json').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const index = parseInt(btn.dataset.logIndex, 10);
+                if (index >= 0 && index < this.logs.length) {
+                    const log = this.logs[index];
+                    navigator.clipboard.writeText(JSON.stringify(log, null, 2))
+                        .then(() => {
+                            btn.textContent = 'Copied!';
+                            setTimeout(() => { btn.textContent = 'Copy JSON'; }, 1500);
+                        })
+                        .catch(err => console.error('Failed to copy:', err));
+                }
+            });
+        });
     }
 
     renderLogRow(log, index) {
@@ -391,11 +433,11 @@ class LogExplorer extends HTMLElement {
                 ` : ''}
                 <div class="log-details-actions">
                     ${log.trace_id ? `
-                        <a href="#" onclick="event.stopPropagation(); window.open('/traces/${log.trace_id}', '_blank')" class="action-link">
+                        <a href="/traces.html?trace_id=${encodeURIComponent(log.trace_id)}" class="action-link" onclick="event.stopPropagation();">
                             View Trace →
                         </a>
                     ` : ''}
-                    <button onclick="event.stopPropagation(); navigator.clipboard.writeText(JSON.stringify(${this.escapeHtml(JSON.stringify(log))}, null, 2))" class="action-btn">
+                    <button class="action-btn copy-log-json" data-log-index="${index}" onclick="event.stopPropagation();">
                         Copy JSON
                     </button>
                 </div>

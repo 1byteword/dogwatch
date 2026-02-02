@@ -379,17 +379,31 @@
             }
         }
 
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function escapeAttr(text) {
+            if (!text) return '';
+            return String(text).replace(/[&"'<>]/g, c => ({
+                '&': '&amp;', '"': '&quot;', "'": '&#39;', '<': '&lt;', '>': '&gt;'
+            }[c]));
+        }
+
         function renderRecentResults(results) {
             const list = document.getElementById('recentList');
             list.innerHTML = results.map(r => `
-                <div class="recent-item" onclick="loadResult('${r.id}')">
+                <div class="recent-item" data-result-id="${escapeAttr(r.id)}" onclick="loadResult(this.dataset.resultId)">
                     <div class="recent-item-info">
-                        <div class="recent-item-service">${r.service || 'All Services'} - ${r.mode}</div>
+                        <div class="recent-item-service">${escapeHtml(r.service) || 'All Services'} - ${escapeHtml(r.mode)}</div>
                         <div class="recent-item-time">${new Date(r.created_at).toLocaleString()}</div>
                     </div>
                     <div class="recent-item-stats">
-                        <div class="recent-item-stat">Anomalous: <span>${r.anomalous_count}</span></div>
-                        <div class="recent-item-stat">Dimensions: <span>${r.dimensions?.length || 0}</span></div>
+                        <div class="recent-item-stat">Anomalous: <span>${parseInt(r.anomalous_count) || 0}</span></div>
+                        <div class="recent-item-stat">Dimensions: <span>${parseInt(r.dimensions?.length) || 0}</span></div>
                     </div>
                 </div>
             `).join('');
@@ -397,7 +411,7 @@
 
         async function loadResult(id) {
             try {
-                const resp = await fetch(`/api/bubbleup/${id}`);
+                const resp = await fetch(`/api/bubbleup/${encodeURIComponent(id)}`);
                 const result = await resp.json();
                 displayResults(result);
             } catch (e) {
@@ -499,41 +513,46 @@
             card.className = 'dimension-card' + (isTop ? ' top' : '');
 
             const liftClass = dim.top_value_lift >= 5 ? 'high' : dim.top_value_lift >= 2 ? 'medium' : 'low';
-            const anomalousRate = (dim.anomalous_distro[dim.top_value] * 100).toFixed(1);
-            const baselineRate = ((dim.baseline_distro[dim.top_value] || 0) * 100).toFixed(1);
+            const topValue = dim.top_value || '';
+            const anomalousRate = ((dim.anomalous_distro[topValue] || 0) * 100).toFixed(1);
+            const baselineRate = ((dim.baseline_distro[topValue] || 0) * 100).toFixed(1);
+            const divergence = parseFloat(dim.divergence) || 0;
+            const topValueLift = parseFloat(dim.top_value_lift) || 0;
+
+            // Sanitize dimension name for use as ID (only alphanumeric and underscore)
+            const safeCanvasId = 'chart-' + String(dim.dimension || 'unknown').replace(/[^a-z0-9]/gi, '_');
 
             card.innerHTML = `
                 <div class="dimension-header">
                     <div class="dimension-name">
                         ${isTop ? '<span>&#127942;</span>' : ''}
-                        <code>${dim.dimension}</code>
+                        <code>${escapeHtml(dim.dimension)}</code>
                     </div>
                     <div class="dimension-stats">
                         <div class="dimension-stat">
-                            <div class="dimension-stat-value">${dim.divergence.toFixed(1)}</div>
+                            <div class="dimension-stat-value">${divergence.toFixed(1)}</div>
                             <div class="dimension-stat-label">Divergence</div>
                         </div>
-                        <span class="lift-badge ${liftClass}">${dim.top_value_lift.toFixed(1)}x lift</span>
+                        <span class="lift-badge ${liftClass}">${topValueLift.toFixed(1)}x lift</span>
                     </div>
                 </div>
                 <div class="dimension-body">
                     <div class="top-value-highlight">
                         <div>
                             <div class="top-value-label">Top Contributing Value</div>
-                            <div class="top-value-name">${dim.top_value}</div>
+                            <div class="top-value-name">${escapeHtml(topValue)}</div>
                         </div>
                         <div class="top-value-rates">
                             ${anomalousRate}% anomalous vs ${baselineRate}% baseline
                         </div>
                     </div>
-                    <canvas id="chart-${dim.dimension.replace(/[^a-z0-9]/gi, '_')}" class="distribution-chart"></canvas>
+                    <canvas id="${safeCanvasId}" class="distribution-chart"></canvas>
                 </div>
             `;
 
             // Create chart after DOM is ready
             setTimeout(() => {
-                const canvasId = 'chart-' + dim.dimension.replace(/[^a-z0-9]/gi, '_');
-                const canvas = document.getElementById(canvasId);
+                const canvas = document.getElementById(safeCanvasId);
                 if (canvas) {
                     createDistributionChart(canvas, dim);
                 }

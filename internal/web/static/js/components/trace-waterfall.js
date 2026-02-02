@@ -142,13 +142,40 @@ class TraceWaterfall extends HTMLElement {
         let maxTime = -Infinity;
 
         spans.forEach(span => {
-            const start = new Date(span.start_time).getTime();
-            const end = new Date(span.end_time).getTime();
-            minTime = Math.min(minTime, start);
-            maxTime = Math.max(maxTime, end);
+            // Handle different field names for start time
+            const startField = span.start_time || span.startTime || span.start;
+            const start = startField ? new Date(startField).getTime() : 0;
+
+            // Handle different ways to calculate end time
+            let end;
+            if (span.end_time || span.endTime || span.end) {
+                const endField = span.end_time || span.endTime || span.end;
+                end = new Date(endField).getTime();
+            } else if (span.duration_ms !== undefined) {
+                end = start + span.duration_ms;
+            } else if (span.duration !== undefined) {
+                // Duration might be in nanoseconds, microseconds, or milliseconds
+                const dur = span.duration;
+                if (dur > 1e12) {
+                    end = start + dur / 1e6; // ns to ms
+                } else if (dur > 1e9) {
+                    end = start + dur / 1e3; // us to ms
+                } else {
+                    end = start + dur; // already ms
+                }
+            } else {
+                end = start;
+            }
+
+            if (start > 0) minTime = Math.min(minTime, start);
+            if (end > 0) maxTime = Math.max(maxTime, end);
         });
 
-        return { minTime, maxTime, duration: maxTime - minTime };
+        // Ensure valid range
+        if (minTime === Infinity) minTime = Date.now();
+        if (maxTime === -Infinity) maxTime = minTime + 1;
+
+        return { minTime, maxTime, duration: Math.max(maxTime - minTime, 1) };
     }
 
     renderTimeline(minTime, duration) {
@@ -171,27 +198,50 @@ class TraceWaterfall extends HTMLElement {
     }
 
     renderSpan(span, index, minTime, duration) {
-        const startTime = new Date(span.start_time).getTime();
-        const endTime = new Date(span.end_time).getTime();
-        const spanDuration = endTime - startTime;
+        // Handle different field names for start time
+        const startField = span.start_time || span.startTime || span.start;
+        const startTime = startField ? new Date(startField).getTime() : minTime;
+
+        // Calculate span duration with flexible field support
+        let spanDuration;
+        if (span.end_time || span.endTime || span.end) {
+            const endField = span.end_time || span.endTime || span.end;
+            const endTime = new Date(endField).getTime();
+            spanDuration = endTime - startTime;
+        } else if (span.duration_ms !== undefined) {
+            spanDuration = span.duration_ms;
+        } else if (span.duration !== undefined) {
+            const dur = span.duration;
+            if (dur > 1e12) {
+                spanDuration = dur / 1e6; // ns to ms
+            } else if (dur > 1e9) {
+                spanDuration = dur / 1e3; // us to ms
+            } else {
+                spanDuration = dur; // already ms
+            }
+        } else {
+            spanDuration = 1; // Minimum visible duration
+        }
 
         const leftPct = ((startTime - minTime) / duration) * 100;
         const widthPct = Math.max((spanDuration / duration) * 100, 0.5); // Min width for visibility
 
-        const isError = span.status === 'ERROR' || span.status === 'error';
+        const isError = span.status === 'ERROR' || span.status === 'error' || span.statusCode === 2;
         const statusClass = isError ? 'span-error' : 'span-ok';
-        const serviceColor = this.getServiceColor(span.service_name);
+        const serviceName = span.service_name || span.serviceName || span.service || 'unknown';
+        const serviceColor = this.getServiceColor(serviceName);
+        const spanName = span.name || span.operationName || span.operation || 'unnamed';
 
         return `
             <div class="span-row" data-span-index="${index}" onclick="this.getRootNode().host.selectSpan(${index})">
-                <div class="span-info" style="padding-left: ${span.depth * 20 + 8}px">
-                    <span class="span-service" style="background: ${serviceColor}">${span.service_name || 'unknown'}</span>
-                    <span class="span-name">${span.name || 'unnamed'}</span>
+                <div class="span-info" style="padding-left: ${(span.depth || 0) * 20 + 8}px">
+                    <span class="span-service" style="background: ${serviceColor}">${this.escapeHtml(serviceName)}</span>
+                    <span class="span-name">${this.escapeHtml(spanName)}</span>
                 </div>
                 <div class="span-bar-container">
                     <div class="span-bar ${statusClass}"
                          style="left: ${leftPct}%; width: ${widthPct}%; background: ${serviceColor};"
-                         title="${span.name}: ${this.formatDuration(spanDuration)}">
+                         title="${this.escapeHtml(spanName)}: ${this.formatDuration(spanDuration)}">
                         ${widthPct > 8 ? `<span class="span-duration">${this.formatDuration(spanDuration)}</span>` : ''}
                     </div>
                 </div>
@@ -220,7 +270,7 @@ class TraceWaterfall extends HTMLElement {
     }
 
     renderSpanDetails(span) {
-        const attrs = span.attributes || {};
+        const attrs = span.attributes || span.tags || {};
         const attrRows = Object.entries(attrs).map(([k, v]) => `
             <tr>
                 <td class="attr-key">${this.escapeHtml(k)}</td>
@@ -228,31 +278,58 @@ class TraceWaterfall extends HTMLElement {
             </tr>
         `).join('');
 
+        // Calculate duration with flexible field support
+        let durationMs;
+        if (span.duration_ms !== undefined) {
+            durationMs = span.duration_ms;
+        } else if (span.duration !== undefined) {
+            const dur = span.duration;
+            if (dur > 1e12) {
+                durationMs = dur / 1e6; // ns to ms
+            } else if (dur > 1e9) {
+                durationMs = dur / 1e3; // us to ms
+            } else {
+                durationMs = dur; // already ms
+            }
+        } else if (span.start_time && span.end_time) {
+            durationMs = new Date(span.end_time).getTime() - new Date(span.start_time).getTime();
+        } else {
+            durationMs = null;
+        }
+
+        const serviceName = span.service_name || span.serviceName || span.service || 'unknown';
+        const spanName = span.name || span.operationName || span.operation || 'unnamed';
+        const spanId = span.span_id || span.spanId || span.id || 'N/A';
+        const spanStatus = span.status || span.statusCode || 'OK';
+        const statusDisplay = spanStatus === 2 ? 'ERROR' : String(spanStatus).toUpperCase();
+        const statusClass = (statusDisplay === 'ERROR' || statusDisplay === '2') ? 'error' : 'ok';
+        const spanKind = span.kind || span.spanKind || 'INTERNAL';
+
         return `
             <div class="detail-section">
                 <div class="detail-row">
                     <span class="detail-label">Service</span>
-                    <span class="detail-value">${span.service_name || 'unknown'}</span>
+                    <span class="detail-value">${this.escapeHtml(serviceName)}</span>
                 </div>
                 <div class="detail-row">
                     <span class="detail-label">Operation</span>
-                    <span class="detail-value">${span.name || 'unnamed'}</span>
+                    <span class="detail-value">${this.escapeHtml(spanName)}</span>
                 </div>
                 <div class="detail-row">
                     <span class="detail-label">Span ID</span>
-                    <span class="detail-value mono">${span.span_id}</span>
+                    <span class="detail-value mono">${this.escapeHtml(spanId)}</span>
                 </div>
                 <div class="detail-row">
                     <span class="detail-label">Duration</span>
-                    <span class="detail-value">${this.formatDuration(span.duration_ms)}</span>
+                    <span class="detail-value">${durationMs !== null ? this.formatDuration(durationMs) : 'N/A'}</span>
                 </div>
                 <div class="detail-row">
                     <span class="detail-label">Status</span>
-                    <span class="detail-value status-${span.status?.toLowerCase() || 'ok'}">${span.status || 'OK'}</span>
+                    <span class="detail-value status-${statusClass}">${statusDisplay}</span>
                 </div>
                 <div class="detail-row">
                     <span class="detail-label">Kind</span>
-                    <span class="detail-value">${span.kind || 'INTERNAL'}</span>
+                    <span class="detail-value">${this.escapeHtml(String(spanKind))}</span>
                 </div>
             </div>
             ${Object.keys(attrs).length > 0 ? `

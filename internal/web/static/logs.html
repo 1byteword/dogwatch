@@ -528,11 +528,11 @@
                     return;
                 }
 
-                list.innerHTML = patterns.slice(0, 20).map(p => {
+                list.innerHTML = patterns.slice(0, 20).map((p, index) => {
                     const pct = ((p.count || 0) / totalLogs * 100).toFixed(1);
                     const sample = p.sample_message || p.sample || '';
                     return `
-                    <div class="pattern-item" onclick="searchPattern('${escapeHtml(p.template || '')}')">
+                    <div class="pattern-item" data-pattern-index="${index}">
                         <div class="pattern-template">${escapeHtml(p.template || 'Unknown pattern')}</div>
                         <div class="pattern-stats">
                             <span><span class="pattern-count">${p.count || 0}</span> occurrences</span>
@@ -541,6 +541,16 @@
                         </div>
                     </div>`;
                 }).join('');
+
+                // Add click handlers safely (avoid inline onclick XSS)
+                list.querySelectorAll('.pattern-item').forEach((item, i) => {
+                    item.addEventListener('click', () => {
+                        const pattern = patterns[i];
+                        if (pattern && pattern.template) {
+                            searchPattern(pattern.template);
+                        }
+                    });
+                });
             } catch (e) {
                 list.innerHTML = `
                     <div style="text-align: center; padding: 2rem; color: var(--error);">
@@ -554,9 +564,10 @@
         function searchPattern(template) {
             const explorer = document.getElementById('log-explorer');
             const searchInput = explorer.querySelector('#search-input');
-            if (searchInput) {
-                // Extract keywords from template
-                const keywords = template.replace(/<\*>/g, '').trim().split(/\s+/).slice(0, 3).join(' ');
+            if (searchInput && template) {
+                // Extract keywords from template - decode HTML entities first
+                const decoded = template.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+                const keywords = decoded.replace(/<\*>/g, '').trim().split(/\s+/).slice(0, 3).join(' ');
                 searchInput.value = keywords;
                 explorer.setFilter('query', keywords);
             }

@@ -13,18 +13,30 @@ class ClockSkewDiagnostics extends HTMLElement {
         this.ntpStats = {};
         this.config = null;
         this.refreshInterval = null;
+        this._mounted = false;
+        this._boundEventListeners = [];
     }
 
     connectedCallback() {
+        this._mounted = true;
         this.render();
         this.loadData();
-        this.refreshInterval = setInterval(() => this.loadData(), 30000);
+        this.refreshInterval = setInterval(() => {
+            if (this._mounted) this.loadData();
+        }, 30000);
     }
 
     disconnectedCallback() {
+        this._mounted = false;
         if (this.refreshInterval) {
             clearInterval(this.refreshInterval);
+            this.refreshInterval = null;
         }
+        // Clean up event listeners
+        this._boundEventListeners.forEach(({ element, event, handler }) => {
+            if (element) element.removeEventListener(event, handler);
+        });
+        this._boundEventListeners = [];
     }
 
     render() {
@@ -564,50 +576,61 @@ class ClockSkewDiagnostics extends HTMLElement {
     }
 
     setupEventListeners() {
+        // Helper to track event listeners for cleanup
+        const addListener = (selector, event, handler) => {
+            const element = this.querySelector(selector);
+            if (element) {
+                element.addEventListener(event, handler);
+                this._boundEventListeners.push({ element, event, handler });
+            }
+        };
+
         // Refresh
-        this.querySelector('#btn-refresh')?.addEventListener('click', () => this.loadData());
+        addListener('#btn-refresh', 'click', () => this.loadData());
 
         // Tab switching
         this.querySelectorAll('.tab').forEach(tab => {
-            tab.addEventListener('click', (e) => {
+            const handler = (e) => {
                 this.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
                 this.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
                 e.target.classList.add('active');
                 const tabId = e.target.dataset.tab;
                 this.querySelector(`#tab-${tabId}`)?.classList.add('active');
-            });
+            };
+            tab.addEventListener('click', handler);
+            this._boundEventListeners.push({ element: tab, event: 'click', handler });
         });
 
         // Config panel
-        this.querySelector('#btn-config')?.addEventListener('click', () => {
+        addListener('#btn-config', 'click', () => {
             const panel = this.querySelector('#config-panel');
             if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
         });
 
-        this.querySelector('#btn-close-config')?.addEventListener('click', () => {
+        addListener('#btn-close-config', 'click', () => {
             const panel = this.querySelector('#config-panel');
             if (panel) panel.style.display = 'none';
         });
 
-        this.querySelector('#btn-save-config')?.addEventListener('click', () => this.saveConfig());
+        addListener('#btn-save-config', 'click', () => this.saveConfig());
 
         // Correction modal
-        this.querySelector('#btn-add-correction')?.addEventListener('click', () => {
+        addListener('#btn-add-correction', 'click', () => {
             const modal = this.querySelector('#correction-modal');
             if (modal) modal.style.display = 'flex';
         });
 
-        this.querySelector('#btn-close-modal')?.addEventListener('click', () => {
+        addListener('#btn-close-modal', 'click', () => {
             const modal = this.querySelector('#correction-modal');
             if (modal) modal.style.display = 'none';
         });
 
-        this.querySelector('#btn-cancel-correction')?.addEventListener('click', () => {
+        addListener('#btn-cancel-correction', 'click', () => {
             const modal = this.querySelector('#correction-modal');
             if (modal) modal.style.display = 'none';
         });
 
-        this.querySelector('#btn-save-correction')?.addEventListener('click', () => this.addCorrection());
+        addListener('#btn-save-correction', 'click', () => this.addCorrection());
     }
 
     async loadData() {

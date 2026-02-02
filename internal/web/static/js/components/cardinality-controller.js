@@ -16,18 +16,24 @@ class CardinalityController extends HTMLElement {
         this.loading = true;
         this.refreshInterval = null;
         this.chart = null;
+        this._mounted = false;
     }
 
     connectedCallback() {
+        this._mounted = true;
         this.render();
         this.loadData();
         // Auto-refresh every 15 seconds
-        this.refreshInterval = setInterval(() => this.loadData(), 15000);
+        this.refreshInterval = setInterval(() => {
+            if (this._mounted) this.loadData();
+        }, 15000);
     }
 
     disconnectedCallback() {
+        this._mounted = false;
         if (this.refreshInterval) {
             clearInterval(this.refreshInterval);
+            this.refreshInterval = null;
         }
     }
 

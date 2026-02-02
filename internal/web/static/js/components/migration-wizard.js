@@ -17,19 +17,28 @@ class MigrationWizard extends HTMLElement {
         this.error = null;
         this.reports = [];
         this._progressInterval = null; // Track progress interval for cleanup
+        this._mounted = false;
+        this._boundEventListeners = [];
     }
 
     connectedCallback() {
+        this._mounted = true;
         this.render();
         this.loadRecentReports();
     }
 
     disconnectedCallback() {
+        this._mounted = false;
         // Clean up any running intervals to prevent memory leaks
         if (this._progressInterval) {
             clearInterval(this._progressInterval);
             this._progressInterval = null;
         }
+        // Clean up event listeners
+        this._boundEventListeners.forEach(({ element, event, handler }) => {
+            if (element) element.removeEventListener(event, handler);
+        });
+        this._boundEventListeners = [];
     }
 
     async loadRecentReports() {
@@ -292,14 +301,26 @@ class MigrationWizard extends HTMLElement {
     attachEventListeners() {
         const dropZone = this.querySelector('.drop-zone');
         if (dropZone) {
-            dropZone.addEventListener('dragover', (e) => this.handleDragOver(e));
-            dropZone.addEventListener('dragleave', (e) => this.handleDragLeave(e));
-            dropZone.addEventListener('drop', (e) => this.handleDrop(e));
+            const dragOverHandler = (e) => this.handleDragOver(e);
+            const dragLeaveHandler = (e) => this.handleDragLeave(e);
+            const dropHandler = (e) => this.handleDrop(e);
+
+            dropZone.addEventListener('dragover', dragOverHandler);
+            dropZone.addEventListener('dragleave', dragLeaveHandler);
+            dropZone.addEventListener('drop', dropHandler);
+
+            this._boundEventListeners.push(
+                { element: dropZone, event: 'dragover', handler: dragOverHandler },
+                { element: dropZone, event: 'dragleave', handler: dragLeaveHandler },
+                { element: dropZone, event: 'drop', handler: dropHandler }
+            );
         }
 
         const fileInput = this.querySelector('input[type="file"]');
         if (fileInput) {
-            fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
+            const changeHandler = (e) => this.handleFileSelect(e);
+            fileInput.addEventListener('change', changeHandler);
+            this._boundEventListeners.push({ element: fileInput, event: 'change', handler: changeHandler });
         }
     }
 

@@ -7,15 +7,25 @@ class HistogramChart extends HTMLElement {
         super();
         this.data = null;
         this.chart = null;
+        this.resizeObserver = null;
     }
 
     connectedCallback() {
         this.render();
         this.loadData();
+
+        // Handle resize
+        this.resizeObserver = new ResizeObserver(() => {
+            if (this.chart) {
+                this.chart.resize();
+            }
+        });
+        this.resizeObserver.observe(this);
     }
 
     disconnectedCallback() {
         if (this.chart) this.chart.destroy();
+        if (this.resizeObserver) this.resizeObserver.disconnect();
     }
 
     static get observedAttributes() {
@@ -57,10 +67,18 @@ class HistogramChart extends HTMLElement {
                     flex: 1;
                     padding: 1rem;
                     min-height: 200px;
+                    position: relative;
                 }
                 .histogram-canvas {
-                    width: 100%;
+                    width: 100% !important;
+                    height: 100% !important;
+                }
+                .histogram-loading, .histogram-empty {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
                     height: 100%;
+                    color: var(--text-muted, #71767b);
                 }
                 .histogram-percentiles {
                     display: flex;
@@ -148,8 +166,13 @@ class HistogramChart extends HTMLElement {
         const canvas = this.querySelector('#chart');
         if (!canvas || !this.data) return;
 
-        if (!window.Chart && window.LibLoader) {
-            await window.LibLoader.load('chart');
+        if (!window.Chart) {
+            if (window.LibLoader) {
+                await window.LibLoader.load('chart');
+            } else {
+                console.error('Chart.js not available');
+                return;
+            }
         }
 
         if (this.chart) this.chart.destroy();

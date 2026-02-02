@@ -9,17 +9,27 @@ class CorrelationView extends HTMLElement {
         this.correlatedData = null;
         this.selectedTimeRange = null;
         this.chart = null;
+        this._mounted = false;
+        this._boundEventListeners = [];
     }
 
     connectedCallback() {
+        this._mounted = true;
         this.render();
         this.loadMetrics();
     }
 
     disconnectedCallback() {
+        this._mounted = false;
         if (this.chart) {
             this.chart.destroy();
+            this.chart = null;
         }
+        // Clean up event listeners
+        this._boundEventListeners.forEach(({ element, event, handler }) => {
+            if (element) element.removeEventListener(event, handler);
+        });
+        this._boundEventListeners = [];
     }
 
     static get observedAttributes() {
@@ -248,24 +258,37 @@ class CorrelationView extends HTMLElement {
     }
 
     setupEventListeners() {
+        // Helper to track event listeners for cleanup
+        const addListener = (element, event, handler) => {
+            if (element) {
+                element.addEventListener(event, handler);
+                this._boundEventListeners.push({ element, event, handler });
+            }
+        };
+
         // Tab switching
         this.querySelectorAll('.correlation-tab').forEach(tab => {
-            tab.addEventListener('click', (e) => {
+            const tabHandler = (e) => {
                 this.querySelectorAll('.correlation-tab').forEach(t => t.classList.remove('active'));
                 e.target.classList.add('active');
                 this.renderCorrelatedData(e.target.dataset.tab);
-            });
+            };
+            addListener(tab, 'click', tabHandler);
         });
 
         // Metric selection
-        this.querySelector('#metric-select')?.addEventListener('change', (e) => {
+        const metricSelect = this.querySelector('#metric-select');
+        const metricHandler = (e) => {
             this.setAttribute('metric', e.target.value);
-        });
+        };
+        addListener(metricSelect, 'change', metricHandler);
 
         // Time range
-        this.querySelector('#time-select')?.addEventListener('change', (e) => {
+        const timeSelect = this.querySelector('#time-select');
+        const timeHandler = (e) => {
             this.setAttribute('time-range', e.target.value);
-        });
+        };
+        addListener(timeSelect, 'change', timeHandler);
     }
 
     async loadMetrics() {

@@ -99,6 +99,9 @@
             min-height: 600px;
         }
 
+        profile-settings,
+        password-settings,
+        notification-preferences,
         sampling-dashboard,
         field-extraction {
             display: block;
@@ -201,16 +204,37 @@
 
             <div class="container">
                 <div class="page-header">
-                    <h1>Configuration</h1>
-                    <p>Configure sampling rules and field extraction patterns</p>
+                    <h1>Settings</h1>
+                    <p>Manage your profile, preferences, and data configuration</p>
                 </div>
 
                 <div class="tabs">
-                    <button class="tab active" data-tab="sampling">Sampling</button>
+                    <button class="tab active" data-tab="profile">Profile</button>
+                    <button class="tab" data-tab="password">Password</button>
+                    <button class="tab" data-tab="notifications">Notifications</button>
+                    <button class="tab" data-tab="sampling">Sampling</button>
                     <button class="tab" data-tab="extraction">Field Extraction</button>
                 </div>
 
-                <div id="tab-sampling" class="tab-content active">
+                <div id="tab-profile" class="tab-content active">
+                    <div class="widget-container">
+                        <profile-settings></profile-settings>
+                    </div>
+                </div>
+
+                <div id="tab-password" class="tab-content">
+                    <div class="widget-container">
+                        <password-settings></password-settings>
+                    </div>
+                </div>
+
+                <div id="tab-notifications" class="tab-content">
+                    <div class="widget-container">
+                        <notification-preferences></notification-preferences>
+                    </div>
+                </div>
+
+                <div id="tab-sampling" class="tab-content">
                     <div class="widget-container">
                         <sampling-dashboard></sampling-dashboard>
                     </div>
@@ -226,6 +250,9 @@
     </div>
 
     <!-- Load component scripts -->
+    <script src="/js/components/profile-settings.js"></script>
+    <script src="/js/components/password-settings.js"></script>
+    <script src="/js/components/notification-preferences.js"></script>
     <script src="/js/components/sampling-dashboard.js"></script>
     <script src="/js/components/field-extraction.js"></script>
 

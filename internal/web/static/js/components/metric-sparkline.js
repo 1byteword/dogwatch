@@ -75,19 +75,44 @@ class MetricSparkline extends HTMLElement {
         this.data = [];
         this.loading = true;
         this._initialized = false;
+        this._resizeObserver = null;
 
         // Create shadow root with shared stylesheet
         this.attachShadow({ mode: 'open' });
-        this.shadowRoot.adoptedStyleSheets = [sparklineStyles];
+        if (document.adoptedStyleSheets !== undefined) {
+            try {
+                this.shadowRoot.adoptedStyleSheets = [sparklineStyles];
+            } catch (e) {
+                // Fallback for browsers that don't support adoptedStyleSheets
+                const style = document.createElement('style');
+                style.textContent = sparklineStyles.cssRules ?
+                    Array.from(sparklineStyles.cssRules).map(r => r.cssText).join('\n') : '';
+                this.shadowRoot.appendChild(style);
+            }
+        }
     }
 
     connectedCallback() {
         this._initDOM();
         this.loadData();
+
+        // Handle resize
+        this._resizeObserver = new ResizeObserver(() => {
+            if (!this.loading && this.data.length > 0) {
+                this._renderState();
+            }
+        });
+        this._resizeObserver.observe(this);
     }
 
-    attributeChangedCallback() {
-        if (this.isConnected) {
+    disconnectedCallback() {
+        if (this._resizeObserver) {
+            this._resizeObserver.disconnect();
+        }
+    }
+
+    attributeChangedCallback(name, oldValue, newValue) {
+        if (oldValue !== newValue && this.isConnected) {
             this.loadData();
         }
     }
@@ -177,7 +202,7 @@ class MetricSparkline extends HTMLElement {
         }
 
         // Render chart
-        const width = this.clientWidth || 150;
+        const width = Math.max(this.clientWidth || 0, this.offsetWidth || 0, 100);
         const height = this.height;
         const values = this.data.map(d => typeof d === 'number' ? d : (d.value || d.v || 0));
         const currentValue = values[values.length - 1];

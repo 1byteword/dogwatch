@@ -10,16 +10,25 @@ class DependencyGraph extends HTMLElement {
         this.simulation = null;
         this.svg = null;
         this.selectedNode = null;
+        this._mounted = false;
+        this._animationFrame = null;
     }
 
     connectedCallback() {
+        this._mounted = true;
         this.render();
         this.loadDependencies();
     }
 
     disconnectedCallback() {
+        this._mounted = false;
         if (this.simulation) {
             this.simulation.stop();
+            this.simulation = null;
+        }
+        if (this._animationFrame) {
+            cancelAnimationFrame(this._animationFrame);
+            this._animationFrame = null;
         }
     }
 
@@ -224,7 +233,11 @@ class DependencyGraph extends HTMLElement {
     }
 
     animate() {
-        if (this.alpha < 0.001) return;
+        // Stop animation if component is unmounted or alpha is too low
+        if (!this._mounted || this.alpha < 0.001) {
+            this._animationFrame = null;
+            return;
+        }
 
         this.alpha *= 0.99;
 
@@ -234,7 +247,7 @@ class DependencyGraph extends HTMLElement {
         // Update positions in SVG
         this.updatePositions();
 
-        requestAnimationFrame(() => this.animate());
+        this._animationFrame = requestAnimationFrame(() => this.animate());
     }
 
     applyForces() {

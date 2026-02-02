@@ -104,15 +104,15 @@ class OncallCalendar extends HTMLElement {
                         <div class="oncall-people">
                             ${people.map((p, i) => `
                                 <div class="person-card ${i === 0 ? 'primary' : 'backup'}">
-                                    <div class="person-avatar">${this.getInitials(p.user_name || p.name)}</div>
+                                    <div class="person-avatar">${this.escapeHtml(this.getInitials(p.user_name || p.name))}</div>
                                     <div class="person-info">
                                         <div class="person-name">${this.escapeHtml(p.user_name || p.name || 'Unknown')}</div>
                                         <div class="person-role">${i === 0 ? 'Primary' : 'Backup'}</div>
                                         <div class="shift-time">Until ${this.formatTime(p.end_time)}</div>
                                     </div>
                                     <div class="person-actions">
-                                        <a href="tel:${p.phone || ''}" class="btn-contact" title="Call">📞</a>
-                                        <a href="mailto:${p.email || ''}" class="btn-contact" title="Email">✉️</a>
+                                        ${p.phone ? `<a href="tel:${this.escapeUrl(p.phone)}" class="btn-contact" title="Call">📞</a>` : '<span class="btn-contact disabled">📞</span>'}
+                                        ${p.email ? `<a href="mailto:${this.escapeUrl(p.email)}" class="btn-contact" title="Email">✉️</a>` : '<span class="btn-contact disabled">✉️</span>'}
                                     </div>
                                 </div>
                             `).join('')}
@@ -229,7 +229,7 @@ class OncallCalendar extends HTMLElement {
         );
 
         if (person) {
-            return `<span class="shift-person">${this.getInitials(person.user_name || person.name)}</span>`;
+            return `<span class="shift-person">${this.escapeHtml(this.getInitials(person.user_name || person.name))}</span>`;
         }
         return '';
     }
@@ -256,7 +256,20 @@ class OncallCalendar extends HTMLElement {
 
     escapeHtml(str) {
         if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    escapeAttr(str) {
+        if (!str) return '';
+        return String(str).replace(/[&"'<>]/g, c => ({
+            '&': '&amp;', '"': '&quot;', "'": '&#39;', '<': '&lt;', '>': '&gt;'
+        }[c]));
+    }
+
+    escapeUrl(str) {
+        if (!str) return '';
+        // Only allow safe characters in tel: and mailto: links
+        return encodeURI(String(str)).replace(/['"<>]/g, '');
     }
 
     getStyles() {
@@ -392,6 +405,11 @@ class OncallCalendar extends HTMLElement {
                 border-radius: 6px;
                 text-decoration: none;
                 font-size: 0.9rem;
+            }
+
+            .btn-contact.disabled {
+                opacity: 0.3;
+                cursor: not-allowed;
             }
 
             .no-oncall {

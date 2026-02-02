@@ -13,6 +13,15 @@ class SyntheticsUptime extends HTMLElement {
     connectedCallback() {
         this.render();
         this.loadData();
+        // Refresh every 60 seconds
+        this._refreshInterval = setInterval(() => this.loadData(), 60000);
+    }
+
+    disconnectedCallback() {
+        if (this._refreshInterval) {
+            clearInterval(this._refreshInterval);
+            this._refreshInterval = null;
+        }
     }
 
     async loadData() {

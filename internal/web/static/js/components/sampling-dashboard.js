@@ -17,18 +17,24 @@ class SamplingDashboard extends HTMLElement {
         this.activeTab = 'overview';
         this.refreshInterval = null;
         this.statsHistory = [];
+        this._mounted = false;
     }
 
     connectedCallback() {
+        this._mounted = true;
         this.render();
         this.loadData();
         // Auto-refresh every 5 seconds
-        this.refreshInterval = setInterval(() => this.loadData(), 5000);
+        this.refreshInterval = setInterval(() => {
+            if (this._mounted) this.loadData();
+        }, 5000);
     }
 
     disconnectedCallback() {
+        this._mounted = false;
         if (this.refreshInterval) {
             clearInterval(this.refreshInterval);
+            this.refreshInterval = null;
         }
     }
 

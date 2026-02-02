@@ -16,21 +16,28 @@ class StorageTiering extends HTMLElement {
         this.loading = true;
         this.refreshInterval = null;
         this.animationFrame = null;
+        this._mounted = false;
     }
 
     connectedCallback() {
+        this._mounted = true;
         this.render();
         this.loadData();
         // Auto-refresh every 30 seconds
-        this.refreshInterval = setInterval(() => this.loadData(), 30000);
+        this.refreshInterval = setInterval(() => {
+            if (this._mounted) this.loadData();
+        }, 30000);
     }
 
     disconnectedCallback() {
+        this._mounted = false;
         if (this.refreshInterval) {
             clearInterval(this.refreshInterval);
+            this.refreshInterval = null;
         }
         if (this.animationFrame) {
             cancelAnimationFrame(this.animationFrame);
+            this.animationFrame = null;
         }
     }
 

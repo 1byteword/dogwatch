@@ -6,15 +6,36 @@ class ResourceTreemap extends HTMLElement {
     constructor() {
         super();
         this.data = null;
+        this.resizeObserver = null;
     }
 
     connectedCallback() {
         this.render();
         this.loadData();
+
+        // Handle resize
+        this.resizeObserver = new ResizeObserver(() => {
+            if (this.data) {
+                this.renderTreemap();
+            }
+        });
+        this.resizeObserver.observe(this);
+    }
+
+    disconnectedCallback() {
+        if (this.resizeObserver) {
+            this.resizeObserver.disconnect();
+        }
     }
 
     static get observedAttributes() {
         return ['resource', 'namespace'];
+    }
+
+    attributeChangedCallback(name, oldValue, newValue) {
+        if (oldValue !== newValue && this.isConnected) {
+            this.loadData();
+        }
     }
 
     get resource() { return this.getAttribute('resource') || 'memory'; }
@@ -122,6 +143,13 @@ class ResourceTreemap extends HTMLElement {
                     height: 10px;
                     border-radius: 2px;
                 }
+                .treemap-empty {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    height: 100%;
+                    color: var(--text-muted, #71767b);
+                }
             </style>
             <div class="treemap-container">
                 <div class="treemap-header">
@@ -184,9 +212,15 @@ class ResourceTreemap extends HTMLElement {
         const tooltip = this.querySelector('#tooltip');
         if (!body || !this.data) return;
 
-        const width = body.clientWidth;
-        const height = body.clientHeight || 250;
         const items = this.data.items;
+
+        if (!items || items.length === 0) {
+            body.innerHTML = '<div class="treemap-empty">No resource data available</div>';
+            return;
+        }
+
+        const width = body.clientWidth || 400;
+        const height = body.clientHeight || 250;
 
         // Simple treemap layout
         const total = items.reduce((sum, i) => sum + i.value, 0);

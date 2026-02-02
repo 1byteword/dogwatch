@@ -1594,8 +1594,8 @@ async function showNotificationHistory() {
     }
 }
 
-// Check auth on page load
-checkAuth();
+// Note: checkAuth() is called in the DOMContentLoaded handler above
+// to ensure proper initialization order
 
 // =====================================
 // Widget definitions
@@ -2554,6 +2554,12 @@ function initGrid() {
         resizable: { handles: 'se,e,s' },
         minRow: 1
     });
+
+    // Register change listener after grid is initialized
+    grid.on('change', saveLayout);
+
+    // Load dashboards list
+    loadDashboards();
 }
 
 function loadLayout() {
@@ -2821,10 +2827,8 @@ async function deleteDashboard(id) {
     } catch (e) { alert('Failed to delete dashboard'); }
 }
 
-grid.on('change', saveLayout);
-loadLayout();
-loadDashboards();
-setTimeout(initCharts, 100);
+// Note: grid.on, loadLayout, loadDashboards are now called in initGrid() and the DOMContentLoaded handler
+// to ensure proper initialization order and avoid calling methods on null grid object
 
 // Utility functions
 function formatBytes(b) {
@@ -2840,6 +2844,25 @@ function formatLatency(ms) {
 }
 function getLatencyClass(ms) { return !ms ? '' : ms < 100 ? 'good' : ms < 500 ? 'warn' : 'bad'; }
 function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+
+// Format relative time (e.g., "5m ago", "2h ago")
+function formatRelativeTime(date) {
+    if (!date || !(date instanceof Date) || isNaN(date.getTime())) return '-';
+    const now = Date.now();
+    const diff = now - date.getTime();
+    if (diff < 0) return 'just now';
+    const seconds = Math.floor(diff / 1000);
+    if (seconds < 60) return seconds + 's ago';
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return minutes + 'm ago';
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return hours + 'h ago';
+    const days = Math.floor(hours / 24);
+    if (days < 7) return days + 'd ago';
+    const weeks = Math.floor(days / 7);
+    if (weeks < 4) return weeks + 'w ago';
+    return date.toLocaleDateString();
+}
 
 // CSRF token helper - gets token from cookie for state-changing requests
 function getCSRFToken() {
@@ -3706,16 +3729,27 @@ function closeSvcMapDetail() {
     if (detail) detail.classList.remove('open');
 }
 
+// Show/focus a specific widget by scrolling to it
+function showTab(widgetId) {
+    const widget = document.querySelector(`.grid-stack-item[gs-id="${widgetId}"]`);
+    if (widget) {
+        widget.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // Highlight the widget briefly
+        widget.style.boxShadow = '0 0 10px 2px var(--accent)';
+        setTimeout(() => { widget.style.boxShadow = ''; }, 2000);
+    }
+}
+
 function viewServiceLogs() {
     if (!svcMapSelectedNode) return;
     closeSvcMapDetail();
     showTab('logs');
     // Set service filter if available
     setTimeout(() => {
-        const serviceFilter = document.getElementById('log-service-filter');
+        const serviceFilter = document.getElementById('log-service');
         if (serviceFilter) {
             serviceFilter.value = svcMapSelectedNode.name;
-            loadLogs();
+            searchLogs();
         }
     }, 100);
 }
@@ -4871,6 +4905,7 @@ function startDataRefresh() {
     setTimeout(loadCardinality, 1150);
     setTimeout(loadNotifyWidget, 1200);
     setTimeout(loadSecurityWidget, 1250);
+    setTimeout(loadKubernetes, 1300);
 
     // Set up WebSocket real-time updates (reduces polling overhead)
     setupWebSocketUpdates();
@@ -4886,6 +4921,27 @@ function startDataRefresh() {
     setInterval(loadWatches, 30000);          // WebSocket handles state changes
     setInterval(searchLogs, 30000);           // WebSocket streams logs in real-time
     setInterval(() => loadChartData(document.querySelector('.time-btn.active')?.dataset.dur || '15m'), 15000);
+
+    // Secondary widget periodic refreshes (consolidated from various places)
+    setInterval(loadSynthetics, 10000);
+    setInterval(loadSLOs, 30000);
+    setInterval(loadPatterns, 60000);
+    setInterval(loadContainers, 30000);
+    setInterval(loadDeployments, 30000);
+    setInterval(loadIncidents, 30000);       // WebSocket handles real-time updates
+    setInterval(loadStatusPages, 30000);
+    setInterval(loadCatalog, 30000);
+    setInterval(loadCorrelations, 60000);
+    setInterval(loadCluster, 10000);
+    setInterval(loadKubernetes, 15000);
+    setInterval(loadAnomalies, 30000);       // WebSocket handles new anomalies
+    setInterval(loadAlerts, 30000);          // WebSocket handles alert updates
+    setInterval(loadNotifyWidget, 30000);
+    setInterval(loadOnCallWidget, 60000);
+    setInterval(loadAuditWidget, 60000);
+    setInterval(loadCostIntel, 60000);
+    setInterval(loadDBWatch, 5000);
+    setInterval(loadCardinality, 30000);
 
     // Resize handler
     window.addEventListener('resize', () => { renderServiceMap(); });
@@ -5467,9 +5523,7 @@ function deleteSynthetic(id) {
         .catch(err => alert('Failed to delete: ' + err.message));
 }
 
-// Initialize synthetics
-setTimeout(loadSynthetics, 500);
-setInterval(loadSynthetics, 10000);
+// Note: Synthetics initialization moved to startDataRefresh() to avoid duplicate loads
 
 // SLO functions
 // moved to top
@@ -6537,8 +6591,20 @@ function submitResolve(id) {
     });
 }
 
-// Toast notification helper
-function showToast(message, type = 'info') {
+// Toast notification helper - simple fallback before components.bundle.js loads
+// This will be overwritten by the more feature-rich component version
+// Supports both (message, type) and ({type, message}) formats
+function showToast(messageOrObj, typeArg = 'info') {
+    // Parse arguments - support both formats
+    let message, type;
+    if (typeof messageOrObj === 'object' && messageOrObj !== null) {
+        message = messageOrObj.message || '';
+        type = messageOrObj.type || 'info';
+    } else {
+        message = messageOrObj;
+        type = typeArg;
+    }
+
     const toast = document.createElement('div');
     toast.className = 'toast toast-' + type;
     toast.style.cssText = `
@@ -6551,7 +6617,7 @@ function showToast(message, type = 'info') {
         font-size: 0.9rem;
         z-index: 10001;
         animation: slideIn 0.3s ease;
-        background: ${type === 'success' ? '#00ba7c' : type === 'error' ? '#f4212e' : '#1d9bf0'};
+        background: ${type === 'success' ? '#00ba7c' : type === 'error' ? '#f4212e' : type === 'warning' ? '#ffd400' : '#1d9bf0'};
     `;
     toast.textContent = message;
     document.body.appendChild(toast);
@@ -6649,17 +6715,7 @@ function showIncidentDetail(id) {
         .catch(err => alert('Error loading incident: ' + err.message));
 }
 
-// Initialize SLOs, Patterns, Containers, Deployments, and Incidents
-setTimeout(loadSLOs, 600);
-setInterval(loadSLOs, 30000);
-setTimeout(loadPatterns, 700);
-setInterval(loadPatterns, 60000);
-setTimeout(loadContainers, 800);
-setInterval(loadContainers, 30000);
-setTimeout(loadDeployments, 900);
-setInterval(loadDeployments, 30000);
-setTimeout(loadIncidents, 1000);
-setInterval(loadIncidents, 30000);  // WebSocket handles real-time updates
+// Note: SLOs, Patterns, Containers, Deployments, Incidents initialization moved to startDataRefresh()
 
 // ============ Cluster/Federation Functions ============
 function loadCluster() {
@@ -6799,8 +6855,7 @@ function showJoinClusterModal() {
     .catch(err => alert('Error joining cluster: ' + err.message));
 }
 
-setTimeout(loadCluster, 1100);
-setInterval(loadCluster, 10000);
+// Note: Cluster initialization moved to startDataRefresh()
 
 // ============ Status Page Functions ============
 // moved to top
@@ -7224,8 +7279,7 @@ function formatStatus(status) {
     }
 }
 
-setTimeout(loadStatusPages, 1200);
-setInterval(loadStatusPages, 30000);
+// Note: Status Pages initialization moved to startDataRefresh()
 
 // ============ Service Catalog Functions ============
 // moved to top
@@ -7673,8 +7727,7 @@ function editService(serviceId) {
     alert('Edit functionality coming soon');
 }
 
-setTimeout(loadCatalog, 1300);
-setInterval(loadCatalog, 30000);
+// Note: Catalog initialization moved to startDataRefresh()
 
 // ============ Correlation Engine Functions ============
 // moved to top
@@ -8043,8 +8096,7 @@ function showIncidentContextModal(ctx) {
     document.body.appendChild(modal);
 }
 
-setTimeout(loadCorrelations, 1500);
-setInterval(loadCorrelations, 60000);
+// Note: Correlations initialization moved to startDataRefresh()
 
 // ============ Kubernetes Functions ============
 // moved to top
@@ -8294,9 +8346,7 @@ function formatTimeAgo(date) {
     return `${days}d ago`;
 }
 
-// Initialize Kubernetes
-setTimeout(loadKubernetes, 1200);
-setInterval(loadKubernetes, 15000);
+// Note: Kubernetes initialization moved to startDataRefresh()
 
 // Anomaly Detection functions
 function loadAnomalies() {
@@ -9485,23 +9535,7 @@ function loadCardinality() {
     });
 }
 
-// Initialize Anomaly, Alerting, Notifications, On-Call, and Audit
-// WebSocket handles real-time updates, polling is fallback only
-setTimeout(loadAnomalies, 1300);
-setInterval(loadAnomalies, 30000);     // WebSocket handles new anomalies
-setTimeout(loadAlerts, 1400);
-setInterval(loadAlerts, 30000);        // WebSocket handles alert updates
-setTimeout(loadNotifyWidget, 1500);
-setInterval(loadNotifyWidget, 30000);
-setTimeout(loadOnCallWidget, 1600);
-setInterval(loadOnCallWidget, 60000);
-setTimeout(loadAuditWidget, 1700);
-setInterval(loadAuditWidget, 60000);
-
-// Initialize Cost Intelligence, DB Watch, and Cardinality
-setTimeout(loadCostIntel, 1800);
-setInterval(loadCostIntel, 60000); // Refresh every minute
-setTimeout(loadDBWatch, 1900);
-setInterval(loadDBWatch, 5000); // Refresh every 5 seconds
-setTimeout(loadCardinality, 2000);
-setInterval(loadCardinality, 30000); // Refresh every 30 seconds
+// Note: All widget initializations moved to startDataRefresh() to ensure:
+// 1. Proper authentication check before loading data
+// 2. No duplicate loads (startDataRefresh handles all initial loads and intervals)
+// 3. WebSocket handles real-time updates, polling is fallback only

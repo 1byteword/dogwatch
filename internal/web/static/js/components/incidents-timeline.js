@@ -92,19 +92,20 @@ class IncidentsTimeline extends HTMLElement {
     }
 
     renderIncidentCard(incident) {
-        const severity = incident.severity || 'medium';
-        const status = incident.status || 'active';
+        const severity = String(incident.severity || 'medium').replace(/[^a-z]/gi, '');
+        const status = String(incident.status || 'active').replace(/[^a-z]/gi, '');
         const duration = this.getDuration(incident.created_at, incident.resolved_at);
+        const incidentId = this.escapeAttr(incident.id);
 
         return `
-            <div class="incident-card severity-${severity}" onclick="this.getRootNode().host.showIncidentDetail('${incident.id}')">
+            <div class="incident-card severity-${severity}" data-incident-id="${incidentId}" onclick="this.getRootNode().host.showIncidentDetail(this.dataset.incidentId)">
                 <div class="incident-severity">
-                    <span class="severity-badge ${severity}">${this.getSeverityIcon(severity)}</span>
+                    <span class="severity-badge ${severity}">${this.getSeverityIcon(incident.severity)}</span>
                 </div>
                 <div class="incident-main">
                     <div class="incident-header">
                         <span class="incident-title">${this.escapeHtml(incident.title)}</span>
-                        <span class="incident-status status-${status}">${status}</span>
+                        <span class="incident-status status-${status}">${this.escapeHtml(incident.status || 'active')}</span>
                     </div>
                     <div class="incident-meta">
                         ${incident.service ? `<span class="meta-service">${this.escapeHtml(incident.service)}</span>` : ''}
@@ -115,8 +116,8 @@ class IncidentsTimeline extends HTMLElement {
                 </div>
                 <div class="incident-actions">
                     ${status !== 'resolved' ? `
-                        <button class="btn-action" onclick="event.stopPropagation(); this.getRootNode().host.updateStatus('${incident.id}', 'investigating')" title="Investigate">🔍</button>
-                        <button class="btn-action" onclick="event.stopPropagation(); this.getRootNode().host.resolveIncident('${incident.id}')" title="Resolve">✓</button>
+                        <button class="btn-action" data-incident-id="${incidentId}" onclick="event.stopPropagation(); this.getRootNode().host.updateStatus(this.dataset.incidentId, 'investigating')" title="Investigate">🔍</button>
+                        <button class="btn-action" data-incident-id="${incidentId}" onclick="event.stopPropagation(); this.getRootNode().host.resolveIncident(this.dataset.incidentId)" title="Resolve">✓</button>
                     ` : ''}
                 </div>
             </div>
@@ -132,7 +133,7 @@ class IncidentsTimeline extends HTMLElement {
         // Try to load timeline
         let timeline = [];
         try {
-            const resp = await fetch(`/api/incidents/${id}/timeline`);
+            const resp = await fetch(`/api/incidents/${encodeURIComponent(id)}/timeline`);
             if (resp.ok) timeline = await resp.json() || [];
         } catch (e) {}
 
@@ -145,11 +146,15 @@ class IncidentsTimeline extends HTMLElement {
     }
 
     renderIncidentDetail(incident, timeline) {
+        const severity = String(incident.severity || 'medium').replace(/[^a-z]/gi, '');
+        const status = String(incident.status || 'active').replace(/[^a-z]/gi, '');
+        const incidentId = this.escapeAttr(incident.id);
+
         return `
             <div class="detail-header">
                 <button class="btn-back" onclick="this.getRootNode().host.hideDetail()">← Back</button>
-                <span class="severity-badge ${incident.severity}">${incident.severity?.toUpperCase()}</span>
-                <span class="incident-status status-${incident.status}">${incident.status}</span>
+                <span class="severity-badge ${severity}">${this.escapeHtml((incident.severity || '').toUpperCase())}</span>
+                <span class="incident-status status-${status}">${this.escapeHtml(incident.status)}</span>
             </div>
             <div class="detail-body">
                 <h2 class="detail-title">${this.escapeHtml(incident.title)}</h2>
@@ -160,7 +165,7 @@ class IncidentsTimeline extends HTMLElement {
                     </div>
                     <div class="meta-item">
                         <span class="meta-label">Service</span>
-                        <span class="meta-value">${incident.service || '—'}</span>
+                        <span class="meta-value">${this.escapeHtml(incident.service) || '—'}</span>
                     </div>
                     <div class="meta-item">
                         <span class="meta-label">Duration</span>
@@ -203,9 +208,9 @@ class IncidentsTimeline extends HTMLElement {
                 </div>
                 <div class="detail-actions">
                     ${incident.status !== 'resolved' ? `
-                        <button class="btn-primary" onclick="this.getRootNode().host.resolveIncident('${incident.id}')">Resolve Incident</button>
+                        <button class="btn-primary" data-incident-id="${incidentId}" onclick="this.getRootNode().host.resolveIncident(this.dataset.incidentId)">Resolve Incident</button>
                     ` : ''}
-                    <button class="btn-secondary" onclick="this.getRootNode().host.addTimelineEntry('${incident.id}')">Add Update</button>
+                    <button class="btn-secondary" data-incident-id="${incidentId}" onclick="this.getRootNode().host.addTimelineEntry(this.dataset.incidentId)">Add Update</button>
                 </div>
             </div>
         `;
@@ -220,7 +225,7 @@ class IncidentsTimeline extends HTMLElement {
 
     async updateStatus(id, status) {
         try {
-            const resp = await fetch(`/api/incidents/${id}`, {
+            const resp = await fetch(`/api/incidents/${encodeURIComponent(id)}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status })
@@ -235,7 +240,7 @@ class IncidentsTimeline extends HTMLElement {
         if (!confirm('Resolve this incident?')) return;
 
         try {
-            const resp = await fetch(`/api/incidents/${id}/resolve`, {
+            const resp = await fetch(`/api/incidents/${encodeURIComponent(id)}/resolve`, {
                 method: 'POST'
             });
             if (resp.ok) {
@@ -252,7 +257,7 @@ class IncidentsTimeline extends HTMLElement {
         if (!message) return;
 
         try {
-            await fetch(`/api/incidents/${id}/timeline`, {
+            await fetch(`/api/incidents/${encodeURIComponent(id)}/timeline`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ message })
@@ -324,7 +329,14 @@ class IncidentsTimeline extends HTMLElement {
 
     escapeHtml(str) {
         if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    escapeAttr(str) {
+        if (!str) return '';
+        return String(str).replace(/[&"'<>]/g, c => ({
+            '&': '&amp;', '"': '&quot;', "'": '&#39;', '<': '&lt;', '>': '&gt;'
+        }[c]));
     }
 
     getStyles() {

@@ -7,19 +7,33 @@ class DiffView extends HTMLElement {
         super();
         this.data = null;
         this.charts = [];
+        this.resizeObserver = null;
     }
 
     connectedCallback() {
         this.render();
         this.loadData();
+
+        // Handle resize
+        this.resizeObserver = new ResizeObserver(() => {
+            this.charts.forEach(c => c.resize());
+        });
+        this.resizeObserver.observe(this);
     }
 
     disconnectedCallback() {
         this.charts.forEach(c => c.destroy());
+        if (this.resizeObserver) this.resizeObserver.disconnect();
     }
 
     static get observedAttributes() {
         return ['metric', 'period1', 'period2'];
+    }
+
+    attributeChangedCallback(name, oldValue, newValue) {
+        if (oldValue !== newValue && this.isConnected) {
+            this.loadData();
+        }
     }
 
     get metric() { return this.getAttribute('metric') || 'latency'; }
@@ -112,6 +126,18 @@ class DiffView extends HTMLElement {
                 }
                 .diff-chart {
                     flex: 1;
+                }
+                .diff-chart canvas {
+                    width: 100% !important;
+                    height: 100% !important;
+                }
+                .diff-empty {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    height: 100%;
+                    color: var(--text-muted, #71767b);
+                    grid-column: span 2;
                 }
             </style>
             <div class="diff-container">
@@ -250,14 +276,23 @@ class DiffView extends HTMLElement {
     }
 
     async renderCharts() {
-        if (!window.Chart && window.LibLoader) {
-            await window.LibLoader.loadAll(['chart', 'chart-date']);
+        if (!window.Chart) {
+            if (window.LibLoader) {
+                await window.LibLoader.loadAll(['chart', 'chart-date']);
+            } else {
+                console.error('Chart.js not available');
+                return;
+            }
         }
 
         this.charts.forEach(c => c.destroy());
         this.charts = [];
 
         const { period1, period2 } = this.data;
+
+        if (!period1?.series || !period2?.series) {
+            return;
+        }
 
         [
             { canvas: '#chart1', data: period1, color: '#3b82f6' },

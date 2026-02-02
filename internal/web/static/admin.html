@@ -99,10 +99,11 @@
             min-height: 600px;
         }
 
-        storage-tiering,
-        memory-dashboard,
+        user-management,
+        team-management,
+        api-key-management,
         hotreload-manager,
-        clock-skew-diagnostics {
+        system-settings {
             display: block;
             width: 100%;
             min-height: 600px;
@@ -204,25 +205,32 @@
             <div class="container">
                 <div class="page-header">
                     <h1>System Administration</h1>
-                    <p>Manage storage, memory, probes, and system diagnostics</p>
+                    <p>Manage users, teams, API keys, probes, and system configuration</p>
                 </div>
 
                 <div class="tabs">
-                    <button class="tab active" data-tab="storage">Storage</button>
-                    <button class="tab" data-tab="memory">Memory</button>
+                    <button class="tab active" data-tab="users">Users</button>
+                    <button class="tab" data-tab="teams">Teams</button>
+                    <button class="tab" data-tab="apikeys">API Keys</button>
                     <button class="tab" data-tab="probes">Probes</button>
-                    <button class="tab" data-tab="clock">Clock Skew</button>
+                    <button class="tab" data-tab="system">System</button>
                 </div>
 
-                <div id="tab-storage" class="tab-content active">
+                <div id="tab-users" class="tab-content active">
                     <div class="widget-container">
-                        <storage-tiering></storage-tiering>
+                        <user-management></user-management>
                     </div>
                 </div>
 
-                <div id="tab-memory" class="tab-content">
+                <div id="tab-teams" class="tab-content">
                     <div class="widget-container">
-                        <memory-dashboard></memory-dashboard>
+                        <team-management></team-management>
+                    </div>
+                </div>
+
+                <div id="tab-apikeys" class="tab-content">
+                    <div class="widget-container">
+                        <api-key-management></api-key-management>
                     </div>
                 </div>
 
@@ -232,9 +240,9 @@
                     </div>
                 </div>
 
-                <div id="tab-clock" class="tab-content">
+                <div id="tab-system" class="tab-content">
                     <div class="widget-container">
-                        <clock-skew-diagnostics></clock-skew-diagnostics>
+                        <system-settings></system-settings>
                     </div>
                 </div>
             </div>
@@ -242,10 +250,11 @@
     </div>
 
     <!-- Load component scripts -->
-    <script src="/js/components/storage-tiering.js"></script>
-    <script src="/js/components/memory-dashboard.js"></script>
+    <script src="/js/components/user-management.js"></script>
+    <script src="/js/components/team-management.js"></script>
+    <script src="/js/components/api-key-management.js"></script>
     <script src="/js/components/hotreload-manager.js"></script>
-    <script src="/js/components/clock-skew.js"></script>
+    <script src="/js/components/system-settings.js"></script>
 
     <script>
         // Tab switching

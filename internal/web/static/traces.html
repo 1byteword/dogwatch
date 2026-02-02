@@ -619,9 +619,9 @@
                 return;
             }
 
-            list.innerHTML = traces.map(t => `
+            list.innerHTML = traces.map((t, index) => `
                 <div class="trace-item ${t.trace_id === selectedTraceId ? 'selected' : ''}"
-                     onclick="selectTrace('${escapeHtml(t.trace_id)}')">
+                     data-trace-index="${index}">
                     <div class="trace-item-header">
                         <span class="trace-item-service">
                             <span class="trace-item-status ${t.has_error ? 'error' : 'ok'}"></span>
@@ -636,15 +636,26 @@
                     </div>
                 </div>
             `).join('');
+
+            // Add click handlers safely (avoid inline onclick XSS)
+            list.querySelectorAll('.trace-item').forEach((item, index) => {
+                item.addEventListener('click', () => {
+                    const trace = traces[index];
+                    if (trace && trace.trace_id) {
+                        selectTrace(trace.trace_id);
+                    }
+                });
+            });
         }
 
         // Select a trace
         async function selectTrace(traceId) {
             selectedTraceId = traceId;
 
-            // Update selection UI
-            document.querySelectorAll('.trace-item').forEach(el => {
-                el.classList.toggle('selected', el.onclick.toString().includes(traceId));
+            // Update selection UI using data attributes (safe approach)
+            document.querySelectorAll('.trace-item').forEach((el, index) => {
+                const trace = traces[index];
+                el.classList.toggle('selected', trace && trace.trace_id === traceId);
             });
 
             document.getElementById('selected-trace-id').textContent = traceId;

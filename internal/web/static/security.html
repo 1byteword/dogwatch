@@ -850,16 +850,19 @@
             // Update categories
             const categories = document.getElementById('threat-categories');
             if (stats.top_rules && stats.top_rules.length > 0) {
-                const maxCount = Math.max(...stats.top_rules.map(r => r.count));
-                categories.innerHTML = stats.top_rules.slice(0, 5).map(rule => `
+                const maxCount = Math.max(...stats.top_rules.map(r => parseInt(r.count) || 0));
+                categories.innerHTML = stats.top_rules.slice(0, 5).map(rule => {
+                    const count = parseInt(rule.count) || 0;
+                    const widthPct = maxCount > 0 ? Math.min(100, (count / maxCount) * 100) : 0;
+                    return `
                     <div class="category-item">
                         <span class="category-name">${escapeHtml(rule.rule_name)}</span>
                         <div class="category-bar">
-                            <div class="category-bar-fill high" style="width: ${(rule.count / maxCount) * 100}%"></div>
+                            <div class="category-bar-fill high" style="width: ${widthPct}%"></div>
                         </div>
-                        <span class="category-count">${rule.count}</span>
+                        <span class="category-count">${count}</span>
                     </div>
-                `).join('');
+                `;}).join('');
             } else {
                 categories.innerHTML = '<div class="empty-state">No threat data available</div>';
             }
@@ -914,10 +917,10 @@
 
             container.innerHTML = alerts.map(alert => `
                 <div class="alert-item">
-                    <div class="alert-icon ${escapeHtml(alert.severity)}">&#128680;</div>
+                    <div class="alert-icon ${sanitizeClass(alert.severity)}">&#128680;</div>
                     <div class="alert-content">
                         <div class="alert-title">
-                            <span class="severity-badge ${escapeHtml(alert.severity)}">${escapeHtml(alert.severity)}</span>
+                            <span class="severity-badge ${sanitizeClass(alert.severity)}">${escapeHtml(alert.severity)}</span>
                             ${escapeHtml(alert.title)}
                         </div>
                         <div class="alert-meta">
@@ -928,9 +931,9 @@
                     </div>
                     <div class="alert-actions">
                         ${alert.state === 'open' ? `
-                            <button class="btn" onclick="acknowledgeAlert('${escapeHtml(alert.id)}')">Ack</button>
+                            <button class="btn" data-alert-id="${escapeAttr(alert.id)}" onclick="acknowledgeAlert(this.dataset.alertId)">Ack</button>
                         ` : ''}
-                        <button class="btn" onclick="showAlertDetail('${escapeHtml(alert.id)}')">View</button>
+                        <button class="btn" data-alert-id="${escapeAttr(alert.id)}" onclick="showAlertDetail(this.dataset.alertId)">View</button>
                     </div>
                 </div>
             `).join('');
@@ -972,7 +975,7 @@
                     <span class="event-time">${formatTime(event.timestamp)}</span>
                     <span class="event-type">${escapeHtml(event.type)}</span>
                     <span class="event-desc">${escapeHtml(event.comm || event.file_path || event.src_ip || 'Unknown')}</span>
-                    <span class="severity-badge ${escapeHtml(event.severity || 'info')}">${escapeHtml(event.severity || 'info')}</span>
+                    <span class="severity-badge ${sanitizeClass(event.severity || 'info')}">${escapeHtml(event.severity || 'info')}</span>
                 </div>
             `).join('');
         }
@@ -1002,18 +1005,18 @@
             tbody.innerHTML = rules.map(rule => `
                 <tr>
                     <td>
-                        <div class="rule-toggle ${rule.enabled ? 'enabled' : ''}" onclick="toggleRule('${escapeHtml(rule.id)}', ${!rule.enabled})"></div>
+                        <div class="rule-toggle ${rule.enabled ? 'enabled' : ''}" data-rule-id="${escapeAttr(rule.id)}" data-enabled="${!rule.enabled}" onclick="toggleRule(this.dataset.ruleId, this.dataset.enabled === 'true')"></div>
                     </td>
                     <td>
                         <strong>${escapeHtml(rule.name)}</strong>
                         <div style="font-size: 0.75rem; color: var(--text-muted);">${escapeHtml(rule.description || '')}</div>
                     </td>
                     <td>${escapeHtml(rule.type)}</td>
-                    <td><span class="severity-badge ${escapeHtml(rule.severity)}">${escapeHtml(rule.severity)}</span></td>
+                    <td><span class="severity-badge ${sanitizeClass(rule.severity)}">${escapeHtml(rule.severity)}</span></td>
                     <td>${escapeHtml(rule.mitre_tactic || '-')}</td>
                     <td>
-                        <button class="btn" onclick="editRule('${escapeHtml(rule.id)}')">Edit</button>
-                        <button class="btn" onclick="deleteRule('${escapeHtml(rule.id)}')">Delete</button>
+                        <button class="btn" data-rule-id="${escapeAttr(rule.id)}" onclick="editRule(this.dataset.ruleId)">Edit</button>
+                        <button class="btn" data-rule-id="${escapeAttr(rule.id)}" onclick="deleteRule(this.dataset.ruleId)">Delete</button>
                     </td>
                 </tr>
             `).join('');
@@ -1089,7 +1092,7 @@
         // Actions
         async function acknowledgeAlert(id) {
             try {
-                const resp = await fetch(`/api/security/alerts/${id}/acknowledge`, {
+                const resp = await fetch(`/api/security/alerts/${encodeURIComponent(id)}/acknowledge`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ user_id: 'admin' })
@@ -1108,7 +1111,7 @@
                 const rule = rules.find(r => r.id === id);
                 if (!rule) return;
 
-                const resp = await fetch(`/api/security/rules/${id}`, {
+                const resp = await fetch(`/api/security/rules/${encodeURIComponent(id)}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ ...rule, enabled })
@@ -1125,7 +1128,7 @@
             if (!confirm('Are you sure you want to delete this rule?')) return;
 
             try {
-                const resp = await fetch(`/api/security/rules/${id}`, { method: 'DELETE' });
+                const resp = await fetch(`/api/security/rules/${encodeURIComponent(id)}`, { method: 'DELETE' });
                 if (resp.ok) {
                     loadRules();
                 }
@@ -1142,6 +1145,11 @@
             const modal = document.createElement('div');
             modal.className = 'modal-overlay';
             modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+
+            // Sanitize severity for use as CSS class
+            const severityClass = escapeHtml(alert.severity || '').replace(/[^a-z]/gi, '');
+            const alertId = escapeHtml(alert.id || '');
+
             modal.innerHTML = `
                 <div class="modal">
                     <div class="modal-header">
@@ -1155,11 +1163,11 @@
                         </div>
                         <div class="form-group">
                             <label class="form-label">Severity</label>
-                            <span class="severity-badge ${alert.severity}">${alert.severity}</span>
+                            <span class="severity-badge ${severityClass}">${escapeHtml(alert.severity)}</span>
                         </div>
                         <div class="form-group">
                             <label class="form-label">Status</label>
-                            <div>${alert.state}</div>
+                            <div>${escapeHtml(alert.state)}</div>
                         </div>
                         <div class="form-group">
                             <label class="form-label">Rule</label>
@@ -1188,7 +1196,7 @@
                     </div>
                     <div class="modal-footer">
                         ${alert.state === 'open' ? `
-                            <button class="btn btn-primary" onclick="acknowledgeAlert('${alert.id}'); this.closest('.modal-overlay').remove();">Acknowledge</button>
+                            <button class="btn btn-primary" data-alert-id="${alertId}" onclick="acknowledgeAlert(this.dataset.alertId); this.closest('.modal-overlay').remove();">Acknowledge</button>
                         ` : ''}
                         <button class="btn" onclick="this.closest('.modal-overlay').remove()">Close</button>
                     </div>
@@ -1325,7 +1333,7 @@
             };
 
             try {
-                const resp = await fetch(`/api/security/rules/${id}`, {
+                const resp = await fetch(`/api/security/rules/${encodeURIComponent(id)}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(rule)
@@ -1364,6 +1372,19 @@
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        function escapeAttr(text) {
+            if (!text) return '';
+            return String(text).replace(/[&"'<>]/g, c => ({
+                '&': '&amp;', '"': '&quot;', "'": '&#39;', '<': '&lt;', '>': '&gt;'
+            }[c]));
+        }
+
+        // Sanitize value for use as CSS class (only letters)
+        function sanitizeClass(text) {
+            if (!text) return '';
+            return String(text).replace(/[^a-z]/gi, '');
         }
     </script>
 </body>

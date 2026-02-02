@@ -7,19 +7,40 @@ class AnomalyOverlay extends HTMLElement {
         super();
         this.data = null;
         this.chart = null;
+        this.anomalies = [];
+        this.resizeObserver = null;
     }
 
     connectedCallback() {
         this.render();
         this.loadData();
+
+        // Handle resize
+        this.resizeObserver = new ResizeObserver(() => {
+            if (this.chart) {
+                this.chart.resize();
+            }
+        });
+        this.resizeObserver.observe(this);
     }
 
     disconnectedCallback() {
         if (this.chart) this.chart.destroy();
+        if (this.resizeObserver) this.resizeObserver.disconnect();
     }
 
     static get observedAttributes() {
         return ['metric', 'service', 'time-range', 'sensitivity'];
+    }
+
+    attributeChangedCallback(name, oldValue, newValue) {
+        if (oldValue !== newValue && this.isConnected) {
+            if (name === 'sensitivity') {
+                this.detectAnomalies();
+            } else {
+                this.loadData();
+            }
+        }
     }
 
     get metric() { return this.getAttribute('metric') || 'latency'; }
@@ -131,6 +152,17 @@ class AnomalyOverlay extends HTMLElement {
                     font-weight: 600;
                     color: var(--text-muted, #71767b);
                 }
+                .anomaly-chart canvas {
+                    width: 100% !important;
+                    height: 100% !important;
+                }
+                .anomaly-empty {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    height: 100%;
+                    color: var(--text-muted, #71767b);
+                }
             </style>
             <div class="anomaly-container">
                 <div class="anomaly-header">
@@ -235,10 +267,15 @@ class AnomalyOverlay extends HTMLElement {
 
     async renderChart() {
         const canvas = this.querySelector('#chart');
-        if (!canvas || !this.data) return;
+        if (!canvas || !this.data?.data) return;
 
-        if (!window.Chart && window.LibLoader) {
-            await window.LibLoader.loadAll(['chart', 'chart-date']);
+        if (!window.Chart) {
+            if (window.LibLoader) {
+                await window.LibLoader.loadAll(['chart', 'chart-date']);
+            } else {
+                console.error('Chart.js not available');
+                return;
+            }
         }
 
         if (this.chart) this.chart.destroy();

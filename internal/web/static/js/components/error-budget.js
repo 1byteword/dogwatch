@@ -7,19 +7,35 @@ class ErrorBudget extends HTMLElement {
         super();
         this.data = null;
         this.chart = null;
+        this.resizeObserver = null;
     }
 
     connectedCallback() {
         this.render();
         this.loadData();
+
+        // Handle resize
+        this.resizeObserver = new ResizeObserver(() => {
+            if (this.chart) {
+                this.chart.resize();
+            }
+        });
+        this.resizeObserver.observe(this);
     }
 
     disconnectedCallback() {
         if (this.chart) this.chart.destroy();
+        if (this.resizeObserver) this.resizeObserver.disconnect();
     }
 
     static get observedAttributes() {
         return ['slo-id', 'window'];
+    }
+
+    attributeChangedCallback(name, oldValue, newValue) {
+        if (oldValue !== newValue && this.isConnected) {
+            this.loadData();
+        }
     }
 
     get sloId() { return this.getAttribute('slo-id') || ''; }
@@ -97,8 +113,15 @@ class ErrorBudget extends HTMLElement {
                     min-height: 150px;
                 }
                 .budget-chart canvas {
-                    width: 100%;
+                    width: 100% !important;
+                    height: 100% !important;
+                }
+                .budget-empty {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
                     height: 100%;
+                    color: var(--text-muted, #71767b);
                 }
                 .budget-footer {
                     display: flex;
@@ -253,10 +276,15 @@ class ErrorBudget extends HTMLElement {
 
     async renderChart(burndown) {
         const canvas = this.querySelector('#chart');
-        if (!canvas) return;
+        if (!canvas || !burndown || burndown.length === 0) return;
 
-        if (!window.Chart && window.LibLoader) {
-            await window.LibLoader.loadAll(['chart', 'chart-date']);
+        if (!window.Chart) {
+            if (window.LibLoader) {
+                await window.LibLoader.loadAll(['chart', 'chart-date']);
+            } else {
+                console.error('Chart.js not available');
+                return;
+            }
         }
 
         if (this.chart) this.chart.destroy();

@@ -27,9 +27,12 @@ class LogViewer extends HTMLElement {
         this._unsubscribe = null;
         this.maxLogs = 100;
         this.autoScroll = true;
+        this._mounted = false;
+        this._boundEventListeners = [];
     }
 
     connectedCallback() {
+        this._mounted = true;
         this.maxLogs = parseInt(this.getAttribute('limit')) || 100;
         this.filters.service = this.getAttribute('service') || '';
         this.filters.level = this.getAttribute('level') || '';
@@ -39,10 +42,16 @@ class LogViewer extends HTMLElement {
     }
 
     disconnectedCallback() {
+        this._mounted = false;
         if (this._unsubscribe) {
             this._unsubscribe();
             this._unsubscribe = null;
         }
+        // Clean up event listeners
+        this._boundEventListeners.forEach(({ element, event, handler }) => {
+            if (element) element.removeEventListener(event, handler);
+        });
+        this._boundEventListeners = [];
     }
 
     attributeChangedCallback(name, oldValue, newValue) {
@@ -194,37 +203,50 @@ class LogViewer extends HTMLElement {
         const levelFilter = this.shadowRoot.getElementById('level-filter');
         const serviceFilter = this.shadowRoot.getElementById('service-filter');
         const autoScrollToggle = this.shadowRoot.getElementById('auto-scroll-toggle');
+        const container = this.shadowRoot.getElementById('log-container');
 
-        search.addEventListener('input', (e) => {
+        // Helper to track event listeners for cleanup
+        const addListener = (element, event, handler) => {
+            if (element) {
+                element.addEventListener(event, handler);
+                this._boundEventListeners.push({ element, event, handler });
+            }
+        };
+
+        const searchHandler = (e) => {
             this.filters.search = e.target.value;
             this.renderLogs();
-        });
+        };
+        addListener(search, 'input', searchHandler);
 
-        levelFilter.addEventListener('change', (e) => {
+        const levelHandler = (e) => {
             this.filters.level = e.target.value;
             this.renderFilterPills();
             this.renderLogs();
-        });
+        };
+        addListener(levelFilter, 'change', levelHandler);
 
-        serviceFilter.addEventListener('change', (e) => {
+        const serviceHandler = (e) => {
             this.filters.service = e.target.value;
             this.renderFilterPills();
             this.renderLogs();
-        });
+        };
+        addListener(serviceFilter, 'change', serviceHandler);
 
-        autoScrollToggle.addEventListener('click', () => {
+        const autoScrollHandler = () => {
             this.autoScroll = !this.autoScroll;
             autoScrollToggle.textContent = `Auto-scroll: ${this.autoScroll ? 'ON' : 'OFF'}`;
-        });
+        };
+        addListener(autoScrollToggle, 'click', autoScrollHandler);
 
-        const container = this.shadowRoot.getElementById('log-container');
-        container.addEventListener('scroll', () => {
+        const scrollHandler = () => {
             const isAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 50;
             if (!isAtBottom) {
                 this.autoScroll = false;
                 autoScrollToggle.textContent = 'Auto-scroll: OFF';
             }
-        });
+        };
+        addListener(container, 'scroll', scrollHandler);
     }
 
     setupWebSocket() {
@@ -246,7 +268,8 @@ class LogViewer extends HTMLElement {
             const response = await fetch(`/api/logs?${params}`);
             if (response.ok) {
                 const data = await response.json();
-                this.logs = data.entries || [];
+                // Handle multiple response formats from API
+                this.logs = data.entries || data.data || data.logs || (Array.isArray(data) ? data : []);
                 this.updateServiceFilter();
                 this.renderLogs();
             } else {

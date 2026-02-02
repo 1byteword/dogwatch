@@ -926,9 +926,9 @@
             const container = document.getElementById('pipeline-container');
             container.innerHTML = state.pipeline.map((step, index) => {
                 const fields = state.fields[state.source] || [];
-                const fieldOptions = fields.map(f => `<option value="${f.name}">${f.name}</option>`).join('');
+                const fieldOptions = fields.map(f => `<option value="${escapeHtml(f.name)}">${escapeHtml(f.name)}</option>`).join('');
                 const typeOptions = state.pipeTypes.map(t =>
-                    `<option value="${t.value}" ${step.type === t.value ? 'selected' : ''}>${t.label}</option>`
+                    `<option value="${escapeHtml(t.value)}" ${step.type === t.value ? 'selected' : ''}>${escapeHtml(t.label)}</option>`
                 ).join('');
 
                 let configHTML = '';
@@ -1418,7 +1418,7 @@
                 }
             };
 
-            // Keyboard shortcut
+            // Keyboard shortcut for sidebar
             document.addEventListener('keydown', (e) => {
                 if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
                     e.preventDefault();
@@ -1426,6 +1426,90 @@
                 }
             });
         })();
+
+        // Query keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            // Cmd/Ctrl + Enter to run query
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                e.preventDefault();
+                runQuery();
+            }
+            // Cmd/Ctrl + S to save query
+            if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+                e.preventDefault();
+                saveQuery();
+            }
+        });
+
+        // Query history management
+        const queryHistory = {
+            maxEntries: 20,
+            storageKey: 'dogwatch_query_history',
+
+            get() {
+                try {
+                    return JSON.parse(localStorage.getItem(this.storageKey) || '[]');
+                } catch {
+                    return [];
+                }
+            },
+
+            add(query) {
+                const history = this.get();
+                // Remove duplicates
+                const filtered = history.filter(h => h.query !== query);
+                // Add to front
+                filtered.unshift({
+                    query,
+                    timestamp: Date.now(),
+                    source: state.source,
+                    timeRange: state.timeRange
+                });
+                // Limit entries
+                const limited = filtered.slice(0, this.maxEntries);
+                localStorage.setItem(this.storageKey, JSON.stringify(limited));
+            },
+
+            show() {
+                const history = this.get();
+                if (history.length === 0) {
+                    alert('No query history found');
+                    return;
+                }
+
+                const listItems = history.map((h, i) =>
+                    `${i + 1}. [${h.source}] ${h.query.substring(0, 50)}${h.query.length > 50 ? '...' : ''}`
+                ).join('\n');
+
+                const selected = prompt(`Query History:\n\n${listItems}\n\nEnter number to load:`);
+                if (selected) {
+                    const idx = parseInt(selected) - 1;
+                    if (idx >= 0 && idx < history.length) {
+                        const h = history[idx];
+                        // Parse and restore the query
+                        state.source = h.source || 'metrics';
+                        state.timeRange = h.timeRange || '15m';
+                        selectSource(state.source);
+                        setTimeRange(state.timeRange);
+                        // Update preview with the saved query
+                        document.getElementById('query-preview').textContent = h.query;
+                    }
+                }
+            }
+        };
+
+        // Wrap runQuery to add to history
+        const originalRunQuery = runQuery;
+        runQuery = async function() {
+            const query = buildQueryString();
+            queryHistory.add(query);
+            return originalRunQuery();
+        };
+
+        // Add history button handler
+        document.querySelector('.btn[onclick="loadSavedQueries()"]')?.insertAdjacentHTML('beforebegin',
+            '<button class="btn" onclick="queryHistory.show()">&#128337; History</button>'
+        );
     </script>
         </main>
     </div>

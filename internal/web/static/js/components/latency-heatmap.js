@@ -155,12 +155,14 @@ class LatencyHeatmap extends HTMLElement {
                     border-radius: 2px;
                     background: linear-gradient(to right, #1a1f2e, #1d4ed8, #7c3aed, #ec4899, #f43f5e);
                 }
-                .heatmap-loading {
+                .heatmap-loading, .heatmap-empty {
                     display: flex;
                     align-items: center;
                     justify-content: center;
                     height: 100%;
                     color: var(--text-muted, #71767b);
+                    flex-direction: column;
+                    gap: 0.5rem;
                 }
                 .heatmap-percentiles {
                     display: flex;
@@ -321,18 +323,25 @@ class LatencyHeatmap extends HTMLElement {
         if (!wrapper) return;
 
         const rect = wrapper.getBoundingClientRect();
-        const width = rect.width - 16; // padding
-        const height = rect.height - 32; // padding
+        const width = Math.max(rect.width - 16, 100); // padding
+        const height = Math.max(rect.height - 32, 100); // padding
 
-        // Set canvas size
+        // Set canvas size - reset context transforms first
         this.canvas.width = width * window.devicePixelRatio;
         this.canvas.height = height * window.devicePixelRatio;
         this.canvas.style.width = width + 'px';
         this.canvas.style.height = height + 'px';
+        this.ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform
         this.ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
 
         const { matrix, buckets, timeSlots } = this.data;
-        if (!matrix || !matrix.length) return;
+        if (!matrix || !matrix.length || !buckets || !buckets.length) {
+            const body = this.querySelector('.heatmap-body');
+            if (body) {
+                body.innerHTML = '<div class="heatmap-empty">No heatmap data available</div>';
+            }
+            return;
+        }
 
         const numRows = buckets.length;
         const numCols = matrix.length;

@@ -316,11 +316,29 @@ class NetworkTopology extends HTMLElement {
         // Ensure D3 is loaded
         if (!window.d3) {
             if (window.LibLoader) {
-                await window.LibLoader.load('d3');
+                try {
+                    await window.LibLoader.load('d3');
+                } catch (e) {
+                    console.error('Failed to load D3:', e);
+                    const body = this.querySelector('#body');
+                    if (body) {
+                        body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted)">Failed to load visualization library</div>';
+                    }
+                    return;
+                }
             } else {
                 console.error('D3 not available');
                 return;
             }
+        }
+
+        const { nodes, links } = this.data;
+        if (!nodes || nodes.length === 0) {
+            const body = this.querySelector('#body');
+            if (body) {
+                body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted)">No network topology data available</div>';
+            }
+            return;
         }
 
         const body = this.querySelector('#body');

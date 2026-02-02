@@ -8,11 +8,23 @@ class CostDashboard extends HTMLElement {
         this.estimate = null;
         this.recommendations = [];
         this.loading = true;
+        this._mounted = false;
+        this._boundEventListeners = [];
     }
 
     connectedCallback() {
+        this._mounted = true;
         this.render();
         this.loadData();
+    }
+
+    disconnectedCallback() {
+        this._mounted = false;
+        // Clean up event listeners
+        this._boundEventListeners.forEach(({ element, event, handler }) => {
+            if (element) element.removeEventListener(event, handler);
+        });
+        this._boundEventListeners = [];
     }
 
     async loadData() {
@@ -49,7 +61,11 @@ class CostDashboard extends HTMLElement {
         // Set up click handler for refresh button (safer than inline onclick with getRootNode)
         const refreshBtn = this.querySelector('#cost-refresh-btn');
         if (refreshBtn) {
-            refreshBtn.addEventListener('click', () => this.loadData());
+            const handler = () => {
+                if (this._mounted) this.loadData();
+            };
+            refreshBtn.addEventListener('click', handler);
+            this._boundEventListeners.push({ element: refreshBtn, event: 'click', handler });
         }
     }
 

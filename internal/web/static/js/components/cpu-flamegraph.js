@@ -341,7 +341,17 @@ class CpuFlamegraph extends HTMLElement {
         // Ensure d3 and flamegraph are loaded
         if (!window.d3 || !window.flamegraph) {
             if (window.LibLoader) {
-                await window.LibLoader.loadAll(['d3', 'flamegraph', 'flamegraph-css']);
+                try {
+                    await window.LibLoader.loadAll(['d3', 'flamegraph', 'flamegraph-css']);
+                } catch (e) {
+                    console.error('Failed to load flamegraph libraries:', e);
+                    chartEl.innerHTML = `
+                        <div class="flamegraph-empty">
+                            <span>Failed to load visualization libraries</span>
+                        </div>
+                    `;
+                    return;
+                }
             } else {
                 chartEl.innerHTML = `
                     <div class="flamegraph-empty">

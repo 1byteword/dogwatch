@@ -6,15 +6,36 @@ class SankeyDiagram extends HTMLElement {
     constructor() {
         super();
         this.data = null;
+        this.resizeObserver = null;
     }
 
     connectedCallback() {
         this.render();
         this.loadData();
+
+        // Handle resize
+        this.resizeObserver = new ResizeObserver(() => {
+            if (this.data) {
+                this.renderSankey();
+            }
+        });
+        this.resizeObserver.observe(this);
+    }
+
+    disconnectedCallback() {
+        if (this.resizeObserver) {
+            this.resizeObserver.disconnect();
+        }
     }
 
     static get observedAttributes() {
         return ['time-range'];
+    }
+
+    attributeChangedCallback(name, oldValue, newValue) {
+        if (oldValue !== newValue && this.isConnected) {
+            this.loadData();
+        }
     }
 
     get timeRange() { return this.getAttribute('time-range') || '1h'; }
@@ -93,6 +114,15 @@ class SankeyDiagram extends HTMLElement {
                 }
                 .sankey-stat-label {
                     color: var(--text-muted, #71767b);
+                }
+                .sankey-empty {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    height: 100%;
+                    color: var(--text-muted, #71767b);
+                    flex-direction: column;
+                    gap: 0.5rem;
                 }
             </style>
             <div class="sankey-container">
@@ -178,12 +208,19 @@ class SankeyDiagram extends HTMLElement {
         const tooltip = this.querySelector('#tooltip');
         if (!svg || !this.data) return;
 
+        const { nodes, links } = this.data;
+        if (!nodes || nodes.length === 0) {
+            const body = this.querySelector('.sankey-body');
+            if (body) {
+                body.innerHTML = '<div class="sankey-empty"><span>No flow data available</span></div>';
+            }
+            return;
+        }
+
         const rect = svg.getBoundingClientRect();
         const width = rect.width || 600;
         const height = rect.height || 300;
         const padding = { top: 20, right: 100, bottom: 20, left: 100 };
-
-        const { nodes, links } = this.data;
 
         // Create node map
         const nodeMap = new Map(nodes.map((n, i) => [n.id, { ...n, index: i }]));

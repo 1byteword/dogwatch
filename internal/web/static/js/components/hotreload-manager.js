@@ -10,18 +10,30 @@ class HotreloadManager extends HTMLElement {
         this.selectedProbe = null;
         this.stats = null;
         this.refreshInterval = null;
+        this._mounted = false;
+        this._boundEventListeners = [];
     }
 
     connectedCallback() {
+        this._mounted = true;
         this.render();
         this.loadData();
-        this.refreshInterval = setInterval(() => this.loadHealth(), 10000);
+        this.refreshInterval = setInterval(() => {
+            if (this._mounted) this.loadHealth();
+        }, 10000);
     }
 
     disconnectedCallback() {
+        this._mounted = false;
         if (this.refreshInterval) {
             clearInterval(this.refreshInterval);
+            this.refreshInterval = null;
         }
+        // Clean up event listeners
+        this._boundEventListeners.forEach(({ element, event, handler }) => {
+            if (element) element.removeEventListener(event, handler);
+        });
+        this._boundEventListeners = [];
     }
 
     render() {
@@ -436,19 +448,28 @@ class HotreloadManager extends HTMLElement {
     }
 
     setupEventListeners() {
+        // Helper to track event listeners for cleanup
+        const addListener = (selector, event, handler) => {
+            const element = this.querySelector(selector);
+            if (element) {
+                element.addEventListener(event, handler);
+                this._boundEventListeners.push({ element, event, handler });
+            }
+        };
+
         // Refresh
-        this.querySelector('#btn-refresh')?.addEventListener('click', () => this.loadData());
+        addListener('#btn-refresh', 'click', () => this.loadData());
 
         // Config modal
-        this.querySelector('#btn-close-modal')?.addEventListener('click', () => {
+        addListener('#btn-close-modal', 'click', () => {
             this.querySelector('#config-modal').style.display = 'none';
         });
 
-        this.querySelector('#btn-cancel-config')?.addEventListener('click', () => {
+        addListener('#btn-cancel-config', 'click', () => {
             this.querySelector('#config-modal').style.display = 'none';
         });
 
-        this.querySelector('#btn-save-config')?.addEventListener('click', () => this.saveConfig());
+        addListener('#btn-save-config', 'click', () => this.saveConfig());
     }
 
     async loadData() {

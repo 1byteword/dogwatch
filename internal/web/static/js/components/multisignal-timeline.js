@@ -17,15 +17,29 @@ class MultisignalTimeline extends HTMLElement {
         this.correlations = [];
         this.isDragging = false;
         this.dragStart = null;
+        this._mounted = false;
+        this._boundEventListeners = [];
+        this._documentListeners = [];
     }
 
     connectedCallback() {
+        this._mounted = true;
         this.render();
         this.loadData();
     }
 
     disconnectedCallback() {
-        // Cleanup
+        this._mounted = false;
+        // Clean up element event listeners
+        this._boundEventListeners.forEach(({ element, event, handler }) => {
+            if (element) element.removeEventListener(event, handler);
+        });
+        this._boundEventListeners = [];
+        // Clean up document-level event listeners (critical!)
+        this._documentListeners.forEach(({ event, handler }) => {
+            document.removeEventListener(event, handler);
+        });
+        this._documentListeners = [];
     }
 
     static get observedAttributes() {
@@ -462,26 +476,35 @@ class MultisignalTimeline extends HTMLElement {
     }
 
     setupEventListeners() {
+        // Helper to track event listeners for cleanup
+        const addListener = (selector, event, handler) => {
+            const element = this.querySelector(selector);
+            if (element) {
+                element.addEventListener(event, handler);
+                this._boundEventListeners.push({ element, event, handler });
+            }
+        };
+
         // Refresh button
-        this.querySelector('#btn-refresh')?.addEventListener('click', () => this.loadData());
+        addListener('#btn-refresh', 'click', () => this.loadData());
 
         // Auto-correlate button
-        this.querySelector('#btn-autocorrelate')?.addEventListener('click', () => this.autoCorrelate());
+        addListener('#btn-autocorrelate', 'click', () => this.autoCorrelate());
 
         // Time range
-        this.querySelector('#time-range')?.addEventListener('change', (e) => {
+        addListener('#time-range', 'change', (e) => {
             this.setAttribute('time-range', e.target.value);
         });
 
         // Service filter
-        this.querySelector('#service-filter')?.addEventListener('change', (e) => {
+        addListener('#service-filter', 'change', (e) => {
             this.filters.service = e.target.value;
             this.renderTimeline();
         });
 
         // Signal type filters
         this.querySelectorAll('.signal-filter input').forEach(cb => {
-            cb.addEventListener('change', (e) => {
+            const handler = (e) => {
                 const type = e.target.dataset.type;
                 if (e.target.checked) {
                     if (!this.filters.signalTypes.includes(type)) {
@@ -491,11 +514,13 @@ class MultisignalTimeline extends HTMLElement {
                     this.filters.signalTypes = this.filters.signalTypes.filter(t => t !== type);
                 }
                 this.renderTimeline();
-            });
+            };
+            cb.addEventListener('change', handler);
+            this._boundEventListeners.push({ element: cb, event: 'change', handler });
         });
 
         // Severity filter
-        this.querySelector('#severity-filter')?.addEventListener('change', (e) => {
+        addListener('#severity-filter', 'change', (e) => {
             this.filters.severity = e.target.value;
             this.renderTimeline();
         });
@@ -525,28 +550,41 @@ class MultisignalTimeline extends HTMLElement {
             }
         };
 
-        startHandle?.addEventListener('mousedown', () => {
-            this.isDragging = true;
-            this.dragStart = 'start';
-        });
+        if (startHandle) {
+            const startHandler = () => {
+                this.isDragging = true;
+                this.dragStart = 'start';
+            };
+            startHandle.addEventListener('mousedown', startHandler);
+            this._boundEventListeners.push({ element: startHandle, event: 'mousedown', handler: startHandler });
+        }
 
-        endHandle?.addEventListener('mousedown', () => {
-            this.isDragging = true;
-            this.dragStart = 'end';
-        });
+        if (endHandle) {
+            const endHandler = () => {
+                this.isDragging = true;
+                this.dragStart = 'end';
+            };
+            endHandle.addEventListener('mousedown', endHandler);
+            this._boundEventListeners.push({ element: endHandle, event: 'mousedown', handler: endHandler });
+        }
 
-        document.addEventListener('mousemove', (e) => {
-            if (this.isDragging) {
+        // Document-level event listeners - must be tracked for cleanup!
+        const mouseMoveHandler = (e) => {
+            if (this.isDragging && this._mounted) {
                 onDrag(e, this.dragStart);
             }
-        });
+        };
+        document.addEventListener('mousemove', mouseMoveHandler);
+        this._documentListeners.push({ event: 'mousemove', handler: mouseMoveHandler });
 
-        document.addEventListener('mouseup', () => {
-            if (this.isDragging) {
+        const mouseUpHandler = () => {
+            if (this.isDragging && this._mounted) {
                 this.isDragging = false;
                 this.loadData();
             }
-        });
+        };
+        document.addEventListener('mouseup', mouseUpHandler);
+        this._documentListeners.push({ event: 'mouseup', handler: mouseUpHandler });
     }
 
     updateScrubberSelection() {

@@ -26,6 +26,20 @@ class StatGauge extends HTMLElement {
         return ['metric', 'title', 'unit', 'min', 'max', 'thresholds', 'show-gauge'];
     }
 
+    attributeChangedCallback(name, oldValue, newValue) {
+        if (oldValue !== newValue && this.isConnected) {
+            if (name === 'metric') {
+                this.loadData();
+            } else {
+                // Re-render for visual attribute changes
+                this.render();
+                if (this.value !== 0) {
+                    this.updateDisplay({ value: this.value, trend: 0 });
+                }
+            }
+        }
+    }
+
     get metric() { return this.getAttribute('metric') || ''; }
     get title() { return this.getAttribute('title') || 'Metric'; }
     get unit() { return this.getAttribute('unit') || ''; }
@@ -99,6 +113,10 @@ class StatGauge extends HTMLElement {
                 .stat-gauge-trend.up { color: #22c55e; }
                 .stat-gauge-trend.down { color: #f43f5e; }
                 .stat-gauge-trend.neutral { color: var(--text-muted, #71767b); }
+                .stat-gauge-loading {
+                    color: var(--text-muted, #71767b);
+                    font-size: 0.9rem;
+                }
             </style>
             <div class="stat-gauge-container">
                 <div class="stat-gauge-title">${this.title}</div>
