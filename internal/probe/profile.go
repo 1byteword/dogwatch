@@ -182,9 +182,19 @@ func (p *ProfileProbe) readStack(stackID int32) ([]uint64, error) {
 
 // GetFlameGraph returns data formatted for flame graph visualization
 func (p *ProfileProbe) GetFlameGraph() (interface{}, error) {
+	return p.GetFlameGraphWithOptions(true) // Default to resolved symbols
+}
+
+// GetFlameGraphWithOptions returns flame graph data with optional symbol resolution
+func (p *ProfileProbe) GetFlameGraphWithOptions(resolveSymbols bool) (interface{}, error) {
 	samples, err := p.GetSamples()
 	if err != nil {
 		return nil, err
+	}
+
+	var resolver *SymbolResolver
+	if resolveSymbols {
+		resolver = GetSymbolResolver()
 	}
 
 	// Build flame graph from samples
@@ -201,12 +211,26 @@ func (p *ProfileProbe) GetFlameGraph() (interface{}, error) {
 
 		// Add kernel stack frames (reversed, leaf to root)
 		for i := len(sample.KernelStack) - 1; i >= 0; i-- {
-			path = append(path, fmt.Sprintf("0x%x", sample.KernelStack[i]))
+			addr := sample.KernelStack[i]
+			var name string
+			if resolver != nil {
+				name = resolver.ResolveKernel(addr)
+			} else {
+				name = fmt.Sprintf("0x%x", addr)
+			}
+			path = append(path, name)
 		}
 
 		// Add user stack frames (reversed)
 		for i := len(sample.UserStack) - 1; i >= 0; i-- {
-			path = append(path, fmt.Sprintf("0x%x", sample.UserStack[i]))
+			addr := sample.UserStack[i]
+			var name string
+			if resolver != nil {
+				name = resolver.ResolveUser(sample.PID, addr)
+			} else {
+				name = fmt.Sprintf("0x%x", addr)
+			}
+			path = append(path, name)
 		}
 
 		// Add to flame graph

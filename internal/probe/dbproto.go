@@ -70,12 +70,16 @@ type DBProbe struct {
 	// Query tracking for latency calculation
 	queries   map[string]queryInfo // key: pid:tid
 	queriesMu sync.RWMutex
+
+	// Prepared statement tracking
+	preparedStmts *PreparedStatementCache
 }
 
 type queryInfo struct {
-	StartTime time.Time
-	Query     string
-	DBType    string
+	StartTime  time.Time
+	Query      string
+	DBType     string
+	IsPrepare  bool // True if this was a PREPARE statement
 }
 
 // NewDBProbe creates and loads the database protocol eBPF probe
@@ -86,10 +90,11 @@ func NewDBProbe() (*DBProbe, error) {
 	}
 
 	p := &DBProbe{
-		objs:       objs,
-		links:      make([]link.Link, 0, 6),
-		eventsChan: make(chan DBEvent, 200),
-		queries:    make(map[string]queryInfo),
+		objs:          objs,
+		links:         make([]link.Link, 0, 6),
+		eventsChan:    make(chan DBEvent, 200),
+		queries:       make(map[string]queryInfo),
+		preparedStmts: NewPreparedStatementCache(),
 	}
 
 	// Attach tracepoint for sys_enter_write
@@ -214,9 +219,10 @@ func (p *DBProbe) parseEvent(raw rawDBEvent) *DBEvent {
 		key := fmt.Sprintf("%d:%d", raw.PID, raw.TID)
 		p.queriesMu.Lock()
 		p.queries[key] = queryInfo{
-			StartTime: event.Timestamp,
-			Query:     event.Query,
-			DBType:    event.DBType,
+			StartTime:  event.Timestamp,
+			Query:      event.Query,
+			DBType:     event.DBType,
+			IsPrepare:  event.Operation == "PREPARE",
 		}
 		p.queriesMu.Unlock()
 	} else {
@@ -229,6 +235,14 @@ func (p *DBProbe) parseEvent(raw rawDBEvent) *DBEvent {
 		if qi, ok := p.queries[key]; ok {
 			event.Latency = event.Timestamp.Sub(qi.StartTime)
 			event.Query = qi.Query // Carry query info to response
+
+			// If this was a PREPARE statement and response is OK, cache the prepared statement
+			if qi.IsPrepare && event.Operation == "OK" && p.preparedStmts != nil {
+				payload := raw.Payload[:raw.PayloadSize]
+				if stmtID, ok := ExtractMySQLPrepareStmtID(payload); ok {
+					p.preparedStmts.StorePrepared(raw.PID, raw.TID, stmtID, qi.Query)
+				}
+			}
 			delete(p.queries, key)
 		}
 		p.queriesMu.Unlock()
@@ -333,8 +347,19 @@ func (p *DBProbe) parseMySQLQuery(event *DBEvent, payload []byte) {
 		}
 		event.Operation = "PREPARE"
 		event.Query = sanitizeQuery(string(data))
+		// Note: Statement ID comes in the response, not the request
+		// We track the PREPARE SQL temporarily and link it when we see the response
 	case 0x17: // COM_STMT_EXECUTE
 		event.Operation = "EXECUTE"
+		// Try to extract statement ID and look up the prepared SQL
+		if p.preparedStmts != nil && len(payload) >= 9 {
+			stmtID := uint32(payload[5]) | uint32(payload[6])<<8 | uint32(payload[7])<<16 | uint32(payload[8])<<24
+			stmtIDStr := fmt.Sprintf("%d", stmtID)
+			if stmt := p.preparedStmts.GetPrepared(event.PID, event.TID, stmtIDStr); stmt != nil {
+				event.Query = stmt.SQL
+				event.Table = extractTableName(event.Query)
+			}
+		}
 	case 0x02: // COM_INIT_DB
 		// Database name should be printable
 		if len(data) > 0 && !isAlphaOrUnderscore(data[0]) {
@@ -539,13 +564,28 @@ func (p *DBProbe) parsePostgresQuery(event *DBEvent, payload []byte) {
 		event.Operation = "PREPARE"
 		// Statement name (null-terminated), then query
 		if idx := bytes.IndexByte(payload[5:], 0); idx >= 0 {
+			stmtName := string(payload[5 : 5+idx])
 			queryStart := 5 + idx + 1
 			if queryStart < len(payload) && looksLikeText(payload[queryStart:]) {
 				event.Query = sanitizeQuery(strings.TrimRight(string(payload[queryStart:]), "\x00"))
+				// Store the prepared statement if we have a name
+				if p.preparedStmts != nil && stmtName != "" {
+					p.preparedStmts.StorePrepared(event.PID, event.TID, stmtName, event.Query)
+				}
 			}
 		}
 	case 'E': // Execute
 		event.Operation = "EXECUTE"
+		// Extract portal name and look up the prepared statement
+		if p.preparedStmts != nil {
+			if idx := bytes.IndexByte(payload[5:], 0); idx >= 0 {
+				portalName := string(payload[5 : 5+idx])
+				if stmt := p.preparedStmts.GetPrepared(event.PID, event.TID, portalName); stmt != nil {
+					event.Query = stmt.SQL
+					event.Table = extractTableName(event.Query)
+				}
+			}
+		}
 	case 'B': // Bind
 		event.Operation = "BIND"
 	}
@@ -818,6 +858,18 @@ func sanitizeQuery(query string) string {
 		query = query[:500] + "..."
 	}
 	return query
+}
+
+// PreparedStatementStats returns statistics about cached prepared statements
+func (p *DBProbe) PreparedStatementStats() map[string]interface{} {
+	if p.preparedStmts == nil {
+		return map[string]interface{}{
+			"enabled": false,
+		}
+	}
+	stats := p.preparedStmts.Stats()
+	stats["enabled"] = true
+	return stats
 }
 
 // Close cleans up resources
