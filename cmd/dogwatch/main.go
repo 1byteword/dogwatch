@@ -46,6 +46,7 @@ import (
 	"dogwatch/internal/otlp"
 	"dogwatch/internal/pii"
 	"dogwatch/internal/probe"
+	"dogwatch/internal/profile"
 	"dogwatch/internal/query"
 	"dogwatch/internal/quotas"
 	"dogwatch/internal/rbac"
@@ -933,6 +934,28 @@ func main() {
 		}
 		webServer.SetQueryExecutor(queryExecutor)
 		fmt.Printf("Query builder: http://localhost:%d/query-builder.html\n", *webPort)
+
+		// Set up Prometheus-compatible API (PromQL support)
+		if customMetricsStore != nil {
+			prometheusHandler := web.NewPrometheusHandler(customMetricsStore.DB())
+			prometheusHandler.RegisterRoutes(webServer.Mux())
+			fmt.Printf("Prometheus API: http://localhost:%d/api/v1/query\n", *webPort)
+		}
+
+		// Set up profile-trace linking
+		if traceStore != nil {
+			profileDbPath := filepath.Join(*dataDir, "profiles.db")
+			profileStore, err := profile.NewStore(profileDbPath)
+			if err != nil {
+				log.Printf("Warning: Could not create profile storage: %v", err)
+			} else {
+				defer profileStore.Close()
+				profileLinker := profile.NewLinker(profileStore, traceStore)
+				profileHandler := web.NewProfileHandler(profileLinker, profileStore)
+				profileHandler.RegisterRoutes(webServer.Mux())
+				fmt.Printf("Profile-trace linking: http://localhost:%d/api/profiles\n", *webPort)
+			}
+		}
 
 		// Set up script engine
 		scriptsRunner := scripts.NewRunner(queryExecutor, scripts.DefaultRegistry)

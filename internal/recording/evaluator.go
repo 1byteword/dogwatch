@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"dogwatch/internal/custommetrics"
+	"dogwatch/internal/promql"
 	"dogwatch/internal/query"
 )
 
@@ -166,9 +167,22 @@ func (e *Evaluator) executeDQL(ctx context.Context, expr string) ([]ResultValue,
 	return values, nil
 }
 
-// executePromQL executes a PromQL-style expression
+// executePromQL executes a PromQL-style expression using the full PromQL parser
 func (e *Evaluator) executePromQL(ctx context.Context, expr string) ([]ResultValue, error) {
-	// Parse common PromQL patterns and convert to DQL
+	// Try the full PromQL parser first
+	if e.metricsStore != nil {
+		store := promql.NewSQLMetricsStore(e.metricsStore.DB())
+		engine := promql.NewEngine(store)
+
+		result, err := engine.Query(ctx, expr, time.Now())
+		if err == nil {
+			return convertPromQLResult(result)
+		}
+		// Log the error but fall back to regex-based parsing
+		log.Printf("[recording] PromQL parse warning: %v, falling back to regex-based parsing", err)
+	}
+
+	// Fallback to regex-based parsing for simple patterns
 
 	// rate(metric[5m])
 	if strings.HasPrefix(expr, "rate(") {
@@ -197,6 +211,50 @@ func (e *Evaluator) executePromQL(ctx context.Context, expr string) ([]ResultVal
 
 	// Fallback: try as DQL
 	return e.executeDQL(ctx, expr)
+}
+
+// convertPromQLResult converts a PromQL query result to ResultValues
+func convertPromQLResult(result *promql.QueryResult) ([]ResultValue, error) {
+	var values []ResultValue
+
+	switch v := result.Result.(type) {
+	case promql.Scalar:
+		values = append(values, ResultValue{Value: v.Val})
+
+	case promql.Vector:
+		for _, sample := range v {
+			rv := ResultValue{
+				Value:  sample.Value,
+				Labels: make(map[string]string),
+			}
+			for k, val := range sample.Labels {
+				if k != "__name__" {
+					rv.Labels[k] = val
+				}
+			}
+			values = append(values, rv)
+		}
+
+	case promql.Matrix:
+		for _, series := range v {
+			if len(series.Samples) > 0 {
+				// Use the last sample value
+				lastSample := series.Samples[len(series.Samples)-1]
+				rv := ResultValue{
+					Value:  lastSample.Value,
+					Labels: make(map[string]string),
+				}
+				for k, val := range series.Labels {
+					if k != "__name__" {
+						rv.Labels[k] = val
+					}
+				}
+				values = append(values, rv)
+			}
+		}
+	}
+
+	return values, nil
 }
 
 // executeRate handles rate() function

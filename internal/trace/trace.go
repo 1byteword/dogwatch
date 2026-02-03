@@ -26,6 +26,9 @@ type Span struct {
 	Status       string            `json:"status"` // OK, ERROR, UNSET
 	StatusMsg    string            `json:"status_message,omitempty"`
 	Attributes   map[string]string `json:"attributes,omitempty"`
+	ProcessID    uint32            `json:"process_id,omitempty"`    // Process ID for profile correlation
+	Hostname     string            `json:"hostname,omitempty"`      // Host for correlation
+	ContainerID  string            `json:"container_id,omitempty"`  // Container ID for correlation
 }
 
 // Trace represents a complete distributed trace
@@ -86,12 +89,16 @@ func (s *Store) createTables() error {
 			status TEXT,
 			status_message TEXT,
 			attributes TEXT,
+			process_id INTEGER,
+			hostname TEXT,
+			container_id TEXT,
 			created_at TEXT DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_spans_trace_id ON spans(trace_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_spans_service ON spans(service_name)`,
 		`CREATE INDEX IF NOT EXISTS idx_spans_start_time ON spans(start_time)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_spans_span_id ON spans(trace_id, span_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_spans_process_id ON spans(process_id)`,
 
 		`CREATE TABLE IF NOT EXISTS traces (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,7 +122,27 @@ func (s *Store) createTables() error {
 			return err
 		}
 	}
+
+	// Run migrations for existing databases
+	s.runMigrations()
 	return nil
+}
+
+func (s *Store) runMigrations() {
+	// Add process_id column if it doesn't exist
+	migrations := []string{
+		`ALTER TABLE spans ADD COLUMN process_id INTEGER`,
+		`ALTER TABLE spans ADD COLUMN hostname TEXT`,
+		`ALTER TABLE spans ADD COLUMN container_id TEXT`,
+	}
+
+	for _, m := range migrations {
+		// Ignore errors - column may already exist
+		s.db.Exec(m)
+	}
+
+	// Create index if not exists (safe to run multiple times)
+	s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_spans_process_id ON spans(process_id)`)
 }
 
 // RecordSpan stores a span and updates the trace
@@ -123,13 +150,16 @@ func (s *Store) RecordSpan(span Span) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Extract process metadata from attributes if not already set
+	extractProcessMetadata(&span)
+
 	attrs, _ := json.Marshal(span.Attributes)
 
 	// Insert or replace span
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO spans
-		(trace_id, span_id, parent_span_id, name, service_name, kind, start_time, end_time, duration_ms, status, status_message, attributes)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(trace_id, span_id, parent_span_id, name, service_name, kind, start_time, end_time, duration_ms, status, status_message, attributes, process_id, hostname, container_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		span.TraceID,
 		span.SpanID,
@@ -143,6 +173,9 @@ func (s *Store) RecordSpan(span Span) error {
 		span.Status,
 		span.StatusMsg,
 		string(attrs),
+		nullableUint32(span.ProcessID),
+		nullableString(span.Hostname),
+		nullableString(span.ContainerID),
 	)
 	if err != nil {
 		return err
@@ -150,6 +183,52 @@ func (s *Store) RecordSpan(span Span) error {
 
 	// Update trace summary
 	return s.updateTraceSummary(span.TraceID)
+}
+
+// extractProcessMetadata extracts process-level metadata from span attributes
+func extractProcessMetadata(span *Span) {
+	if span.Attributes == nil {
+		return
+	}
+
+	// Extract process.pid
+	if span.ProcessID == 0 {
+		if pidStr, ok := span.Attributes["process.pid"]; ok {
+			var pid uint64
+			fmt.Sscanf(pidStr, "%d", &pid)
+			span.ProcessID = uint32(pid)
+		}
+	}
+
+	// Extract host.name
+	if span.Hostname == "" {
+		if host, ok := span.Attributes["host.name"]; ok {
+			span.Hostname = host
+		} else if host, ok := span.Attributes["hostname"]; ok {
+			span.Hostname = host
+		}
+	}
+
+	// Extract container.id
+	if span.ContainerID == "" {
+		if cid, ok := span.Attributes["container.id"]; ok {
+			span.ContainerID = cid
+		}
+	}
+}
+
+func nullableUint32(v uint32) interface{} {
+	if v == 0 {
+		return nil
+	}
+	return v
+}
+
+func nullableString(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func (s *Store) updateTraceSummary(traceID string) error {
@@ -589,4 +668,107 @@ func (s *Store) Close() error {
 // DB returns the underlying database connection for query builder
 func (s *Store) DB() *sql.DB {
 	return s.db
+}
+
+// QuerySpansByPIDAndTime returns spans for a specific process ID within a time range.
+// This is used for correlating profile samples with trace spans.
+func (s *Store) QuerySpansByPIDAndTime(pid uint32, start, end time.Time) ([]Span, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(`
+		SELECT trace_id, span_id, parent_span_id, name, service_name, kind,
+		       start_time, end_time, duration_ms, status, status_message, attributes,
+		       process_id, hostname, container_id
+		FROM spans
+		WHERE process_id = ?
+		  AND start_time >= ? AND end_time <= ?
+		ORDER BY start_time
+	`, pid, start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return s.scanSpansWithProcess(rows)
+}
+
+// QuerySpansByTimeRange returns spans overlapping a time range.
+func (s *Store) QuerySpansByTimeRange(start, end time.Time) ([]Span, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(`
+		SELECT trace_id, span_id, parent_span_id, name, service_name, kind,
+		       start_time, end_time, duration_ms, status, status_message, attributes,
+		       process_id, hostname, container_id
+		FROM spans
+		WHERE start_time <= ? AND end_time >= ?
+		ORDER BY start_time
+		LIMIT 1000
+	`, end.UTC().Format(time.RFC3339Nano), start.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return s.scanSpansWithProcess(rows)
+}
+
+// QuerySpansWithProcessID returns all spans that have a process ID set.
+func (s *Store) QuerySpansWithProcessID(start, end time.Time) ([]Span, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(`
+		SELECT trace_id, span_id, parent_span_id, name, service_name, kind,
+		       start_time, end_time, duration_ms, status, status_message, attributes,
+		       process_id, hostname, container_id
+		FROM spans
+		WHERE process_id IS NOT NULL AND process_id > 0
+		  AND start_time >= ? AND end_time <= ?
+		ORDER BY start_time
+		LIMIT 10000
+	`, start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return s.scanSpansWithProcess(rows)
+}
+
+func (s *Store) scanSpansWithProcess(rows *sql.Rows) ([]Span, error) {
+	var spans []Span
+	for rows.Next() {
+		var span Span
+		var startTime, endTime, attrs string
+		var parentSpanID, kind, status, statusMsg, hostname, containerID sql.NullString
+		var processID sql.NullInt64
+
+		if err := rows.Scan(
+			&span.TraceID, &span.SpanID, &parentSpanID, &span.Name, &span.ServiceName,
+			&kind, &startTime, &endTime, &span.DurationMs, &status, &statusMsg, &attrs,
+			&processID, &hostname, &containerID,
+		); err != nil {
+			continue
+		}
+
+		span.ParentSpanID = parentSpanID.String
+		span.Kind = kind.String
+		span.Status = status.String
+		span.StatusMsg = statusMsg.String
+		span.StartTime, _ = time.Parse(time.RFC3339Nano, startTime)
+		span.EndTime, _ = time.Parse(time.RFC3339Nano, endTime)
+		json.Unmarshal([]byte(attrs), &span.Attributes)
+
+		if processID.Valid {
+			span.ProcessID = uint32(processID.Int64)
+		}
+		span.Hostname = hostname.String
+		span.ContainerID = containerID.String
+
+		spans = append(spans, span)
+	}
+	return spans, nil
 }
