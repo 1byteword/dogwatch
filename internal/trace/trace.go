@@ -74,6 +74,7 @@ func NewStore(dbPath string) (*Store, error) {
 }
 
 func (s *Store) createTables() error {
+	// Create base tables first (without process_id index for migration compatibility)
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS spans (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,7 +99,6 @@ func (s *Store) createTables() error {
 		`CREATE INDEX IF NOT EXISTS idx_spans_service ON spans(service_name)`,
 		`CREATE INDEX IF NOT EXISTS idx_spans_start_time ON spans(start_time)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_spans_span_id ON spans(trace_id, span_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_spans_process_id ON spans(process_id)`,
 
 		`CREATE TABLE IF NOT EXISTS traces (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,8 +123,11 @@ func (s *Store) createTables() error {
 		}
 	}
 
-	// Run migrations for existing databases
+	// Run migrations for existing databases (adds process_id etc if missing)
 	s.runMigrations()
+
+	// Now create the process_id index (after migration ensures column exists)
+	s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_spans_process_id ON spans(process_id)`)
 	return nil
 }
 
