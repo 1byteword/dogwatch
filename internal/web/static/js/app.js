@@ -317,10 +317,25 @@ async function handleLogin(event) {
             const data = await resp.json();
             currentUser = data.user;
             showAuthenticatedUI();
-            // Re-initialize the dashboard
+
+            // Initialize dashboard if not already done (first login after page load)
+            if (!grid) {
+                await window.initDashboard();
+                initGrid();
+                window.grid = grid;
+                window.getWidgetContent = getWidgetContent;
+                window.saveLayout = saveLayout;
+            }
+
+            // Load dashboard content
             loadLayout();
             loadDashboards();
             setTimeout(initCharts, 100);
+            startDataRefresh();
+
+            // Show the app
+            const app = document.getElementById('app');
+            if (app) app.classList.add('loaded');
         } else {
             errorEl.textContent = 'Invalid email or password';
             errorEl.classList.add('show');

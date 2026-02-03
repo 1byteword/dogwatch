@@ -46,11 +46,12 @@ func DefaultSecurityConfig() *SecurityConfig {
 	return &SecurityConfig{
 		CSPDirectives: map[string][]string{
 			"default-src": {"'self'"},
-			"script-src":  {"'self'", "'unsafe-inline'", "'unsafe-eval'"}, // Required for Chart.js, D3, GridStack
-			"style-src":   {"'self'", "'unsafe-inline'", "https://fonts.googleapis.com"},
-			"font-src":    {"'self'", "https://fonts.gstatic.com"},
-			"img-src":     {"'self'", "data:", "blob:"},
-			"connect-src": {"'self'", "ws:", "wss:"},
+			"script-src":  {"'self'", "'unsafe-inline'", "'unsafe-eval'", "https://cdn.jsdelivr.net", "https://unpkg.com"}, // Required for Chart.js, D3, GridStack, MapLibre
+			"style-src":   {"'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://cdn.jsdelivr.net", "https://unpkg.com"},
+			"font-src":    {"'self'", "https://fonts.gstatic.com", "https://tiles.basemaps.cartocdn.com"},
+			"img-src":     {"'self'", "data:", "blob:", "https://*.openstreetmap.org", "https://*.basemaps.cartocdn.com", "https://tiles.basemaps.cartocdn.com"},
+			"connect-src": {"'self'", "ws:", "wss:", "https://*.openstreetmap.org", "https://*.basemaps.cartocdn.com", "https://tiles.basemaps.cartocdn.com", "https://basemaps.cartocdn.com"},
+			"worker-src":  {"'self'", "blob:"},
 			"frame-ancestors": {"'none'"},
 		},
 		FrameOptions:   "DENY",
@@ -68,9 +69,11 @@ func DefaultSecurityConfig() *SecurityConfig {
 			"/livez",
 			"/api/health",
 			"/api/ready",
-			"/v1/traces",      // OTLP endpoint
-			"/v1/metrics",     // OTLP metrics endpoint
-			"/api/v1/write",   // Prometheus remote write
+			"/api/auth/login",  // Login must work before user has CSRF token
+			"/api/auth/logout", // Logout should always work
+			"/v1/traces",       // OTLP endpoint
+			"/v1/metrics",      // OTLP metrics endpoint
+			"/api/v1/write",    // Prometheus remote write
 			"/api/logs/ingest", // Log ingestion
 		},
 		CSRFMethods: []string{"POST", "PUT", "DELETE", "PATCH"},
