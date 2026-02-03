@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scripts - dogwatch</title>
+    <link rel="stylesheet" href="/css/variables.css">
+    <link rel="stylesheet" href="/css/base.css">
+    <link rel="stylesheet" href="/css/components.css">
+    <link rel="stylesheet" href="/css/sidebar.css">
+    <link rel="stylesheet" href="/css/logo.css">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0f1419;
+            --bg-card: #16181c;
+            --bg-elevated: #1e2128;
+            --border: #2f3336;
+            --text: #e7e9ea;
+            --text-muted: #71767b;
+            --accent: #1d9bf0;
+            --success: #00ba7c;
+            --error: #f4212e;
+            --warning: #ffd400;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            min-height: 100vh;
+        }
+
+        .btn {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn:hover { border-color: var(--accent); }
+        .btn-primary { background: var(--accent); border-color: var(--accent); }
+        .btn-primary:hover { background: #1a8cd8; }
+        .btn-success { background: var(--success); border-color: var(--success); }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 1.5rem;
+        }
+
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .page-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .page-subtitle {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            margin-top: 0.25rem;
+        }
+
+        .scripts-layout {
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            gap: 1.5rem;
+        }
+
+        .category-list {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .category-header {
+            background: var(--bg-elevated);
+            padding: 0.75rem 1rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .category-item {
+            padding: 0.75rem 1rem;
+            cursor: pointer;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .category-item:last-child { border-bottom: none; }
+        .category-item:hover { background: var(--bg-elevated); }
+        .category-item.active {
+            background: var(--bg-elevated);
+            border-left: 3px solid var(--accent);
+        }
+
+        .category-name { font-weight: 500; }
+        .category-count {
+            background: var(--bg-elevated);
+            padding: 0.2rem 0.5rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .scripts-content {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .script-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .script-card-header {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .script-title {
+            font-weight: 600;
+            font-size: 1rem;
+        }
+
+        .script-name {
+            font-family: monospace;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            margin-top: 0.25rem;
+        }
+
+        .script-description {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            padding: 1rem;
+        }
+
+        .script-params {
+            background: var(--bg-elevated);
+            padding: 1rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .param-row {
+            display: grid;
+            grid-template-columns: 150px 1fr auto;
+            gap: 1rem;
+            align-items: center;
+            margin-bottom: 0.75rem;
+        }
+
+        .param-row:last-child { margin-bottom: 0; }
+
+        .param-label {
+            font-family: monospace;
+            font-size: 0.85rem;
+        }
+
+        .param-input {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 0.5rem 0.75rem;
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+
+        .param-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .param-desc {
+            color: var(--text-muted);
+            font-size: 0.8rem;
+        }
+
+        .script-actions {
+            padding: 1rem;
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .results-panel {
+            margin-top: 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .results-header {
+            background: var(--bg-elevated);
+            padding: 0.75rem 1rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .results-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .results-table th {
+            background: var(--bg-elevated);
+            padding: 0.75rem 1rem;
+            text-align: left;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .results-table td {
+            padding: 0.75rem 1rem;
+            font-size: 0.9rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .results-table tr:last-child td { border-bottom: none; }
+        .results-table tr:hover { background: var(--bg-elevated); }
+
+        .results-empty {
+            padding: 3rem;
+            text-align: center;
+            color: var(--text-muted);
+        }
+
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+            color: var(--text-muted);
+        }
+
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 0.5rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .badge-http { background: #1d9bf033; color: #1d9bf0; }
+        .badge-mysql { background: #00ba7c33; color: #00ba7c; }
+        .badge-postgres { background: #336791; color: #fff; }
+        .badge-redis { background: #dc382d33; color: #dc382d; }
+        .badge-k8s { background: #326ce533; color: #326ce5; }
+        .badge-security { background: #f4212e33; color: #f4212e; }
+        .badge-service { background: #ffd40033; color: #ffd400; }
+        .badge-trace { background: #9333ea33; color: #9333ea; }
+        .badge-log { background: #71767b33; color: #71767b; }
+
+        .cli-hint {
+            background: var(--bg-elevated);
+            padding: 0.75rem 1rem;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 0.85rem;
+            margin-top: 1rem;
+            border: 1px solid var(--border);
+        }
+
+        .cli-hint code {
+            color: var(--accent);
+        }
+    </style>
+</head>
+<body>
+    <div id="sidebar"></div>
+
+    <div class="main-content">
+        <div class="container">
+            <div class="page-header">
+                <div>
+                    <h1 class="page-title">Analysis Scripts</h1>
+                    <p class="page-subtitle">Pre-built queries for instant analysis</p>
+                </div>
+            </div>
+
+            <div class="scripts-layout">
+                <div class="category-list">
+                    <div class="category-header">Categories</div>
+                    <div id="categories">
+                        <div class="loading"><div class="spinner"></div>Loading...</div>
+                    </div>
+                </div>
+
+                <div class="scripts-content" id="scripts-content">
+                    <div class="loading"><div class="spinner"></div>Select a category</div>
+                </div>
+            </div>
+
+            <div id="results-container"></div>
+        </div>
+    </div>
+
+    <script src="/js/sidebar.js"></script>
+    <script>
+        let allScripts = [];
+        let categories = [];
+        let currentCategory = '';
+        let currentScript = null;
+
+        async function loadCategories() {
+            try {
+                const resp = await fetch('/api/scripts/categories');
+                const data = await resp.json();
+                categories = data.categories || [];
+                renderCategories();
+
+                // Load all scripts
+                const scriptsResp = await fetch('/api/scripts');
+                const scriptsData = await scriptsResp.json();
+                allScripts = scriptsData.scripts || [];
+
+                // Select first category
+                if (categories.length > 0) {
+                    selectCategory(categories[0].name);
+                }
+            } catch (err) {
+                console.error('Failed to load categories:', err);
+                document.getElementById('categories').innerHTML =
+                    '<div class="results-empty">Failed to load categories</div>';
+            }
+        }
+
+        function renderCategories() {
+            const container = document.getElementById('categories');
+            if (categories.length === 0) {
+                container.innerHTML = '<div class="results-empty">No categories found</div>';
+                return;
+            }
+
+            container.innerHTML = categories.map(cat => `
+                <div class="category-item ${cat.name === currentCategory ? 'active' : ''}"
+                     onclick="selectCategory('${cat.name}')">
+                    <span class="category-name">${cat.title || cat.name}</span>
+                    <span class="category-count">${cat.count}</span>
+                </div>
+            `).join('');
+        }
+
+        function selectCategory(category) {
+            currentCategory = category;
+            renderCategories();
+            renderScripts();
+        }
+
+        function renderScripts() {
+            const container = document.getElementById('scripts-content');
+            const scripts = allScripts.filter(s => s.category === currentCategory);
+
+            if (scripts.length === 0) {
+                container.innerHTML = '<div class="results-empty">No scripts in this category</div>';
+                return;
+            }
+
+            container.innerHTML = scripts.map(s => `
+                <div class="script-card" id="script-${s.name.replace('/', '-')}">
+                    <div class="script-card-header">
+                        <div>
+                            <div class="script-title">${s.title}</div>
+                            <div class="script-name">${s.name}</div>
+                        </div>
+                        <span class="badge badge-${s.category}">${s.category}</span>
+                    </div>
+                    <div class="script-description">${s.description}</div>
+                    ${renderParams(s)}
+                    <div class="script-actions">
+                        <button class="btn btn-primary" onclick="runScript('${s.name}')">
+                            Run Script
+                        </button>
+                        <button class="btn" onclick="showCLI('${s.name}')">
+                            Show CLI
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderParams(script) {
+            if (!script.parameters || script.parameters.length === 0) {
+                return '';
+            }
+
+            return `
+                <div class="script-params">
+                    <div style="font-size: 0.85rem; font-weight: 600; margin-bottom: 0.75rem;">Parameters</div>
+                    ${script.parameters.map(p => `
+                        <div class="param-row">
+                            <label class="param-label">--${p.name}</label>
+                            <input type="text" class="param-input"
+                                   id="param-${script.name.replace('/', '-')}-${p.name}"
+                                   value="${p.default || ''}"
+                                   placeholder="${p.type}">
+                            <span class="param-desc">${p.description}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        async function runScript(name) {
+            const script = allScripts.find(s => s.name === name);
+            if (!script) return;
+
+            // Collect parameters
+            const params = {};
+            if (script.parameters) {
+                script.parameters.forEach(p => {
+                    const input = document.getElementById(`param-${name.replace('/', '-')}-${p.name}`);
+                    if (input && input.value) {
+                        params[p.name] = input.value;
+                    }
+                });
+            }
+
+            // Show loading
+            const resultsContainer = document.getElementById('results-container');
+            resultsContainer.innerHTML = `
+                <div class="results-panel">
+                    <div class="results-header">
+                        <span>Results: ${script.title}</span>
+                    </div>
+                    <div class="loading"><div class="spinner"></div>Running script...</div>
+                </div>
+            `;
+
+            try {
+                const resp = await fetch(`/api/scripts/${name}/run`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(params)
+                });
+
+                if (!resp.ok) {
+                    const err = await resp.text();
+                    throw new Error(err);
+                }
+
+                const result = await resp.json();
+                renderResults(result);
+            } catch (err) {
+                resultsContainer.innerHTML = `
+                    <div class="results-panel">
+                        <div class="results-header">
+                            <span>Error</span>
+                        </div>
+                        <div class="results-empty" style="color: var(--error);">
+                            ${err.message}
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        function renderResults(result) {
+            const container = document.getElementById('results-container');
+
+            if (!result.rows || result.rows.length === 0) {
+                container.innerHTML = `
+                    <div class="results-panel">
+                        <div class="results-header">
+                            <span>Results: ${result.script.title}</span>
+                            <span style="color: var(--text-muted);">
+                                0 rows in ${result.duration}
+                            </span>
+                        </div>
+                        <div class="results-empty">No results found</div>
+                    </div>
+                `;
+                return;
+            }
+
+            // Get columns from result or script definition
+            let columns = result.columns || [];
+            if (result.script.columns && result.script.columns.length > 0) {
+                columns = result.script.columns.map(c => c.name);
+            }
+
+            container.innerHTML = `
+                <div class="results-panel">
+                    <div class="results-header">
+                        <span>Results: ${result.script.title}</span>
+                        <span style="color: var(--text-muted);">
+                            ${result.row_count} rows in ${result.duration}
+                        </span>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table class="results-table">
+                            <thead>
+                                <tr>
+                                    ${columns.map(col => `<th>${col}</th>`).join('')}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${result.rows.map(row => `
+                                    <tr>
+                                        ${columns.map(col => `<td>${formatValue(row[col], col)}</td>`).join('')}
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+
+        function formatValue(value, colName) {
+            if (value === null || value === undefined) return '';
+
+            // Format durations
+            if (typeof value === 'number' && (colName.includes('latency') || colName.includes('duration'))) {
+                if (value < 1) return value.toFixed(2) + 'ms';
+                if (value < 1000) return value.toFixed(1) + 'ms';
+                return (value / 1000).toFixed(2) + 's';
+            }
+
+            // Format percentages
+            if (typeof value === 'number' && colName.includes('rate')) {
+                return value.toFixed(2) + '%';
+            }
+
+            // Truncate long strings
+            if (typeof value === 'string' && value.length > 100) {
+                return value.substring(0, 97) + '...';
+            }
+
+            return value;
+        }
+
+        function showCLI(name) {
+            const script = allScripts.find(s => s.name === name);
+            if (!script) return;
+
+            // Build CLI command with current parameter values
+            let cmd = `dogwatch run ${name}`;
+            if (script.parameters) {
+                script.parameters.forEach(p => {
+                    const input = document.getElementById(`param-${name.replace('/', '-')}-${p.name}`);
+                    if (input && input.value && input.value != p.default) {
+                        cmd += ` --${p.name}=${input.value}`;
+                    }
+                });
+            }
+
+            const container = document.getElementById('results-container');
+            container.innerHTML = `
+                <div class="cli-hint">
+                    <div style="margin-bottom: 0.5rem; color: var(--text-muted);">CLI equivalent:</div>
+                    <code>${cmd}</code>
+                </div>
+            `;
+        }
+
+        // Initialize
+        loadCategories();
+    </script>
+</body>
+</html>

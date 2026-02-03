@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"flag"
 	"fmt"
@@ -56,12 +57,19 @@ import (
 	"dogwatch/internal/storage"
 	"dogwatch/internal/synthetics"
 	"dogwatch/internal/trace"
+	"dogwatch/internal/scripts"
 	"dogwatch/internal/usage"
 	"dogwatch/internal/watch"
 	"dogwatch/internal/web"
 )
 
 func main() {
+	// Check for subcommands before flag parsing
+	if len(os.Args) > 1 && os.Args[1] == "run" {
+		runScriptCommand(os.Args[2:])
+		return
+	}
+
 	// Parse flags
 	verbose := flag.Bool("v", false, "Verbose mode - show individual events")
 	interval := flag.Int("i", 5, "Stats refresh interval in seconds")
@@ -921,6 +929,12 @@ func main() {
 		webServer.SetQueryExecutor(queryExecutor)
 		fmt.Printf("Query builder: http://localhost:%d/query-builder.html\n", *webPort)
 
+		// Set up script engine
+		scriptsRunner := scripts.NewRunner(queryExecutor, scripts.DefaultRegistry)
+		web.SetScriptsRunner(scriptsRunner)
+		web.RegisterScriptsRoutes(webServer.Mux())
+		fmt.Printf("Scripts API: http://localhost:%d/api/scripts\n", *webPort)
+
 		// Set up recording rules (pre-computed aggregations)
 		recordingDbPath := filepath.Join(*dataDir, "recording.db")
 		recordingStore, err := recording.NewStore(recordingDbPath)
@@ -1650,5 +1664,142 @@ func spanStatusToCode(status string) int {
 		return 200
 	default:
 		return 0
+	}
+}
+
+// runScriptCommand handles the "dogwatch run" subcommand for executing scripts
+func runScriptCommand(args []string) {
+	fs := flag.NewFlagSet("run", flag.ExitOnError)
+	listAll := fs.Bool("list", false, "List all available scripts")
+	format := fs.String("format", "table", "Output format: table, json, csv")
+	dataDir := fs.String("data", "/var/lib/dogwatch", "Data directory for metrics storage")
+	timeout := fs.Duration("timeout", 30*time.Second, "Query timeout")
+	verbose := fs.Bool("v", false, "Verbose output (show script details)")
+
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: dogwatch run [options] <script> [parameters]\n\n")
+		fmt.Fprintf(os.Stderr, "Run analysis scripts against collected data.\n\n")
+		fmt.Fprintf(os.Stderr, "Examples:\n")
+		fmt.Fprintf(os.Stderr, "  dogwatch run --list              # List all scripts\n")
+		fmt.Fprintf(os.Stderr, "  dogwatch run --list mysql        # List MySQL scripts\n")
+		fmt.Fprintf(os.Stderr, "  dogwatch run mysql/slow_queries  # Run with defaults\n")
+		fmt.Fprintf(os.Stderr, "  dogwatch run mysql/slow_queries --threshold=500ms --limit=50\n")
+		fmt.Fprintf(os.Stderr, "  dogwatch run http/error_rates --format=json\n\n")
+		fmt.Fprintf(os.Stderr, "Options:\n")
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(args); err != nil {
+		os.Exit(1)
+	}
+
+	// Handle --list flag
+	if *listAll {
+		category := ""
+		if fs.NArg() > 0 {
+			category = fs.Arg(0)
+		}
+
+		if category == "" {
+			// Show categories first
+			categories := scripts.DefaultRegistry.Categories()
+			scripts.PrintCategories(os.Stdout, categories)
+			fmt.Println()
+		}
+
+		// Show scripts
+		scriptList := scripts.DefaultRegistry.List(category)
+		scripts.PrintScriptList(os.Stdout, scriptList, *verbose)
+		return
+	}
+
+	// Require script name
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "Error: script name required")
+		fmt.Fprintln(os.Stderr, "Run 'dogwatch run --list' to see available scripts")
+		os.Exit(1)
+	}
+
+	scriptName := fs.Arg(0)
+
+	// Known flag names that should not be treated as script parameters
+	knownFlags := map[string]bool{
+		"list":    true,
+		"format":  true,
+		"data":    true,
+		"timeout": true,
+		"v":       true,
+	}
+
+	// Parse script parameters from remaining args (after script name)
+	params := make(map[string]string)
+	for i := 1; i < fs.NArg(); i++ {
+		arg := fs.Arg(i)
+		if strings.HasPrefix(arg, "--") {
+			arg = arg[2:]
+			parts := strings.SplitN(arg, "=", 2)
+			if len(parts) == 2 && !knownFlags[parts[0]] {
+				params[parts[0]] = parts[1]
+			}
+		}
+	}
+
+	// Initialize minimal storage for queries
+	metricsDbPath := filepath.Join(*dataDir, "metrics.db")
+	logsDbPath := filepath.Join(*dataDir, "logs.db")
+	tracesDbPath := filepath.Join(*dataDir, "traces.db")
+
+	// Create query executor
+	queryExecutor := query.NewExecutor()
+
+	// Try to open metrics database
+	if _, err := os.Stat(metricsDbPath); err == nil {
+		customMetricsStore, err := custommetrics.NewStore(metricsDbPath)
+		if err == nil {
+			defer customMetricsStore.Close()
+			queryExecutor.SetMetricsSource(query.NewMetricsDataSource(customMetricsStore.DB()))
+		}
+	}
+
+	// Try to open logs database
+	if _, err := os.Stat(logsDbPath); err == nil {
+		logStore, err := logs.NewStore(logsDbPath)
+		if err == nil {
+			defer logStore.Close()
+			queryExecutor.SetLogsSource(query.NewLogsDataSource(logStore.DB()))
+		}
+	}
+
+	// Try to open traces database
+	if _, err := os.Stat(tracesDbPath); err == nil {
+		traceStore, err := trace.NewStore(tracesDbPath)
+		if err == nil {
+			defer traceStore.Close()
+			queryExecutor.SetTracesSource(query.NewTracesDataSource(traceStore.DB()))
+		}
+	}
+
+	// Create runner
+	runner := scripts.NewRunner(queryExecutor, scripts.DefaultRegistry)
+
+	// Run script
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+
+	result, err := runner.Run(ctx, scriptName, scripts.RunOptions{
+		Parameters: params,
+		Timeout:    *timeout,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Format output
+	outputFormat := scripts.OutputFormat(*format)
+	formatter := scripts.NewFormatter(os.Stdout, outputFormat)
+	if err := formatter.Format(result); err != nil {
+		fmt.Fprintf(os.Stderr, "Error formatting output: %v\n", err)
+		os.Exit(1)
 	}
 }
