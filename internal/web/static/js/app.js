@@ -307,7 +307,7 @@ async function handleLogin(event) {
     errorEl.classList.remove('show');
 
     try {
-        const resp = await fetch('/api/auth/login', {
+        const resp = await secureFetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email, password })
@@ -333,7 +333,7 @@ async function handleLogin(event) {
 
 async function handleLogout() {
     try {
-        await fetch('/api/auth/logout', { method: 'POST' });
+        await secureFetch('/api/auth/logout', { method: 'POST' });
     } catch (e) {}
     currentUser = null;
     currentOrg = null;
