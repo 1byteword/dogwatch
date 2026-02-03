@@ -27,11 +27,12 @@ No external dependencies. No Docker required. Just `./dogwatch` and go.
 
 ## Current Priorities (in order)
 
-1. **Full PromQL support** - 100% Prometheus query compatibility
-2. **Profile → Trace linking** - Click flamegraph hotspot → see related traces
+Core features complete. See "Do NOT Build Yet" for what's deferred.
 
 ## Recently Completed
 
+- ✅ Full PromQL support (Grafana-compatible, `/api/v1/query`, 60+ functions)
+- ✅ Profile → Trace linking (click flamegraph hotspot → see related traces)
 - ✅ Migration tools (`dogwatch migrate` CLI + Web wizard for Datadog/Grafana/Prometheus)
 - ✅ Script engine & library (`dogwatch run mysql/slow_queries`)
 - ✅ MySQL/PostgreSQL/Redis eBPF parsing
@@ -71,6 +72,8 @@ No external dependencies. No Docker required. Just `./dogwatch` and go.
 | `internal/correlation/` | Cross-signal correlation |
 | `internal/scripts/` | Script engine for instant analysis |
 | `internal/migration/` | Dashboard/alert migration from Datadog/Grafana/Prometheus |
+| `internal/promql/` | PromQL parser, engine, Prometheus API |
+| `internal/profile/` | CPU profiling and profile-trace linking |
 
 ## Code Style
 
