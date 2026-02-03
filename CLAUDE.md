@@ -27,13 +27,13 @@ No external dependencies. No Docker required. Just `./dogwatch` and go.
 
 ## Current Priorities (in order)
 
-1. **Script engine & library** - `dogwatch run mysql/slow_queries` instant analysis commands
-2. **Migration tools** - Datadog/Grafana dashboard importers for easy switching
-3. **Full PromQL support** - 100% Prometheus query compatibility
-4. **Profile → Trace linking** - Click flamegraph hotspot → see related traces
+1. **Migration tools** - Datadog/Grafana dashboard importers for easy switching
+2. **Full PromQL support** - 100% Prometheus query compatibility
+3. **Profile → Trace linking** - Click flamegraph hotspot → see related traces
 
 ## Recently Completed
 
+- ✅ Script engine & library (`dogwatch run mysql/slow_queries`)
 - ✅ MySQL/PostgreSQL/Redis eBPF parsing
 - ✅ OTLP receiver (gRPC + HTTP)
 - ✅ Backup/restore with scheduler
@@ -69,6 +69,7 @@ No external dependencies. No Docker required. Just `./dogwatch` and go.
 | `internal/catalog/` | Service catalog |
 | `internal/synthetics/` | Synthetic monitoring |
 | `internal/correlation/` | Cross-signal correlation |
+| `internal/scripts/` | Script engine for instant analysis |
 
 ## Code Style
 
