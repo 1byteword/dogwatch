@@ -100,6 +100,21 @@ func NewStore(dbPath string) (*Store, error) {
 	CREATE INDEX IF NOT EXISTS idx_metrics_name_time ON metrics(name, timestamp DESC);
 	CREATE INDEX IF NOT EXISTS idx_metrics_time ON metrics(timestamp DESC);
 
+	CREATE TABLE IF NOT EXISTS histograms (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		timestamp DATETIME NOT NULL,
+		name TEXT NOT NULL,
+		tags TEXT,
+		count INTEGER NOT NULL,
+		sum REAL NOT NULL,
+		min_val REAL,
+		max_val REAL,
+		bounds BLOB NOT NULL,
+		bucket_counts BLOB NOT NULL,
+		exemplars BLOB
+	);
+	CREATE INDEX IF NOT EXISTS idx_histograms_name_time ON histograms(name, timestamp DESC);
+
 	CREATE TABLE IF NOT EXISTS metric_info (
 		name TEXT PRIMARY KEY,
 		type TEXT NOT NULL,
@@ -419,5 +434,190 @@ func (s *Store) Cleanup(maxAge time.Duration) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+
+	// Also cleanup histograms
+	s.db.Exec("DELETE FROM histograms WHERE timestamp < ?", cutoff)
+
 	return result.RowsAffected()
+}
+
+// RecordHistogram stores a native histogram data point
+func (s *Store) RecordHistogram(hdp HistogramDataPoint) error {
+	if hdp.Timestamp.IsZero() {
+		hdp.Timestamp = time.Now()
+	}
+
+	// Track cardinality
+	if s.cardinalityHook != nil {
+		s.cardinalityHook.RecordSeries(hdp.Name, hdp.Tags)
+	}
+
+	var tagsJSON []byte
+	if len(hdp.Tags) > 0 {
+		tagsJSON, _ = json.Marshal(hdp.Tags)
+	}
+
+	boundsJSON, _ := json.Marshal(hdp.ExplicitBounds)
+	countsJSON, _ := json.Marshal(hdp.BucketCounts)
+
+	var exemplarsJSON []byte
+	if len(hdp.Exemplars) > 0 {
+		exemplarsJSON, _ = json.Marshal(hdp.Exemplars)
+	}
+
+	var minVal, maxVal *float64
+	if hdp.Min != nil {
+		minVal = hdp.Min
+	}
+	if hdp.Max != nil {
+		maxVal = hdp.Max
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(`
+		INSERT INTO histograms (timestamp, name, tags, count, sum, min_val, max_val, bounds, bucket_counts, exemplars)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		hdp.Timestamp, hdp.Name, string(tagsJSON), hdp.Count, hdp.Sum, minVal, maxVal,
+		boundsJSON, countsJSON, string(exemplarsJSON),
+	)
+	return err
+}
+
+// RecordHistogramBatch stores multiple histogram data points efficiently
+func (s *Store) RecordHistogramBatch(points []HistogramDataPoint) error {
+	if len(points) == 0 {
+		return nil
+	}
+
+	// Track cardinality outside the lock
+	if s.cardinalityHook != nil {
+		for _, hdp := range points {
+			s.cardinalityHook.RecordSeries(hdp.Name, hdp.Tags)
+		}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO histograms (timestamp, name, tags, count, sum, min_val, max_val, bounds, bucket_counts, exemplars)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, hdp := range points {
+		if hdp.Timestamp.IsZero() {
+			hdp.Timestamp = time.Now()
+		}
+
+		var tagsJSON []byte
+		if len(hdp.Tags) > 0 {
+			tagsJSON, _ = json.Marshal(hdp.Tags)
+		}
+
+		boundsJSON, _ := json.Marshal(hdp.ExplicitBounds)
+		countsJSON, _ := json.Marshal(hdp.BucketCounts)
+
+		var exemplarsJSON []byte
+		if len(hdp.Exemplars) > 0 {
+			exemplarsJSON, _ = json.Marshal(hdp.Exemplars)
+		}
+
+		_, err = stmt.Exec(
+			hdp.Timestamp, hdp.Name, string(tagsJSON), hdp.Count, hdp.Sum,
+			hdp.Min, hdp.Max, boundsJSON, countsJSON, string(exemplarsJSON),
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+// QueryHistogram retrieves histogram data points for a metric in a time range
+func (s *Store) QueryHistogram(name string, tags map[string]string, start, end time.Time) ([]HistogramDataPoint, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `SELECT timestamp, name, tags, count, sum, min_val, max_val, bounds, bucket_counts, exemplars
+		FROM histograms WHERE name = ? AND timestamp >= ? AND timestamp <= ? ORDER BY timestamp`
+	rows, err := s.db.Query(query, name, start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var points []HistogramDataPoint
+	for rows.Next() {
+		var hdp HistogramDataPoint
+		var tagsJSON, boundsJSON, countsJSON, exemplarsJSON sql.NullString
+		var minVal, maxVal sql.NullFloat64
+
+		if err := rows.Scan(&hdp.Timestamp, &hdp.Name, &tagsJSON, &hdp.Count, &hdp.Sum,
+			&minVal, &maxVal, &boundsJSON, &countsJSON, &exemplarsJSON); err != nil {
+			return nil, err
+		}
+
+		if tagsJSON.Valid && tagsJSON.String != "" {
+			json.Unmarshal([]byte(tagsJSON.String), &hdp.Tags)
+		}
+		if boundsJSON.Valid {
+			json.Unmarshal([]byte(boundsJSON.String), &hdp.ExplicitBounds)
+		}
+		if countsJSON.Valid {
+			json.Unmarshal([]byte(countsJSON.String), &hdp.BucketCounts)
+		}
+		if exemplarsJSON.Valid && exemplarsJSON.String != "" {
+			json.Unmarshal([]byte(exemplarsJSON.String), &hdp.Exemplars)
+		}
+		if minVal.Valid {
+			v := minVal.Float64
+			hdp.Min = &v
+		}
+		if maxVal.Valid {
+			v := maxVal.Float64
+			hdp.Max = &v
+		}
+
+		// Filter by tags if specified
+		if len(tags) > 0 {
+			match := true
+			for k, v := range tags {
+				if hdp.Tags[k] != v {
+					match = false
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
+
+		points = append(points, hdp)
+	}
+
+	return points, nil
+}
+
+// QueryHistogramSnapshot retrieves and aggregates histogram data into a snapshot
+func (s *Store) QueryHistogramSnapshot(name string, tags map[string]string, start, end time.Time) (*HistogramSnapshot, error) {
+	points, err := s.QueryHistogram(name, tags, start, end)
+	if err != nil {
+		return nil, err
+	}
+	if len(points) == 0 {
+		return nil, nil
+	}
+	return AggregateHistograms(points), nil
 }

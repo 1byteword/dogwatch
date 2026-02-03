@@ -5,7 +5,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -71,8 +75,8 @@ func (r *PrometheusReceiver) HandleRemoteWrite(w http.ResponseWriter, req *http.
 		return
 	}
 
-	// Convert to DataPoints
-	points, seriesKeys := r.convertTimeSeriesWithKeys(writeReq.Timeseries)
+	// Convert to DataPoints and aggregate histograms
+	points, histograms, seriesKeys := r.convertTimeSeriesWithHistograms(writeReq.Timeseries)
 
 	// Track series
 	r.mu.Lock()
@@ -83,7 +87,7 @@ func (r *PrometheusReceiver) HandleRemoteWrite(w http.ResponseWriter, req *http.
 	r.lastReceived = time.Now()
 	r.mu.Unlock()
 
-	// Store
+	// Store decomposed metrics
 	if len(points) > 0 {
 		if err := r.store.RecordBatch(points); err != nil {
 			r.recordError(fmt.Sprintf("store: %v", err))
@@ -92,6 +96,15 @@ func (r *PrometheusReceiver) HandleRemoteWrite(w http.ResponseWriter, req *http.
 			return
 		}
 		atomic.AddInt64(&r.totalSamples, int64(len(points)))
+	}
+
+	// Store native histograms (dual-write)
+	if len(histograms) > 0 {
+		if err := r.store.RecordHistogramBatch(histograms); err != nil {
+			r.recordError(fmt.Sprintf("store histograms: %v", err))
+			log.Printf("Failed to store prometheus histograms: %v", err)
+			// Don't fail the request, histograms are optional
+		}
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -115,17 +128,39 @@ func (r *PrometheusReceiver) convertTimeSeries(timeseries []prompb.TimeSeries) [
 
 // convertTimeSeriesWithKeys converts Prometheus TimeSeries to DataPoints and returns series keys
 func (r *PrometheusReceiver) convertTimeSeriesWithKeys(timeseries []prompb.TimeSeries) ([]DataPoint, []string) {
+	points, _, seriesKeys := r.convertTimeSeriesWithHistograms(timeseries)
+	return points, seriesKeys
+}
+
+// histogramBuilder accumulates bucket data for a histogram metric
+type histogramBuilder struct {
+	timestamp time.Time
+	name      string
+	tags      map[string]string
+	buckets   map[float64]uint64 // le -> count (cumulative)
+	sum       float64
+	count     uint64
+}
+
+// convertTimeSeriesWithHistograms converts Prometheus TimeSeries to DataPoints and native histograms
+func (r *PrometheusReceiver) convertTimeSeriesWithHistograms(timeseries []prompb.TimeSeries) ([]DataPoint, []HistogramDataPoint, []string) {
 	var points []DataPoint
 	var seriesKeys []string
+
+	// Histogram builders keyed by base metric name + tags + timestamp
+	histBuilders := make(map[string]*histogramBuilder)
 
 	for _, ts := range timeseries {
 		// Extract metric name and labels
 		var name string
 		tags := make(map[string]string)
+		var leValue string
 
 		for _, label := range ts.Labels {
 			if label.Name == "__name__" {
 				name = label.Value
+			} else if label.Name == "le" {
+				leValue = label.Value
 			} else {
 				tags[label.Name] = label.Value
 			}
@@ -145,10 +180,71 @@ func (r *PrometheusReceiver) convertTimeSeriesWithKeys(timeseries []prompb.TimeS
 		// Convert samples
 		for _, sample := range ts.Samples {
 			// Prometheus timestamps are in milliseconds
-			ts := time.Unix(0, sample.Timestamp*int64(time.Millisecond))
+			sampleTs := time.Unix(0, sample.Timestamp*int64(time.Millisecond))
 
+			// Check if this is a histogram bucket metric
+			if endsWith(name, "_bucket") && leValue != "" {
+				// Aggregate into histogram builder
+				baseName := strings.TrimSuffix(name, "_bucket")
+				builderKey := fmt.Sprintf("%s|%d|%s", baseName, sample.Timestamp, buildSeriesKey(baseName, tags))
+
+				builder, ok := histBuilders[builderKey]
+				if !ok {
+					builder = &histogramBuilder{
+						timestamp: sampleTs,
+						name:      baseName,
+						tags:      copyTags(tags),
+						buckets:   make(map[float64]uint64),
+					}
+					histBuilders[builderKey] = builder
+				}
+
+				// Parse le value
+				le, err := parseLe(leValue)
+				if err == nil {
+					builder.buckets[le] = uint64(sample.Value)
+				}
+			}
+
+			// Check if this is a histogram sum metric
+			if endsWith(name, "_sum") {
+				baseName := strings.TrimSuffix(name, "_sum")
+				builderKey := fmt.Sprintf("%s|%d|%s", baseName, sample.Timestamp, buildSeriesKey(baseName, tags))
+
+				builder, ok := histBuilders[builderKey]
+				if !ok {
+					builder = &histogramBuilder{
+						timestamp: sampleTs,
+						name:      baseName,
+						tags:      copyTags(tags),
+						buckets:   make(map[float64]uint64),
+					}
+					histBuilders[builderKey] = builder
+				}
+				builder.sum = sample.Value
+			}
+
+			// Check if this is a histogram count metric
+			if endsWith(name, "_count") {
+				baseName := strings.TrimSuffix(name, "_count")
+				builderKey := fmt.Sprintf("%s|%d|%s", baseName, sample.Timestamp, buildSeriesKey(baseName, tags))
+
+				builder, ok := histBuilders[builderKey]
+				if !ok {
+					builder = &histogramBuilder{
+						timestamp: sampleTs,
+						name:      baseName,
+						tags:      copyTags(tags),
+						buckets:   make(map[float64]uint64),
+					}
+					histBuilders[builderKey] = builder
+				}
+				builder.count = uint64(sample.Value)
+			}
+
+			// Store as regular data point (backward compatibility)
 			points = append(points, DataPoint{
-				Timestamp: ts,
+				Timestamp: sampleTs,
 				Name:      name,
 				Type:      metricType,
 				Value:     sample.Value,
@@ -156,15 +252,15 @@ func (r *PrometheusReceiver) convertTimeSeriesWithKeys(timeseries []prompb.TimeS
 			})
 		}
 
-		// Handle histograms if present
+		// Handle native Prometheus histograms if present
 		for _, h := range ts.Histograms {
-			ts := time.Unix(0, h.Timestamp*int64(time.Millisecond))
+			histTs := time.Unix(0, h.Timestamp*int64(time.Millisecond))
 
 			// Store count
 			countTags := copyTags(tags)
 			countTags["le"] = "+Inf"
 			points = append(points, DataPoint{
-				Timestamp: ts,
+				Timestamp: histTs,
 				Name:      name + "_bucket",
 				Type:      Counter,
 				Value:     float64(h.Count.(*prompb.Histogram_CountInt).CountInt),
@@ -173,7 +269,7 @@ func (r *PrometheusReceiver) convertTimeSeriesWithKeys(timeseries []prompb.TimeS
 
 			// Store sum
 			points = append(points, DataPoint{
-				Timestamp: ts,
+				Timestamp: histTs,
 				Name:      name + "_sum",
 				Type:      Counter,
 				Value:     h.Sum,
@@ -182,7 +278,63 @@ func (r *PrometheusReceiver) convertTimeSeriesWithKeys(timeseries []prompb.TimeS
 		}
 	}
 
-	return points, seriesKeys
+	// Convert histogram builders to native histograms
+	var histograms []HistogramDataPoint
+	for _, builder := range histBuilders {
+		if len(builder.buckets) > 0 {
+			hdp := builder.toHistogramDataPoint()
+			histograms = append(histograms, hdp)
+		}
+	}
+
+	return points, histograms, seriesKeys
+}
+
+// parseLe parses a Prometheus le label value
+func parseLe(le string) (float64, error) {
+	if le == "+Inf" {
+		return math.Inf(1), nil
+	}
+	return strconv.ParseFloat(le, 64)
+}
+
+// toHistogramDataPoint converts a histogram builder to a native HistogramDataPoint
+func (b *histogramBuilder) toHistogramDataPoint() HistogramDataPoint {
+	// Sort bucket boundaries
+	var bounds []float64
+	for le := range b.buckets {
+		if !math.IsInf(le, 1) {
+			bounds = append(bounds, le)
+		}
+	}
+	sort.Float64s(bounds)
+
+	// Build cumulative counts
+	var counts []uint64
+	for _, bound := range bounds {
+		counts = append(counts, b.buckets[bound])
+	}
+	// Add +Inf bucket
+	if infCount, ok := b.buckets[math.Inf(1)]; ok {
+		counts = append(counts, infCount)
+	}
+
+	hdp := HistogramDataPoint{
+		Timestamp:      b.timestamp,
+		Name:           b.name,
+		Tags:           b.tags,
+		Count:          b.count,
+		Sum:            b.sum,
+		ExplicitBounds: bounds,
+		BucketCounts:   counts,
+	}
+
+	// If count wasn't explicitly set, use the +Inf bucket
+	if hdp.Count == 0 && len(counts) > 0 {
+		hdp.Count = counts[len(counts)-1]
+	}
+
+	return hdp
 }
 
 func buildSeriesKey(name string, tags map[string]string) string {

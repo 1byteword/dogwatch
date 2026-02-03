@@ -36,15 +36,24 @@ type DataSource interface {
 	Scan(ctx context.Context, source string, metric string, timeRange TimeRangeSpec, predicates []Expr) ([]Row, error)
 }
 
+// HistogramSource interface for native histogram data
+type HistogramSource interface {
+	QueryHistogramSnapshot(name string, tags map[string]string, start, end time.Time) (*HistogramSnapshot, error)
+}
+
 // Executor executes query plans
 type Executor struct {
-	metrics DataSource
-	logs    DataSource
-	traces  DataSource
-	events  DataSource
+	metrics    DataSource
+	logs       DataSource
+	traces     DataSource
+	events     DataSource
+	histograms HistogramSource
 
 	// Function registry
 	functions map[string]Function
+
+	// Current query context for histogram_quantile
+	currentTimeRange *TimeRangeSpec
 }
 
 // Function represents a built-in function
@@ -77,6 +86,11 @@ func (e *Executor) SetTracesSource(ds DataSource) {
 // SetEventsSource sets the events data source
 func (e *Executor) SetEventsSource(ds DataSource) {
 	e.events = ds
+}
+
+// SetHistogramSource sets the histogram data source for native histogram queries
+func (e *Executor) SetHistogramSource(hs HistogramSource) {
+	e.histograms = hs
 }
 
 // Execute runs a query and returns results
@@ -150,6 +164,10 @@ func (e *Executor) ExecutePlan(ctx context.Context, plan *Plan) (*Result, error)
 }
 
 func (e *Executor) executePlan(ctx context.Context, plan *Plan) ([]Row, error) {
+	// Set current time range for histogram_quantile function
+	e.currentTimeRange = &plan.TimeRange
+	defer func() { e.currentTimeRange = nil }()
+
 	return e.executeNode(ctx, plan.Root, plan.TimeRange)
 }
 
@@ -1317,6 +1335,43 @@ func (e *Executor) registerBuiltins() {
 		default:
 			return nil, fmt.Errorf("unknown part: %s", part)
 		}
+	}
+
+	// histogram_quantile computes a quantile from native histogram data
+	// Usage: histogram_quantile(0.99, metric_name) or histogram_quantile(0.99, snapshot)
+	e.functions["histogram_quantile"] = func(args ...interface{}) (interface{}, error) {
+		if len(args) < 2 {
+			return nil, fmt.Errorf("histogram_quantile requires 2 arguments: quantile, metric_or_snapshot")
+		}
+
+		quantile := toFloat(args[0])
+		if quantile < 0 || quantile > 1 {
+			return nil, fmt.Errorf("quantile must be between 0 and 1, got %f", quantile)
+		}
+
+		// If second arg is already a HistogramSnapshot, use it directly
+		if snapshot, ok := args[1].(*HistogramSnapshot); ok {
+			return snapshot.Quantile(quantile), nil
+		}
+
+		// Otherwise, treat it as a metric name and query from histogram source
+		metricName := fmt.Sprintf("%v", args[1])
+		if e.histograms == nil {
+			return nil, fmt.Errorf("no histogram source configured")
+		}
+		if e.currentTimeRange == nil {
+			return nil, fmt.Errorf("no time range set for histogram query")
+		}
+
+		snapshot, err := e.histograms.QueryHistogramSnapshot(metricName, nil, e.currentTimeRange.Start, e.currentTimeRange.End)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query histogram: %w", err)
+		}
+		if snapshot == nil {
+			return nil, fmt.Errorf("no histogram data found for %s", metricName)
+		}
+
+		return snapshot.Quantile(quantile), nil
 	}
 }
 

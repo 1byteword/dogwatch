@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -74,13 +75,25 @@ type otlpNumberDataPoint struct {
 }
 
 type otlpHistogramDataPoint struct {
-	Attributes        []otlpAttribute `json:"attributes"`
-	StartTimeUnixNano string          `json:"startTimeUnixNano"`
-	TimeUnixNano      string          `json:"timeUnixNano"`
-	Count             uint64          `json:"count"`
-	Sum               *float64        `json:"sum,omitempty"`
-	BucketCounts      []uint64        `json:"bucketCounts"`
-	ExplicitBounds    []float64       `json:"explicitBounds"`
+	Attributes        []otlpAttribute  `json:"attributes"`
+	StartTimeUnixNano string           `json:"startTimeUnixNano"`
+	TimeUnixNano      string           `json:"timeUnixNano"`
+	Count             uint64           `json:"count"`
+	Sum               *float64         `json:"sum,omitempty"`
+	Min               *float64         `json:"min,omitempty"`
+	Max               *float64         `json:"max,omitempty"`
+	BucketCounts      []uint64         `json:"bucketCounts"`
+	ExplicitBounds    []float64        `json:"explicitBounds"`
+	Exemplars         []otlpExemplar   `json:"exemplars,omitempty"`
+}
+
+type otlpExemplar struct {
+	FilteredAttributes []otlpAttribute `json:"filteredAttributes,omitempty"`
+	TimeUnixNano       string          `json:"timeUnixNano"`
+	AsDouble           *float64        `json:"asDouble,omitempty"`
+	AsInt              *int64          `json:"asInt,omitempty"`
+	SpanID             string          `json:"spanId,omitempty"`
+	TraceID            string          `json:"traceId,omitempty"`
 }
 
 type otlpAttribute struct {
@@ -114,6 +127,7 @@ func (r *OTLPMetricsReceiver) HandleMetrics(w http.ResponseWriter, req *http.Req
 	}
 
 	var points []DataPoint
+	var histograms []HistogramDataPoint
 
 	for _, rm := range otlpReq.ResourceMetrics {
 		// Extract resource attributes as base tags
@@ -121,12 +135,14 @@ func (r *OTLPMetricsReceiver) HandleMetrics(w http.ResponseWriter, req *http.Req
 
 		for _, sm := range rm.ScopeMetrics {
 			for _, m := range sm.Metrics {
-				pts := r.convertMetric(m, resourceTags)
+				pts, hists := r.convertMetricWithHistograms(m, resourceTags)
 				points = append(points, pts...)
+				histograms = append(histograms, hists...)
 			}
 		}
 	}
 
+	// Record decomposed metrics (backward compatibility)
 	if len(points) > 0 {
 		if err := r.store.RecordBatch(points); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -134,12 +150,29 @@ func (r *OTLPMetricsReceiver) HandleMetrics(w http.ResponseWriter, req *http.Req
 		}
 	}
 
+	// Record native histograms (dual-write)
+	if len(histograms) > 0 {
+		if err := r.store.RecordHistogramBatch(histograms); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]int{"accepted": len(points)})
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"accepted":   len(points),
+		"histograms": len(histograms),
+	})
 }
 
 func (r *OTLPMetricsReceiver) convertMetric(m otlpMetric, baseTags map[string]string) []DataPoint {
+	points, _ := r.convertMetricWithHistograms(m, baseTags)
+	return points
+}
+
+func (r *OTLPMetricsReceiver) convertMetricWithHistograms(m otlpMetric, baseTags map[string]string) ([]DataPoint, []HistogramDataPoint) {
 	var points []DataPoint
+	var histograms []HistogramDataPoint
 
 	if m.Sum != nil {
 		metricType := Counter
@@ -159,29 +192,92 @@ func (r *OTLPMetricsReceiver) convertMetric(m otlpMetric, baseTags map[string]st
 
 	if m.Histogram != nil {
 		for _, dp := range m.Histogram.DataPoints {
-			// For histograms, we store the sum/count as a gauge
+			ts := parseNanoTime(dp.TimeUnixNano)
+			tags := mergeTags(baseTags, attributesToMap(dp.Attributes))
+
+			// Create native histogram data point
+			hdp := HistogramDataPoint{
+				Timestamp:      ts,
+				Name:           m.Name,
+				Tags:           copyTags(tags),
+				Count:          dp.Count,
+				ExplicitBounds: append([]float64{}, dp.ExplicitBounds...),
+				BucketCounts:   append([]uint64{}, dp.BucketCounts...),
+			}
+			if dp.Sum != nil {
+				hdp.Sum = *dp.Sum
+			}
+			if dp.Min != nil {
+				minVal := *dp.Min
+				hdp.Min = &minVal
+			}
+			if dp.Max != nil {
+				maxVal := *dp.Max
+				hdp.Max = &maxVal
+			}
+
+			// Convert exemplars
+			for _, ex := range dp.Exemplars {
+				exemplar := Exemplar{
+					Timestamp: parseNanoTime(ex.TimeUnixNano),
+					TraceID:   ex.TraceID,
+					SpanID:    ex.SpanID,
+				}
+				if ex.AsDouble != nil {
+					exemplar.Value = *ex.AsDouble
+				} else if ex.AsInt != nil {
+					exemplar.Value = float64(*ex.AsInt)
+				}
+				hdp.Exemplars = append(hdp.Exemplars, exemplar)
+			}
+
+			histograms = append(histograms, hdp)
+
+			// Backward compatibility: store decomposed metrics
 			if dp.Sum != nil {
 				p := DataPoint{
-					Timestamp: parseNanoTime(dp.TimeUnixNano),
+					Timestamp: ts,
 					Name:      m.Name + ".sum",
 					Type:      Gauge,
 					Value:     *dp.Sum,
-					Tags:      mergeTags(baseTags, attributesToMap(dp.Attributes)),
+					Tags:      copyTags(tags),
 				}
 				points = append(points, p)
 			}
 			p := DataPoint{
-				Timestamp: parseNanoTime(dp.TimeUnixNano),
+				Timestamp: ts,
 				Name:      m.Name + ".count",
 				Type:      Counter,
 				Value:     float64(dp.Count),
-				Tags:      mergeTags(baseTags, attributesToMap(dp.Attributes)),
+				Tags:      copyTags(tags),
 			}
 			points = append(points, p)
+
+			// Store bucket counts for backward compatibility
+			for i, count := range dp.BucketCounts {
+				bucketTags := copyTags(tags)
+				bucketTags["aggregate"] = "bucket"
+				if i < len(dp.ExplicitBounds) {
+					bucketTags["le"] = formatFloatOTLP(dp.ExplicitBounds[i])
+				} else {
+					bucketTags["le"] = "+Inf"
+				}
+				points = append(points, DataPoint{
+					Timestamp: ts,
+					Name:      m.Name + "_bucket",
+					Type:      Counter,
+					Value:     float64(count),
+					Tags:      bucketTags,
+				})
+			}
 		}
 	}
 
-	return points
+	return points, histograms
+}
+
+func formatFloatOTLP(f float64) string {
+	return strconv.FormatFloat(f, 'f', -1, 64)
 }
 
 func (r *OTLPMetricsReceiver) convertNumberDataPoint(name string, mtype MetricType, dp otlpNumberDataPoint, baseTags map[string]string) DataPoint {

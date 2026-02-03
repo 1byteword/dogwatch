@@ -312,6 +312,7 @@ func (e *Evaluator) executeCount(ctx context.Context, expr string) ([]ResultValu
 }
 
 // executeQuantile handles histogram_quantile() function
+// It tries native histogram data first, then falls back to decomposed bucket metrics
 func (e *Evaluator) executeQuantile(ctx context.Context, expr string) ([]ResultValue, error) {
 	re := regexp.MustCompile(`histogram_quantile\(([\d.]+),\s*(\w+)\)(?:\s+by\s+\(([^)]+)\))?`)
 	matches := re.FindStringSubmatch(expr)
@@ -327,6 +328,20 @@ func (e *Evaluator) executeQuantile(ctx context.Context, expr string) ([]ResultV
 		groupBy = matches[3]
 	}
 
+	// Try native histogram query first
+	if e.metricsStore != nil {
+		end := time.Now()
+		start := end.Add(-5 * time.Minute)
+
+		snapshot, err := e.metricsStore.QueryHistogramSnapshot(metric, nil, start, end)
+		if err == nil && snapshot != nil && snapshot.TotalCount > 0 {
+			// Use native histogram for accurate quantile computation
+			value := snapshot.Quantile(quantile)
+			return []ResultValue{{Value: value}}, nil
+		}
+	}
+
+	// Fallback to decomposed bucket query
 	// Map quantile to percentile function
 	pct := int(quantile * 100)
 	pctFunc := fmt.Sprintf("p%d", pct)
