@@ -27,10 +27,21 @@ No external dependencies. No Docker required. Just `./dogwatch` and go.
 
 ## Current Priorities (in order)
 
-1. **MySQL/PostgreSQL/Redis eBPF parsing** - Core differentiator
-2. **OTLP receiver** - Industry standard, must support
-3. **Backup/restore** - Production readiness
-4. **Cost Intelligence dashboard** - Unique feature, shows Datadog equivalent cost
+1. **Script engine & library** - `dogwatch run mysql/slow_queries` instant analysis commands
+2. **Migration tools** - Datadog/Grafana dashboard importers for easy switching
+3. **Full PromQL support** - 100% Prometheus query compatibility
+4. **Profile → Trace linking** - Click flamegraph hotspot → see related traces
+
+## Recently Completed
+
+- ✅ MySQL/PostgreSQL/Redis eBPF parsing
+- ✅ OTLP receiver (gRPC + HTTP)
+- ✅ Backup/restore with scheduler
+- ✅ Cost Intelligence dashboard
+- ✅ Native histogram support (accurate p99/p99.9)
+- ✅ Security headers & CSRF protection
+- ✅ Recording rules
+- ✅ Service catalog with auto-discovery
 
 ## Do NOT Build Yet
 
@@ -39,7 +50,8 @@ No external dependencies. No Docker required. Just `./dogwatch` and go.
 - LLM/AI features (add after core is solid)
 - Terraform provider (nice-to-have)
 - Custom ML models (use LLM APIs if needed)
-- 100+ integrations (focus on auto-discovery)
+- Multi-tenancy (enterprise feature, later)
+- Pluggable storage backends (SQLite works for now)
 
 ## Key Directories
 
@@ -72,7 +84,8 @@ No external dependencies. No Docker required. Just `./dogwatch` and go.
 - Sessions: JWT with HMAC-SHA256
 - API keys: `dw_` prefix, hashed storage
 - RBAC: Owner > Admin > Editor > Viewer
-- Known gaps: CSRF protection, security headers (see VISION.md security audit)
+- CSRF: Token-based protection enabled
+- Headers: CSP, X-Frame-Options, X-Content-Type-Options configured
 
 ## Testing
 
