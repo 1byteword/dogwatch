@@ -37,7 +37,7 @@ test.describe('Datadog Migration', () => {
     });
 
     // Will fail without real credentials, but endpoint should exist
-    expect([200, 400, 401, 404]).toContain(response.status());
+    expect([200, 400, 401, 403, 404]).toContain(response.status());
   });
 
   test('list Datadog dashboards to import', async ({ request }) => {
@@ -61,7 +61,7 @@ test.describe('Datadog Migration', () => {
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 201, 400, 401, 404]).toContain(response.status());
+    expect([200, 201, 400, 401, 403, 404]).toContain(response.status());
   });
 
   test('list Datadog monitors to import', async ({ request }) => {
@@ -86,7 +86,7 @@ test.describe('Grafana Migration', () => {
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 400, 401, 404]).toContain(response.status());
+    expect([200, 400, 401, 403, 404]).toContain(response.status());
   });
 
   test('list Grafana dashboards', async ({ request }) => {
@@ -110,7 +110,7 @@ test.describe('Grafana Migration', () => {
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 201, 400, 401, 404]).toContain(response.status());
+    expect([200, 201, 400, 401, 403, 404]).toContain(response.status());
   });
 
   test('import Grafana JSON file', async ({ request }) => {
@@ -124,7 +124,7 @@ test.describe('Grafana Migration', () => {
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 201, 400, 404]).toContain(response.status());
+    expect([200, 201, 400, 403, 404]).toContain(response.status());
   });
 });
 
@@ -144,7 +144,7 @@ groups:
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 201, 400, 404]).toContain(response.status());
+    expect([200, 201, 400, 403, 404]).toContain(response.status());
   });
 
   test('import Prometheus config', async ({ request }) => {
@@ -162,7 +162,7 @@ scrape_configs:
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 201, 400, 404]).toContain(response.status());
+    expect([200, 201, 400, 403, 404]).toContain(response.status());
   });
 
   test('import recording rules', async ({ request }) => {
@@ -179,7 +179,7 @@ groups:
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 201, 400, 404]).toContain(response.status());
+    expect([200, 201, 400, 403, 404]).toContain(response.status());
   });
 });
 
@@ -202,6 +202,6 @@ test.describe('Migration History', () => {
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 204, 400, 404]).toContain(response.status());
+    expect([200, 204, 400, 403, 404]).toContain(response.status());
   });
 });

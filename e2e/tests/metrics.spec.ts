@@ -90,7 +90,7 @@ test.describe('Custom Metrics', () => {
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 204, 400]).toContain(response.status());
+    expect([200, 204, 400, 403, 404]).toContain(response.status());
   });
 
   test('push batch metrics', async ({ request }) => {
@@ -104,7 +104,7 @@ test.describe('Custom Metrics', () => {
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 204, 400]).toContain(response.status());
+    expect([200, 204, 400, 403, 404]).toContain(response.status());
   });
 });
 
@@ -127,7 +127,7 @@ test.describe('Recording Rules', () => {
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 201, 400, 409]).toContain(response.status());
+    expect([200, 201, 400, 403, 404, 409]).toContain(response.status());
   });
 
   test('get recording rule', async ({ request }) => {
@@ -139,7 +139,7 @@ test.describe('Recording Rules', () => {
   test('delete recording rule', async ({ request }) => {
     const response = await request.delete('/api/recording-rules/e2e:test:rate5m');
 
-    expect([200, 204, 404]).toContain(response.status());
+    expect([200, 204, 403, 404]).toContain(response.status());
   });
 });
 

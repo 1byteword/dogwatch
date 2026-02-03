@@ -23,7 +23,8 @@ test.describe('Traces Page', () => {
     expect(response.status()).toBe(200);
 
     const body = await response.json();
-    expect(Array.isArray(body) || body.traces !== undefined).toBe(true);
+    // API returns {data: [...], pagination: {...}}
+    expect(body.data !== undefined || Array.isArray(body) || body.traces !== undefined).toBe(true);
   });
 });
 
@@ -83,7 +84,7 @@ test.describe('Cost Page', () => {
     await expect(page.locator('body')).toBeVisible();
 
     // Should have cost-related content
-    await expect(page.locator('h1, .page-header, .cost')).toBeVisible();
+    await expect(page.locator('h1, .page-header, .cost').first()).toBeVisible();
   });
 });
 
@@ -110,7 +111,7 @@ test.describe('Settings Page', () => {
     await expect(page.locator('body')).toBeVisible();
 
     // Should have tabs or settings sections
-    await expect(page.locator('.tab, .settings, h1')).toBeVisible();
+    await expect(page.locator('.tab, .settings, h1').first()).toBeVisible();
   });
 });
 

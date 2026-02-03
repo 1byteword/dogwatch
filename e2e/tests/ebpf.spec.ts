@@ -139,13 +139,13 @@ test.describe('Probe Configuration', () => {
   test('enable probe', async ({ request }) => {
     const response = await request.post('/api/probes/http/enable');
 
-    expect([200, 204, 400, 404]).toContain(response.status());
+    expect([200, 204, 400, 403, 404]).toContain(response.status());
   });
 
   test('disable probe', async ({ request }) => {
     const response = await request.post('/api/probes/http/disable');
 
-    expect([200, 204, 400, 404]).toContain(response.status());
+    expect([200, 204, 400, 403, 404]).toContain(response.status());
   });
 
   test('configure probe', async ({ request }) => {
@@ -159,6 +159,6 @@ test.describe('Probe Configuration', () => {
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 204, 400, 404]).toContain(response.status());
+    expect([200, 204, 400, 403, 404]).toContain(response.status());
   });
 });

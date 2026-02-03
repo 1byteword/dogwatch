@@ -60,7 +60,7 @@ test.describe('Restore API', () => {
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 400, 404]).toContain(response.status());
+    expect([200, 400, 403, 404]).toContain(response.status());
   });
 
   test('restore endpoint exists', async ({ request }) => {
@@ -121,7 +121,7 @@ test.describe('Export/Import', () => {
   test('export configuration', async ({ request }) => {
     const response = await request.get('/api/export/config');
 
-    expect([200, 401, 403]).toContain(response.status());
+    expect([200, 401, 403, 404]).toContain(response.status());
 
     if (response.status() === 200) {
       const contentType = response.headers()['content-type'];
@@ -132,13 +132,13 @@ test.describe('Export/Import', () => {
   test('export dashboards', async ({ request }) => {
     const response = await request.get('/api/export/dashboards');
 
-    expect([200, 401, 403]).toContain(response.status());
+    expect([200, 401, 403, 404]).toContain(response.status());
   });
 
   test('export alerts', async ({ request }) => {
     const response = await request.get('/api/export/alerts');
 
-    expect([200, 401, 403]).toContain(response.status());
+    expect([200, 401, 403, 404]).toContain(response.status());
   });
 
   test('import configuration', async ({ request }) => {

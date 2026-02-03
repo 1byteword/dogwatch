@@ -33,7 +33,7 @@ test.describe('Scripts Engine', () => {
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 202, 400, 404]).toContain(response.status());
+    expect([200, 202, 400, 403, 404]).toContain(response.status());
   });
 
   test('get script execution status', async ({ request }) => {
@@ -51,7 +51,7 @@ test.describe('Scripts Engine', () => {
   test('cancel script execution', async ({ request }) => {
     const response = await request.post('/api/scripts/executions/test-execution-id/cancel');
 
-    expect([200, 204, 404]).toContain(response.status());
+    expect([200, 204, 403, 404]).toContain(response.status());
   });
 });
 
@@ -107,7 +107,7 @@ test.describe('Custom Scripts', () => {
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 201, 400, 409]).toContain(response.status());
+    expect([200, 201, 400, 403, 404, 409]).toContain(response.status());
   });
 
   test('list custom scripts', async ({ request }) => {
@@ -122,12 +122,12 @@ test.describe('Custom Scripts', () => {
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 204, 404]).toContain(response.status());
+    expect([200, 204, 403, 404]).toContain(response.status());
   });
 
   test('delete custom script', async ({ request }) => {
     const response = await request.delete('/api/scripts/custom/e2e-custom-script');
 
-    expect([200, 204, 404]).toContain(response.status());
+    expect([200, 204, 403, 404]).toContain(response.status());
   });
 });

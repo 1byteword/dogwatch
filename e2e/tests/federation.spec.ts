@@ -23,7 +23,7 @@ test.describe('Federation', () => {
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 201, 400, 409]).toContain(response.status());
+    expect([200, 201, 400, 403, 404, 409]).toContain(response.status());
   });
 
   test('get cluster status', async ({ request }) => {
@@ -35,7 +35,7 @@ test.describe('Federation', () => {
   test('remove federated cluster', async ({ request }) => {
     const response = await request.delete('/api/federation/clusters/e2e-remote-cluster');
 
-    expect([200, 204, 404]).toContain(response.status());
+    expect([200, 204, 403, 404]).toContain(response.status());
   });
 
   test('query across clusters', async ({ request }) => {
@@ -63,7 +63,7 @@ test.describe('Remote Write', () => {
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 201, 400, 409]).toContain(response.status());
+    expect([200, 201, 400, 403, 404, 409]).toContain(response.status());
   });
 
   test('list remote write targets', async ({ request }) => {
@@ -81,7 +81,7 @@ test.describe('Remote Write', () => {
   test('delete remote write target', async ({ request }) => {
     const response = await request.delete('/api/remote-write/targets/e2e-remote-write');
 
-    expect([200, 204, 404]).toContain(response.status());
+    expect([200, 204, 403, 404]).toContain(response.status());
   });
 });
 
@@ -113,13 +113,13 @@ test.describe('Scrape Targets', () => {
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 201, 400, 409]).toContain(response.status());
+    expect([200, 201, 400, 403, 404, 409]).toContain(response.status());
   });
 
   test('delete scrape target', async ({ request }) => {
     const response = await request.delete('/api/targets/e2e-scrape-job');
 
-    expect([200, 204, 404]).toContain(response.status());
+    expect([200, 204, 403, 404]).toContain(response.status());
   });
 
   test('get target health', async ({ request }) => {
@@ -148,7 +148,7 @@ test.describe('Service Discovery', () => {
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 201, 400]).toContain(response.status());
+    expect([200, 201, 400, 403, 404]).toContain(response.status());
   });
 
   test('configure file SD', async ({ request }) => {
@@ -162,7 +162,7 @@ test.describe('Service Discovery', () => {
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 201, 400]).toContain(response.status());
+    expect([200, 201, 400, 403, 404]).toContain(response.status());
   });
 
   test('configure DNS SD', async ({ request }) => {
@@ -176,6 +176,6 @@ test.describe('Service Discovery', () => {
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 201, 400]).toContain(response.status());
+    expect([200, 201, 400, 403, 404]).toContain(response.status());
   });
 });

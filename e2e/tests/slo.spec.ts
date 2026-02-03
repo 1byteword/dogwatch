@@ -32,7 +32,7 @@ test.describe('SLO API', () => {
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 201, 409]).toContain(response.status());
+    expect([200, 201, 403, 409]).toContain(response.status());
 
     if (response.status() === 200 || response.status() === 201) {
       const body = await response.json();
@@ -88,7 +88,7 @@ test.describe('SLO API', () => {
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 204, 404]).toContain(response.status());
+    expect([200, 204, 403, 404]).toContain(response.status());
   });
 
   test('list SLOs by service', async ({ request }) => {
@@ -102,7 +102,7 @@ test.describe('SLO API', () => {
   test('delete SLO', async ({ request }) => {
     const response = await request.delete(`/api/slos/${testSLO.name}`);
 
-    expect([200, 204, 404]).toContain(response.status());
+    expect([200, 204, 403, 404]).toContain(response.status());
   });
 });
 

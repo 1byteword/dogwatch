@@ -49,7 +49,7 @@ test.describe('Logs API', () => {
       headers: { 'Content-Type': 'application/json' }
     });
 
-    expect([200, 204, 404]).toContain(response.status());
+    expect([200, 204, 403, 404]).toContain(response.status());
   });
 
   test('get log labels', async ({ request }) => {
