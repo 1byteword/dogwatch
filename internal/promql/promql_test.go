@@ -807,3 +807,377 @@ func TestFormatQueryResult(t *testing.T) {
 		}
 	})
 }
+
+// TestMetricsQLFunctions tests MetricsQL extension functions
+func TestMetricsQLFunctions(t *testing.T) {
+	ctx := &EvalContext{
+		Start: time.Now().Add(-5 * time.Minute),
+		End:   time.Now(),
+	}
+
+	t.Run("label_set", func(t *testing.T) {
+		vec := Vector{
+			{Labels: map[string]string{"job": "api"}, Value: 1, Timestamp: time.Now()},
+		}
+
+		result, err := funcLabelSet([]Value{vec, String{Val: "env"}, String{Val: "prod"}}, ctx)
+		if err != nil {
+			t.Fatalf("label_set error: %v", err)
+		}
+
+		resVec := result.(Vector)
+		if resVec[0].Labels["env"] != "prod" {
+			t.Errorf("expected env=prod, got %s", resVec[0].Labels["env"])
+		}
+		if resVec[0].Labels["job"] != "api" {
+			t.Errorf("expected job=api preserved, got %s", resVec[0].Labels["job"])
+		}
+	})
+
+	t.Run("label_del", func(t *testing.T) {
+		vec := Vector{
+			{Labels: map[string]string{"job": "api", "instance": "localhost", "env": "prod"}, Value: 1, Timestamp: time.Now()},
+		}
+
+		result, err := funcLabelDel([]Value{vec, String{Val: "instance"}, String{Val: "env"}}, ctx)
+		if err != nil {
+			t.Fatalf("label_del error: %v", err)
+		}
+
+		resVec := result.(Vector)
+		if _, ok := resVec[0].Labels["instance"]; ok {
+			t.Error("instance label should be deleted")
+		}
+		if _, ok := resVec[0].Labels["env"]; ok {
+			t.Error("env label should be deleted")
+		}
+		if resVec[0].Labels["job"] != "api" {
+			t.Error("job label should be preserved")
+		}
+	})
+
+	t.Run("label_keep", func(t *testing.T) {
+		vec := Vector{
+			{Labels: map[string]string{"__name__": "metric", "job": "api", "instance": "localhost", "env": "prod"}, Value: 1, Timestamp: time.Now()},
+		}
+
+		result, err := funcLabelKeep([]Value{vec, String{Val: "job"}}, ctx)
+		if err != nil {
+			t.Fatalf("label_keep error: %v", err)
+		}
+
+		resVec := result.(Vector)
+		if resVec[0].Labels["job"] != "api" {
+			t.Error("job label should be kept")
+		}
+		if _, ok := resVec[0].Labels["instance"]; ok {
+			t.Error("instance label should be removed")
+		}
+	})
+
+	t.Run("label_copy", func(t *testing.T) {
+		vec := Vector{
+			{Labels: map[string]string{"source": "value1"}, Value: 1, Timestamp: time.Now()},
+		}
+
+		result, err := funcLabelCopy([]Value{vec, String{Val: "source"}, String{Val: "destination"}}, ctx)
+		if err != nil {
+			t.Fatalf("label_copy error: %v", err)
+		}
+
+		resVec := result.(Vector)
+		if resVec[0].Labels["destination"] != "value1" {
+			t.Errorf("expected destination=value1, got %s", resVec[0].Labels["destination"])
+		}
+		if resVec[0].Labels["source"] != "value1" {
+			t.Error("source label should still exist")
+		}
+	})
+
+	t.Run("label_move", func(t *testing.T) {
+		vec := Vector{
+			{Labels: map[string]string{"source": "value1"}, Value: 1, Timestamp: time.Now()},
+		}
+
+		result, err := funcLabelMove([]Value{vec, String{Val: "source"}, String{Val: "destination"}}, ctx)
+		if err != nil {
+			t.Fatalf("label_move error: %v", err)
+		}
+
+		resVec := result.(Vector)
+		if resVec[0].Labels["destination"] != "value1" {
+			t.Errorf("expected destination=value1, got %s", resVec[0].Labels["destination"])
+		}
+		if _, ok := resVec[0].Labels["source"]; ok {
+			t.Error("source label should be removed")
+		}
+	})
+
+	t.Run("ru", func(t *testing.T) {
+		freeVec := Vector{
+			{Labels: map[string]string{"disk": "sda"}, Value: 200, Timestamp: time.Now()},
+		}
+		maxVec := Vector{
+			{Labels: map[string]string{"disk": "sda"}, Value: 1000, Timestamp: time.Now()},
+		}
+
+		result, err := funcRU([]Value{freeVec, maxVec}, ctx)
+		if err != nil {
+			t.Fatalf("ru error: %v", err)
+		}
+
+		resVec := result.(Vector)
+		// (1000 - 200) / 1000 = 0.8
+		if resVec[0].Value != 0.8 {
+			t.Errorf("expected 0.8, got %f", resVec[0].Value)
+		}
+	})
+
+	t.Run("range_median", func(t *testing.T) {
+		matrix := Matrix{
+			Series{
+				Labels: map[string]string{"job": "api"},
+				Samples: []Sample{
+					{Timestamp: time.Now(), Value: 10},
+					{Timestamp: time.Now(), Value: 20},
+					{Timestamp: time.Now(), Value: 30},
+					{Timestamp: time.Now(), Value: 40},
+					{Timestamp: time.Now(), Value: 50},
+				},
+			},
+		}
+
+		result, err := funcRangeMedian([]Value{matrix}, ctx)
+		if err != nil {
+			t.Fatalf("range_median error: %v", err)
+		}
+
+		resVec := result.(Vector)
+		if resVec[0].Value != 30 {
+			t.Errorf("expected 30, got %f", resVec[0].Value)
+		}
+	})
+
+	t.Run("range_first", func(t *testing.T) {
+		matrix := Matrix{
+			Series{
+				Labels:  map[string]string{"job": "api"},
+				Samples: []Sample{{Timestamp: time.Now(), Value: 100}, {Timestamp: time.Now(), Value: 200}},
+			},
+		}
+
+		result, err := funcRangeFirst([]Value{matrix}, ctx)
+		if err != nil {
+			t.Fatalf("range_first error: %v", err)
+		}
+
+		resVec := result.(Vector)
+		if resVec[0].Value != 100 {
+			t.Errorf("expected 100, got %f", resVec[0].Value)
+		}
+	})
+
+	t.Run("running_sum", func(t *testing.T) {
+		matrix := Matrix{
+			Series{
+				Labels: map[string]string{"job": "api"},
+				Samples: []Sample{
+					{Timestamp: time.Now().Add(-2 * time.Second), Value: 10},
+					{Timestamp: time.Now().Add(-1 * time.Second), Value: 20},
+					{Timestamp: time.Now(), Value: 30},
+				},
+			},
+		}
+
+		result, err := funcRunningSum([]Value{matrix}, ctx)
+		if err != nil {
+			t.Fatalf("running_sum error: %v", err)
+		}
+
+		resMatrix := result.(Matrix)
+		samples := resMatrix[0].Samples
+		// 10, 30, 60
+		if samples[0].Value != 10 || samples[1].Value != 30 || samples[2].Value != 60 {
+			t.Errorf("expected [10, 30, 60], got [%f, %f, %f]", samples[0].Value, samples[1].Value, samples[2].Value)
+		}
+	})
+
+	t.Run("running_avg", func(t *testing.T) {
+		matrix := Matrix{
+			Series{
+				Labels: map[string]string{"job": "api"},
+				Samples: []Sample{
+					{Timestamp: time.Now().Add(-2 * time.Second), Value: 10},
+					{Timestamp: time.Now().Add(-1 * time.Second), Value: 20},
+					{Timestamp: time.Now(), Value: 30},
+				},
+			},
+		}
+
+		result, err := funcRunningAvg([]Value{matrix}, ctx)
+		if err != nil {
+			t.Fatalf("running_avg error: %v", err)
+		}
+
+		resMatrix := result.(Matrix)
+		samples := resMatrix[0].Samples
+		// 10/1, 30/2, 60/3
+		if samples[0].Value != 10 || samples[1].Value != 15 || samples[2].Value != 20 {
+			t.Errorf("expected [10, 15, 20], got [%f, %f, %f]", samples[0].Value, samples[1].Value, samples[2].Value)
+		}
+	})
+
+	t.Run("share_gt_over_time", func(t *testing.T) {
+		matrix := Matrix{
+			Series{
+				Labels: map[string]string{"job": "api"},
+				Samples: []Sample{
+					{Timestamp: time.Now(), Value: 10},
+					{Timestamp: time.Now(), Value: 50},
+					{Timestamp: time.Now(), Value: 60},
+					{Timestamp: time.Now(), Value: 80},
+				},
+			},
+		}
+
+		result, err := funcShareGTOverTime([]Value{matrix, Scalar{Val: 50}}, ctx)
+		if err != nil {
+			t.Fatalf("share_gt_over_time error: %v", err)
+		}
+
+		resVec := result.(Vector)
+		// 60 and 80 are > 50, so 2/4 = 0.5
+		if resVec[0].Value != 0.5 {
+			t.Errorf("expected 0.5, got %f", resVec[0].Value)
+		}
+	})
+
+	t.Run("count_gt_over_time", func(t *testing.T) {
+		matrix := Matrix{
+			Series{
+				Labels: map[string]string{"job": "api"},
+				Samples: []Sample{
+					{Timestamp: time.Now(), Value: 10},
+					{Timestamp: time.Now(), Value: 50},
+					{Timestamp: time.Now(), Value: 60},
+					{Timestamp: time.Now(), Value: 80},
+				},
+			},
+		}
+
+		result, err := funcCountGTOverTime([]Value{matrix, Scalar{Val: 50}}, ctx)
+		if err != nil {
+			t.Fatalf("count_gt_over_time error: %v", err)
+		}
+
+		resVec := result.(Vector)
+		// 60 and 80 are > 50, so count = 2
+		if resVec[0].Value != 2 {
+			t.Errorf("expected 2, got %f", resVec[0].Value)
+		}
+	})
+
+	t.Run("lifetime", func(t *testing.T) {
+		now := time.Now()
+		matrix := Matrix{
+			Series{
+				Labels: map[string]string{"job": "api"},
+				Samples: []Sample{
+					{Timestamp: now.Add(-60 * time.Second), Value: 1},
+					{Timestamp: now.Add(-30 * time.Second), Value: 2},
+					{Timestamp: now, Value: 3},
+				},
+			},
+		}
+
+		result, err := funcLifetime([]Value{matrix}, ctx)
+		if err != nil {
+			t.Fatalf("lifetime error: %v", err)
+		}
+
+		resVec := result.(Vector)
+		// 60 seconds from first to last
+		if resVec[0].Value != 60 {
+			t.Errorf("expected 60, got %f", resVec[0].Value)
+		}
+	})
+
+	t.Run("scrape_interval", func(t *testing.T) {
+		now := time.Now()
+		matrix := Matrix{
+			Series{
+				Labels: map[string]string{"job": "api"},
+				Samples: []Sample{
+					{Timestamp: now.Add(-30 * time.Second), Value: 1},
+					{Timestamp: now.Add(-20 * time.Second), Value: 2},
+					{Timestamp: now.Add(-10 * time.Second), Value: 3},
+					{Timestamp: now, Value: 4},
+				},
+			},
+		}
+
+		result, err := funcScrapeInterval([]Value{matrix}, ctx)
+		if err != nil {
+			t.Fatalf("scrape_interval error: %v", err)
+		}
+
+		resVec := result.(Vector)
+		// 30 seconds / 3 intervals = 10 seconds avg
+		if resVec[0].Value != 10 {
+			t.Errorf("expected 10, got %f", resVec[0].Value)
+		}
+	})
+
+	t.Run("union", func(t *testing.T) {
+		vec1 := Vector{
+			{Labels: map[string]string{"job": "api"}, Value: 1, Timestamp: time.Now()},
+		}
+		vec2 := Vector{
+			{Labels: map[string]string{"job": "web"}, Value: 2, Timestamp: time.Now()},
+		}
+		vec3 := Vector{
+			{Labels: map[string]string{"job": "api"}, Value: 3, Timestamp: time.Now()}, // duplicate label set
+		}
+
+		result, err := funcUnion([]Value{vec1, vec2, vec3}, ctx)
+		if err != nil {
+			t.Fatalf("union error: %v", err)
+		}
+
+		resVec := result.(Vector)
+		// Should have 2 unique label sets
+		if len(resVec) != 2 {
+			t.Errorf("expected 2 samples, got %d", len(resVec))
+		}
+	})
+
+	t.Run("smooth_exponential", func(t *testing.T) {
+		matrix := Matrix{
+			Series{
+				Labels: map[string]string{"job": "api"},
+				Samples: []Sample{
+					{Timestamp: time.Now().Add(-3 * time.Second), Value: 100},
+					{Timestamp: time.Now().Add(-2 * time.Second), Value: 0},
+					{Timestamp: time.Now().Add(-1 * time.Second), Value: 100},
+					{Timestamp: time.Now(), Value: 0},
+				},
+			},
+		}
+
+		result, err := funcSmoothExponential([]Value{matrix, Scalar{Val: 0.5}}, ctx)
+		if err != nil {
+			t.Fatalf("smooth_exponential error: %v", err)
+		}
+
+		resMatrix := result.(Matrix)
+		// With sf=0.5, values should be smoothed
+		// First value stays 100, then 0.5*0 + 0.5*100 = 50, etc.
+		samples := resMatrix[0].Samples
+		if samples[0].Value != 100 {
+			t.Errorf("expected first value 100, got %f", samples[0].Value)
+		}
+		if samples[1].Value != 50 {
+			t.Errorf("expected second value 50, got %f", samples[1].Value)
+		}
+	})
+}
