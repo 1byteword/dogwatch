@@ -412,6 +412,10 @@ func main() {
 		defer customMetricsStore.Close()
 		fmt.Printf("Custom metrics storage: %s\n", customMetricsDbPath)
 		fmt.Printf("Prometheus remote write: http://localhost:%d/api/v1/write\n", *webPort)
+
+		// Set up multi-protocol ingestion (Graphite, InfluxDB, OpenTSDB, DataDog)
+		web.SetIngestStore(customMetricsStore)
+		fmt.Printf("Multi-protocol ingestion: Graphite, InfluxDB, OpenTSDB, DataDog\n")
 	}
 
 	// Wire stores to multi-signal correlator (Moat 10)
@@ -1276,6 +1280,15 @@ func main() {
 		// Register Cardinality Controller routes (Moat 12)
 		web.RegisterCardinalityControllerRoutes(webServer.Mux())
 		fmt.Printf("Cardinality controller routes: http://localhost:%d/api/cardinality/dashboard\n", *webPort)
+
+		// Register multi-protocol ingestion routes (Graphite, InfluxDB, OpenTSDB, DataDog, StatsD)
+		web.RegisterIngestRoutes(webServer.Mux())
+		fmt.Printf("Ingestion endpoints:\n")
+		fmt.Printf("  Graphite:   http://localhost:%d/api/graphite/write\n", *webPort)
+		fmt.Printf("  InfluxDB:   http://localhost:%d/api/influx/write\n", *webPort)
+		fmt.Printf("  OpenTSDB:   http://localhost:%d/api/opentsdb/put\n", *webPort)
+		fmt.Printf("  StatsD:     http://localhost:%d/api/statsd/write\n", *webPort)
+		fmt.Printf("  DataDog:    http://localhost:%d/api/datadog/v1/series\n", *webPort)
 
 		go func() {
 			fmt.Printf("Web UI available at http://localhost:%d\n", *webPort)
