@@ -227,6 +227,7 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	mux.HandleFunc("/api/metrics/push", s.handleMetricsPush)
 	mux.HandleFunc("/api/metrics/query", s.handleMetricsQuery)
 	mux.HandleFunc("/api/metrics/list", s.handleMetricsList)
+	mux.HandleFunc("/api/metrics/histogram", s.handleMetricsHistogram)
 
 	// Prometheus remote write endpoint
 	mux.HandleFunc("/api/v1/write", s.handlePrometheusRemoteWrite)
@@ -3063,6 +3064,114 @@ func (s *Server) handleMetricsList(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(metrics)
+}
+
+// handleMetricsHistogram returns native histogram data for latency distribution visualization
+func (s *Server) handleMetricsHistogram(w http.ResponseWriter, r *http.Request) {
+	if s.customMetricsStore == nil {
+		http.Error(w, "Custom metrics not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	metric := r.URL.Query().Get("metric")
+	if metric == "" {
+		metric = "latency" // default metric
+	}
+
+	// Parse time range (default 1h)
+	rangeStr := r.URL.Query().Get("range")
+	duration := time.Hour
+	if rangeStr != "" {
+		if d, err := time.ParseDuration(rangeStr); err == nil {
+			duration = d
+		}
+	}
+
+	end := time.Now()
+	start := end.Add(-duration)
+
+	// Try to get native histogram data
+	snapshot, err := s.customMetricsStore.QueryHistogramSnapshot(metric, nil, start, end)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Build response for the histogram-chart component
+	response := struct {
+		Buckets     []string           `json:"buckets"`
+		Counts      []uint64           `json:"counts"`
+		Percentiles map[string]float64 `json:"percentiles"`
+		Total       uint64             `json:"total"`
+	}{
+		Buckets:     []string{},
+		Counts:      []uint64{},
+		Percentiles: make(map[string]float64),
+		Total:       0,
+	}
+
+	if snapshot != nil && snapshot.TotalCount > 0 {
+		// Convert bounds to bucket labels
+		for i, bound := range snapshot.Bounds {
+			var label string
+			if i == 0 {
+				label = formatDuration(0, bound)
+			} else {
+				label = formatDuration(snapshot.Bounds[i-1], bound)
+			}
+			response.Buckets = append(response.Buckets, label)
+		}
+		// Add +Inf bucket if there are more counts than bounds
+		if len(snapshot.Counts) > len(snapshot.Bounds) {
+			if len(snapshot.Bounds) > 0 {
+				response.Buckets = append(response.Buckets, formatDuration(snapshot.Bounds[len(snapshot.Bounds)-1], 0)+" +")
+			} else {
+				response.Buckets = append(response.Buckets, "all")
+			}
+		}
+
+		// Convert cumulative counts to per-bucket counts
+		var prevCount uint64
+		for _, count := range snapshot.Counts {
+			bucketCount := count - prevCount
+			response.Counts = append(response.Counts, bucketCount)
+			prevCount = count
+		}
+
+		response.Total = snapshot.TotalCount
+
+		// Compute percentiles from native histogram
+		response.Percentiles["p50"] = snapshot.Quantile(0.50)
+		response.Percentiles["p90"] = snapshot.Quantile(0.90)
+		response.Percentiles["p95"] = snapshot.Quantile(0.95)
+		response.Percentiles["p99"] = snapshot.Quantile(0.99)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// formatDuration formats a duration range for histogram bucket labels
+func formatDuration(low, high float64) string {
+	formatVal := func(v float64) string {
+		if v < 0.001 {
+			return fmt.Sprintf("%.0fus", v*1e6)
+		} else if v < 1 {
+			return fmt.Sprintf("%.0fms", v*1e3)
+		} else {
+			return fmt.Sprintf("%.1fs", v)
+		}
+	}
+
+	if high == 0 {
+		return formatVal(low)
+	}
+	return fmt.Sprintf("%s-%s", formatVal(low), formatVal(high))
 }
 
 // handlePrometheusRemoteWrite handles Prometheus remote write requests
