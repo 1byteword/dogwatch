@@ -27,12 +27,12 @@ No external dependencies. No Docker required. Just `./dogwatch` and go.
 
 ## Current Priorities (in order)
 
-1. **Migration tools** - Datadog/Grafana dashboard importers for easy switching
-2. **Full PromQL support** - 100% Prometheus query compatibility
-3. **Profile → Trace linking** - Click flamegraph hotspot → see related traces
+1. **Full PromQL support** - 100% Prometheus query compatibility
+2. **Profile → Trace linking** - Click flamegraph hotspot → see related traces
 
 ## Recently Completed
 
+- ✅ Migration tools (`dogwatch migrate` CLI + Web wizard for Datadog/Grafana/Prometheus)
 - ✅ Script engine & library (`dogwatch run mysql/slow_queries`)
 - ✅ MySQL/PostgreSQL/Redis eBPF parsing
 - ✅ OTLP receiver (gRPC + HTTP)
@@ -70,6 +70,7 @@ No external dependencies. No Docker required. Just `./dogwatch` and go.
 | `internal/synthetics/` | Synthetic monitoring |
 | `internal/correlation/` | Cross-signal correlation |
 | `internal/scripts/` | Script engine for instant analysis |
+| `internal/migration/` | Dashboard/alert migration from Datadog/Grafana/Prometheus |
 
 ## Code Style
 

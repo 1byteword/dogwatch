@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -67,6 +68,10 @@ func main() {
 	// Check for subcommands before flag parsing
 	if len(os.Args) > 1 && os.Args[1] == "run" {
 		runScriptCommand(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "migrate" {
+		runMigrateCommand(os.Args[2:])
 		return
 	}
 
@@ -1801,5 +1806,625 @@ func runScriptCommand(args []string) {
 	if err := formatter.Format(result); err != nil {
 		fmt.Fprintf(os.Stderr, "Error formatting output: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+func runMigrateCommand(args []string) {
+	fs := flag.NewFlagSet("migrate", flag.ExitOnError)
+	listFormats := fs.Bool("list", false, "List supported import formats")
+	preview := fs.Bool("preview", false, "Preview what will be imported without making changes")
+	source := fs.String("source", "", "Source platform: datadog, grafana, prometheus (auto-detected if not specified)")
+	format := fs.String("format", "table", "Output format: table, json")
+	skipUnsupported := fs.Bool("skip-unsupported", true, "Skip unsupported widgets/features")
+	enableAlerts := fs.Bool("enable-alerts", false, "Enable imported alerts immediately")
+	prefix := fs.String("prefix", "", "Prefix for imported dashboard/alert names")
+	dataDir := fs.String("data", "/var/lib/dogwatch", "Data directory")
+
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: dogwatch migrate [options] <file>\n\n")
+		fmt.Fprintf(os.Stderr, "Import dashboards and alerts from other observability platforms.\n\n")
+		fmt.Fprintf(os.Stderr, "Examples:\n")
+		fmt.Fprintf(os.Stderr, "  dogwatch migrate --list                        # List supported formats\n")
+		fmt.Fprintf(os.Stderr, "  dogwatch migrate --preview dashboard.json      # Preview import\n")
+		fmt.Fprintf(os.Stderr, "  dogwatch migrate dashboard.json                # Import dashboard\n")
+		fmt.Fprintf(os.Stderr, "  dogwatch migrate --source=datadog monitor.json # Explicit source\n")
+		fmt.Fprintf(os.Stderr, "  dogwatch migrate --format=json alerts.yaml     # JSON output\n\n")
+		fmt.Fprintf(os.Stderr, "Options:\n")
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(args); err != nil {
+		os.Exit(1)
+	}
+
+	// Handle --list flag
+	if *listFormats {
+		printMigrationFormats(*format)
+		return
+	}
+
+	// Require file argument
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "Error: input file required")
+		fmt.Fprintln(os.Stderr, "Run 'dogwatch migrate --list' to see supported formats")
+		os.Exit(1)
+	}
+
+	inputFile := fs.Arg(0)
+
+	// Read input file
+	data, err := os.ReadFile(inputFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Detect or use specified source
+	var sourcePlatform migration.SourcePlatform
+	if *source != "" {
+		sourcePlatform = migration.SourcePlatform(*source)
+	} else {
+		sourcePlatform = migration.DetectFormat(data)
+		if sourcePlatform == migration.PlatformUnknown {
+			fmt.Fprintln(os.Stderr, "Error: could not detect source format")
+			fmt.Fprintln(os.Stderr, "Use --source to specify: datadog, grafana, prometheus")
+			os.Exit(1)
+		}
+		fmt.Printf("Detected format: %s\n", sourcePlatform)
+	}
+
+	// Preview mode
+	if *preview {
+		previewMigration(data, sourcePlatform, *format)
+		return
+	}
+
+	// Initialize storage for actual import
+	dashboardDbPath := filepath.Join(*dataDir, "dashboards.db")
+	alertDbPath := filepath.Join(*dataDir, "alerts.db")
+
+	// Create dashboard store
+	dashStore, err := dashboard.NewStore(dashboardDbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening dashboard store: %v\n", err)
+		os.Exit(1)
+	}
+	defer dashStore.Close()
+
+	// Create alert manager (minimal init)
+	alertStore, err := alerting.NewStore(alertDbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening alert store: %v\n", err)
+		os.Exit(1)
+	}
+	defer alertStore.Close()
+
+	// Perform import
+	startTime := time.Now()
+
+	switch sourcePlatform {
+	case migration.PlatformDatadog:
+		importDatadog(data, dashStore, alertStore, *skipUnsupported, *enableAlerts, *prefix, *format, startTime)
+	case migration.PlatformGrafana:
+		importGrafana(data, dashStore, alertStore, *skipUnsupported, *enableAlerts, *prefix, *format, startTime)
+	case migration.PlatformPrometheus:
+		importPrometheus(data, alertStore, *enableAlerts, *prefix, *format, startTime)
+	default:
+		fmt.Fprintf(os.Stderr, "Unsupported source platform: %s\n", sourcePlatform)
+		os.Exit(1)
+	}
+}
+
+func printMigrationFormats(format string) {
+	formats := []struct {
+		Platform    string
+		Dashboards  bool
+		Alerts      bool
+		Description string
+	}{
+		{"datadog", true, true, "Datadog dashboard JSON and monitor exports"},
+		{"grafana", true, true, "Grafana dashboard JSON and alert rule exports"},
+		{"prometheus", false, true, "Prometheus alerting rules (YAML/JSON)"},
+	}
+
+	if format == "json" {
+		type formatInfo struct {
+			Platform    string `json:"platform"`
+			Dashboards  bool   `json:"dashboards"`
+			Alerts      bool   `json:"alerts"`
+			Description string `json:"description"`
+		}
+		output := make([]formatInfo, len(formats))
+		for i, f := range formats {
+			output[i] = formatInfo{f.Platform, f.Dashboards, f.Alerts, f.Description}
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(map[string]interface{}{"formats": output})
+		return
+	}
+
+	fmt.Println("Supported Migration Formats")
+	fmt.Println("===========================")
+	fmt.Println()
+	fmt.Printf("%-12s %-10s %-10s %s\n", "PLATFORM", "DASHBOARDS", "ALERTS", "DESCRIPTION")
+	fmt.Printf("%-12s %-10s %-10s %s\n", "--------", "----------", "------", "-----------")
+	for _, f := range formats {
+		dash := "No"
+		if f.Dashboards {
+			dash = "Yes"
+		}
+		alert := "No"
+		if f.Alerts {
+			alert = "Yes"
+		}
+		fmt.Printf("%-12s %-10s %-10s %s\n", f.Platform, dash, alert, f.Description)
+	}
+	fmt.Println()
+	fmt.Println("Usage:")
+	fmt.Println("  dogwatch migrate dashboard.json          # Auto-detect format")
+	fmt.Println("  dogwatch migrate --source=datadog file   # Explicit format")
+	fmt.Println("  dogwatch migrate --preview file          # Preview before import")
+}
+
+// migratePreviewItem represents an item found during migration preview
+type migratePreviewItem struct {
+	Type        string `json:"type"`
+	Name        string `json:"name"`
+	Details     string `json:"details,omitempty"`
+	Convertible bool   `json:"convertible"`
+}
+
+func previewMigration(data []byte, source migration.SourcePlatform, format string) {
+	var items []migratePreviewItem
+	var warnings []string
+
+	switch source {
+	case migration.PlatformDatadog:
+		items, warnings = previewDatadog(data)
+	case migration.PlatformGrafana:
+		items, warnings = previewGrafana(data)
+	case migration.PlatformPrometheus:
+		items, warnings = previewPrometheus(data)
+	}
+
+	if format == "json" {
+		output := map[string]interface{}{
+			"source":   source,
+			"items":    items,
+			"warnings": warnings,
+			"count":    len(items),
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(output)
+		return
+	}
+
+	fmt.Printf("Migration Preview (source: %s)\n", source)
+	fmt.Println(strings.Repeat("=", 50))
+	fmt.Println()
+
+	if len(items) == 0 {
+		fmt.Println("No importable items found in file.")
+		return
+	}
+
+	fmt.Printf("Found %d item(s) to import:\n\n", len(items))
+	fmt.Printf("%-10s %-40s %s\n", "TYPE", "NAME", "STATUS")
+	fmt.Printf("%-10s %-40s %s\n", "----", "----", "------")
+
+	for _, item := range items {
+		status := "Ready"
+		if !item.Convertible {
+			status = "Unsupported"
+		}
+		name := item.Name
+		if len(name) > 38 {
+			name = name[:35] + "..."
+		}
+		fmt.Printf("%-10s %-40s %s\n", item.Type, name, status)
+	}
+
+	if len(warnings) > 0 {
+		fmt.Println()
+		fmt.Println("Warnings:")
+		for _, w := range warnings {
+			fmt.Printf("  - %s\n", w)
+		}
+	}
+
+	fmt.Println()
+	fmt.Println("Run without --preview to perform the import.")
+}
+
+func previewDatadog(data []byte) ([]migratePreviewItem, []string) {
+	var items []migratePreviewItem
+	var warnings []string
+
+	// Try to parse as dashboard
+	var dash struct {
+		Title      string `json:"title"`
+		LayoutType string `json:"layout_type"`
+		Widgets    []struct {
+			Definition struct {
+				Title string `json:"title"`
+				Type  string `json:"type"`
+			} `json:"definition"`
+		} `json:"widgets"`
+	}
+
+	if err := json.Unmarshal(data, &dash); err == nil && dash.Title != "" {
+		details := fmt.Sprintf("%d widgets", len(dash.Widgets))
+		items = append(items, migratePreviewItem{
+			Type:        "dashboard",
+			Name:        dash.Title,
+			Details:     details,
+			Convertible: true,
+		})
+
+		// Check for unsupported widget types
+		unsupported := make(map[string]int)
+		for _, w := range dash.Widgets {
+			wtype := w.Definition.Type
+			if wtype == "slo" || wtype == "service_map" || wtype == "topology_map" {
+				unsupported[wtype]++
+			}
+		}
+		for wtype, count := range unsupported {
+			warnings = append(warnings, fmt.Sprintf("%d %s widget(s) may not convert fully", count, wtype))
+		}
+		return items, warnings
+	}
+
+	// Try to parse as monitor
+	var monitor struct {
+		Name    string `json:"name"`
+		Type    string `json:"type"`
+		Query   string `json:"query"`
+		Message string `json:"message"`
+	}
+
+	if err := json.Unmarshal(data, &monitor); err == nil && monitor.Name != "" && monitor.Query != "" {
+		items = append(items, migratePreviewItem{
+			Type:        "alert",
+			Name:        monitor.Name,
+			Details:     monitor.Type,
+			Convertible: true,
+		})
+		return items, warnings
+	}
+
+	return items, warnings
+}
+
+func previewGrafana(data []byte) ([]migratePreviewItem, []string) {
+	var items []migratePreviewItem
+	var warnings []string
+
+	// Try to parse as dashboard
+	var dash struct {
+		Title         string `json:"title"`
+		SchemaVersion int    `json:"schemaVersion"`
+		Panels        []struct {
+			Title string `json:"title"`
+			Type  string `json:"type"`
+		} `json:"panels"`
+	}
+
+	if err := json.Unmarshal(data, &dash); err == nil && dash.Title != "" {
+		details := fmt.Sprintf("%d panels", len(dash.Panels))
+		items = append(items, migratePreviewItem{
+			Type:        "dashboard",
+			Name:        dash.Title,
+			Details:     details,
+			Convertible: true,
+		})
+		return items, warnings
+	}
+
+	return items, warnings
+}
+
+func previewPrometheus(data []byte) ([]migratePreviewItem, []string) {
+	var items []migratePreviewItem
+	var warnings []string
+
+	// Try YAML-style content (simple heuristic)
+	content := string(data)
+	if strings.Contains(content, "groups:") || strings.Contains(content, "rules:") {
+		// Count alert rules (rough estimate)
+		count := strings.Count(content, "alert:")
+		if count > 0 {
+			items = append(items, migratePreviewItem{
+				Type:        "alert",
+				Name:        fmt.Sprintf("Prometheus alerting rules (%d rules)", count),
+				Convertible: true,
+			})
+		}
+	}
+
+	return items, warnings
+}
+
+func importDatadog(data []byte, dashStore *dashboard.Store, alertStore *alerting.Store,
+	skipUnsupported, enableAlerts bool, prefix, format string, startTime time.Time) {
+
+	opts := migration.DashboardImportOptions{
+		SkipUnsupportedWidgets: skipUnsupported,
+		DashboardNamePrefix:    prefix,
+	}
+
+	importer := migration.NewDatadogImporter(opts)
+
+	// Try dashboard import first
+	converted, result, err := importer.ImportDashboard(data)
+	if err == nil && converted != nil {
+		// Save dashboard
+		name := converted.Dashboard.Name
+		if prefix != "" {
+			name = prefix + name
+		}
+
+		savedDash, err := dashStore.Create(name, converted.Dashboard.Layout, false)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving dashboard: %v\n", err)
+			os.Exit(1)
+		}
+
+		duration := time.Since(startTime)
+
+		if format == "json" {
+			output := map[string]interface{}{
+				"success":           true,
+				"type":              "dashboard",
+				"source":            "datadog",
+				"dashboard_id":      savedDash.ID,
+				"dashboard_name":    savedDash.Name,
+				"widgets_total":     result.WidgetsTotal,
+				"widgets_converted": result.WidgetsConverted,
+				"widgets_skipped":   result.WidgetsSkipped,
+				"warnings":          result.Warnings,
+				"duration":          duration.String(),
+			}
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			enc.Encode(output)
+			return
+		}
+
+		fmt.Println("Import Successful!")
+		fmt.Println("==================")
+		fmt.Printf("Type:              Dashboard\n")
+		fmt.Printf("Source:            Datadog\n")
+		fmt.Printf("Name:              %s\n", savedDash.Name)
+		fmt.Printf("ID:                %s\n", savedDash.ID)
+		fmt.Printf("Widgets converted: %d/%d\n", result.WidgetsConverted, result.WidgetsTotal)
+		if result.WidgetsSkipped > 0 {
+			fmt.Printf("Widgets skipped:   %d\n", result.WidgetsSkipped)
+		}
+		fmt.Printf("Duration:          %v\n", duration)
+
+		if len(result.Warnings) > 0 {
+			fmt.Println("\nWarnings:")
+			for _, w := range result.Warnings {
+				fmt.Printf("  - %s\n", w)
+			}
+		}
+
+		fmt.Printf("\nView dashboard at: /dashboards/%s\n", savedDash.ID)
+		return
+	}
+
+	// Try monitor import
+	alertOpts := migration.AlertImportOptions{
+		EnableImportedAlerts: enableAlerts,
+		AlertNamePrefix:      prefix,
+	}
+
+	convertedAlerts, alertResults, err := importer.ImportMonitors(data, alertOpts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error importing: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Save alerts
+	importedCount := 0
+	failedCount := 0
+	for _, ca := range convertedAlerts {
+		if ca.Rule != nil {
+			err := alertStore.CreateRule(ca.Rule)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not save alert %s: %v\n", ca.Rule.Name, err)
+				failedCount++
+			} else {
+				importedCount++
+			}
+		}
+	}
+
+	// Count from results
+	var warnings []string
+	for _, r := range alertResults {
+		warnings = append(warnings, r.Warnings...)
+	}
+
+	duration := time.Since(startTime)
+
+	if format == "json" {
+		output := map[string]interface{}{
+			"success":         true,
+			"type":            "alerts",
+			"source":          "datadog",
+			"alerts_imported": importedCount,
+			"alerts_failed":   failedCount,
+			"warnings":        warnings,
+			"duration":        duration.String(),
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(output)
+		return
+	}
+
+	fmt.Println("Import Successful!")
+	fmt.Println("==================")
+	fmt.Printf("Type:            Alerts\n")
+	fmt.Printf("Source:          Datadog\n")
+	fmt.Printf("Alerts imported: %d\n", importedCount)
+	if failedCount > 0 {
+		fmt.Printf("Alerts failed:   %d\n", failedCount)
+	}
+	fmt.Printf("Duration:        %v\n", duration)
+
+	if len(warnings) > 0 {
+		fmt.Println("\nWarnings:")
+		for _, w := range warnings {
+			fmt.Printf("  - %s\n", w)
+		}
+	}
+}
+
+func importGrafana(data []byte, dashStore *dashboard.Store, alertStore *alerting.Store,
+	skipUnsupported, enableAlerts bool, prefix, format string, startTime time.Time) {
+
+	opts := migration.DashboardImportOptions{
+		SkipUnsupportedWidgets: skipUnsupported,
+		DashboardNamePrefix:    prefix,
+	}
+
+	importer := migration.NewGrafanaImporter(opts)
+
+	// Try dashboard import
+	converted, result, err := importer.ImportDashboard(data)
+	if err == nil && converted != nil {
+		name := converted.Dashboard.Name
+		if prefix != "" {
+			name = prefix + name
+		}
+
+		savedDash, err := dashStore.Create(name, converted.Dashboard.Layout, false)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving dashboard: %v\n", err)
+			os.Exit(1)
+		}
+
+		duration := time.Since(startTime)
+
+		if format == "json" {
+			output := map[string]interface{}{
+				"success":          true,
+				"type":             "dashboard",
+				"source":           "grafana",
+				"dashboard_id":     savedDash.ID,
+				"dashboard_name":   savedDash.Name,
+				"panels_total":     result.WidgetsTotal,
+				"panels_converted": result.WidgetsConverted,
+				"panels_skipped":   result.WidgetsSkipped,
+				"warnings":         result.Warnings,
+				"duration":         duration.String(),
+			}
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			enc.Encode(output)
+			return
+		}
+
+		fmt.Println("Import Successful!")
+		fmt.Println("==================")
+		fmt.Printf("Type:             Dashboard\n")
+		fmt.Printf("Source:           Grafana\n")
+		fmt.Printf("Name:             %s\n", savedDash.Name)
+		fmt.Printf("ID:               %s\n", savedDash.ID)
+		fmt.Printf("Panels converted: %d/%d\n", result.WidgetsConverted, result.WidgetsTotal)
+		if result.WidgetsSkipped > 0 {
+			fmt.Printf("Panels skipped:   %d\n", result.WidgetsSkipped)
+		}
+		fmt.Printf("Duration:         %v\n", duration)
+
+		if len(result.Warnings) > 0 {
+			fmt.Println("\nWarnings:")
+			for _, w := range result.Warnings {
+				fmt.Printf("  - %s\n", w)
+			}
+		}
+
+		fmt.Printf("\nView dashboard at: /dashboards/%s\n", savedDash.ID)
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "Could not import Grafana content: %v\n", err)
+	os.Exit(1)
+}
+
+func importPrometheus(data []byte, alertStore *alerting.Store,
+	enableAlerts bool, prefix, format string, startTime time.Time) {
+
+	opts := migration.AlertImportOptions{
+		EnableImportedAlerts: enableAlerts,
+		AlertNamePrefix:      prefix,
+	}
+
+	importer := migration.NewAlertImporter()
+	convertedAlerts, alertResults, err := importer.ImportPrometheusRules(data, opts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error importing Prometheus rules: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Save alerts
+	importedCount := 0
+	failedCount := 0
+	for _, ca := range convertedAlerts {
+		if ca.Rule != nil {
+			err := alertStore.CreateRule(ca.Rule)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not save alert %s: %v\n", ca.Rule.Name, err)
+				failedCount++
+			} else {
+				importedCount++
+			}
+		}
+	}
+
+	// Collect warnings
+	var warnings []string
+	for _, r := range alertResults {
+		warnings = append(warnings, r.Warnings...)
+	}
+
+	duration := time.Since(startTime)
+
+	if format == "json" {
+		output := map[string]interface{}{
+			"success":         true,
+			"type":            "alerts",
+			"source":          "prometheus",
+			"alerts_imported": importedCount,
+			"alerts_failed":   failedCount,
+			"warnings":        warnings,
+			"duration":        duration.String(),
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(output)
+		return
+	}
+
+	fmt.Println("Import Successful!")
+	fmt.Println("==================")
+	fmt.Printf("Type:            Alerts\n")
+	fmt.Printf("Source:          Prometheus\n")
+	fmt.Printf("Alerts imported: %d\n", importedCount)
+	if failedCount > 0 {
+		fmt.Printf("Alerts failed:   %d\n", failedCount)
+	}
+	fmt.Printf("Duration:        %v\n", duration)
+
+	if len(warnings) > 0 {
+		fmt.Println("\nWarnings:")
+		for _, w := range warnings {
+			fmt.Printf("  - %s\n", w)
+		}
 	}
 }
