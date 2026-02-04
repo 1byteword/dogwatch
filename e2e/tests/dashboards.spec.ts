@@ -158,6 +158,112 @@ test.describe('Dashboards API', () => {
   });
 });
 
+test.describe('Dashboard Folders API', () => {
+  let folderId: string;
+
+  test('list folders', async ({ request }) => {
+    const response = await request.get('/api/folders');
+    expect(response.status()).toBe(200);
+
+    const body = await response.json();
+    expect(body === null || Array.isArray(body)).toBe(true);
+  });
+
+  test('create folder', async ({ request }) => {
+    const response = await request.post('/api/folders', {
+      data: { name: 'E2E Test Folder' },
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    // 403 = CSRF protection
+    expect([200, 201, 403]).toContain(response.status());
+
+    if (response.status() === 200 || response.status() === 201) {
+      const body = await response.json();
+      expect(body.id).toBeDefined();
+      expect(body.name).toBe('E2E Test Folder');
+      folderId = body.id;
+    }
+  });
+
+  test('get folder tree', async ({ request }) => {
+    const response = await request.get('/api/folders/tree');
+    expect(response.status()).toBe(200);
+
+    const body = await response.json();
+    expect(body.folders !== undefined || body.dashboards !== undefined).toBe(true);
+  });
+
+  test('rename folder', async ({ request }) => {
+    // Create first
+    const createResp = await request.post('/api/folders', {
+      data: { name: 'E2E Rename Test' },
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    if (createResp.status() === 200 || createResp.status() === 201) {
+      const created = await createResp.json();
+      const id = created.id;
+
+      const response = await request.put(`/api/folders/${id}`, {
+        data: { name: 'E2E Renamed Folder' },
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      expect([200, 204]).toContain(response.status());
+    }
+  });
+
+  test('delete folder', async ({ request }) => {
+    // Create then delete
+    const createResp = await request.post('/api/folders', {
+      data: { name: 'E2E Delete Folder Test' },
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    if (createResp.status() === 200 || createResp.status() === 201) {
+      const created = await createResp.json();
+      const id = created.id;
+
+      const response = await request.delete(`/api/folders/${id}`);
+      expect([200, 204]).toContain(response.status());
+    }
+  });
+
+  test('move dashboard to folder', async ({ request }) => {
+    // Create folder
+    const folderResp = await request.post('/api/folders', {
+      data: { name: 'E2E Move Target Folder' },
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    if (folderResp.status() !== 200 && folderResp.status() !== 201) return;
+    const folder = await folderResp.json();
+
+    // Create dashboard
+    const dashResp = await request.post('/api/dashboards', {
+      data: { name: 'E2E Move Dashboard Test', layout: [] },
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    if (dashResp.status() !== 200 && dashResp.status() !== 201) return;
+    const dashboard = await dashResp.json();
+
+    // Move dashboard to folder
+    const response = await request.post(`/api/dashboards/${dashboard.id}/move`, {
+      data: { folder_id: folder.id },
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    expect([200, 204]).toContain(response.status());
+
+    if (response.status() === 200) {
+      const body = await response.json();
+      expect(body.folder_id).toBe(folder.id);
+    }
+  });
+});
+
 test.describe('Dashboard UI', () => {
   test('dashboard page loads', async ({ page }) => {
     await page.goto('/');

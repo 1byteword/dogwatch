@@ -106,6 +106,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             // Wait for GridStack to finish rendering before loading data
             requestAnimationFrame(() => {
                 startDataRefresh();
+                loadDashboardTree();
             });
 
             // Reveal app with smooth fade-in
@@ -1616,104 +1617,22 @@ async function showNotificationHistory() {
 // Widget definitions
 // =====================================
 const defaultLayout = [
-    // =============================================
-    // HERO SECTION: System health at a glance
-    // =============================================
-    // Row 0-1: System metrics (4 equal cards)
+    // Streamlined default: 8 essential widgets that fit on one screen
+    // Users can add more via the widget picker
+
+    // Row 0-1: System health at a glance (4 cards)
     { id: 'cpu', x: 0, y: 0, w: 3, h: 2, minW: 2, minH: 2 },
     { id: 'mem', x: 3, y: 0, w: 3, h: 2, minW: 2, minH: 2 },
     { id: 'disk', x: 6, y: 0, w: 3, h: 2, minW: 2, minH: 2 },
     { id: 'net', x: 9, y: 0, w: 3, h: 2, minW: 2, minH: 2 },
 
-    // =============================================
-    // PRIMARY SECTION: Service topology + Alerts
-    // =============================================
-    // Row 2-6: Service map (left 8) + Alerts (right 4) - critical ops view
+    // Row 2-6: Service map (visual topology hero) + Alerts (critical ops)
     { id: 'svcmap', x: 0, y: 2, w: 8, h: 5, minW: 6, minH: 4 },
     { id: 'alerting', x: 8, y: 2, w: 4, h: 5, minW: 3, minH: 4 },
 
-    // =============================================
-    // SECONDARY SECTION: SLOs + Request flow
-    // =============================================
-    // Row 7-10: SLOs (left 4) + Traces (center 4) + Endpoints (right 4)
-    { id: 'slos', x: 0, y: 7, w: 4, h: 4, minW: 3, minH: 3 },
-    { id: 'traces', x: 4, y: 7, w: 4, h: 4, minW: 3, minH: 3 },
-    { id: 'endpoints', x: 8, y: 7, w: 4, h: 4, minW: 3, minH: 3 },
-
-    // =============================================
-    // CHARTS SECTION: Time-series trends
-    // =============================================
-    // Row 11-13: CPU + Memory charts side by side
-    { id: 'cpuchart', x: 0, y: 11, w: 6, h: 3, minW: 4, minH: 3 },
-    { id: 'memchart', x: 6, y: 11, w: 6, h: 3, minW: 4, minH: 3 },
-
-    // =============================================
-    // OPERATIONAL SECTION: Logs + Recent activity
-    // =============================================
-    // Row 14-17: Logs (left 6) + Deployments/Incidents stacked (right 6)
-    { id: 'logs', x: 0, y: 14, w: 6, h: 4, minW: 5, minH: 3 },
-    { id: 'deployments', x: 6, y: 14, w: 6, h: 4, minW: 4, minH: 3 },
-
-    // Row 18-21: Watches/Incidents + Synthetics
-    { id: 'incidents', x: 0, y: 18, w: 6, h: 4, minW: 4, minH: 3 },
-    { id: 'synthetics', x: 6, y: 18, w: 6, h: 4, minW: 4, minH: 3 },
-
-    // =============================================
-    // INFRASTRUCTURE SECTION: Containers + K8s
-    // =============================================
-    // Row 22-25: Containers + Cluster side by side
-    { id: 'containers', x: 0, y: 22, w: 6, h: 4, minW: 4, minH: 3 },
-    { id: 'cluster', x: 6, y: 22, w: 6, h: 4, minW: 4, minH: 3 },
-
-    // Row 26-30: Kubernetes (full width - complex widget)
-    { id: 'kubernetes', x: 0, y: 26, w: 12, h: 5, minW: 8, minH: 4 },
-
-    // =============================================
-    // ANALYTICS SECTION: Patterns + Anomalies
-    // =============================================
-    // Row 31-34: Log patterns + Anomaly detection
-    { id: 'patterns', x: 0, y: 31, w: 6, h: 4, minW: 4, minH: 3 },
-    { id: 'anomaly', x: 6, y: 31, w: 6, h: 4, minW: 4, minH: 3 },
-
-    // =============================================
-    // CATALOG SECTION: Service registry + Status
-    // =============================================
-    // Row 35-39: Service catalog (left 7) + Status page (right 5)
-    { id: 'catalog', x: 0, y: 35, w: 7, h: 5, minW: 5, minH: 4 },
-    { id: 'statuspage', x: 7, y: 35, w: 5, h: 5, minW: 4, minH: 4 },
-
-    // =============================================
-    // DEEP DIVE SECTION: Profiling + Correlation
-    // =============================================
-    // Row 40-43: Flamegraph + Correlation
-    { id: 'flamegraph', x: 0, y: 40, w: 6, h: 4, minW: 4, minH: 3 },
-    { id: 'correlation', x: 6, y: 40, w: 6, h: 4, minW: 4, minH: 3 },
-
-    // =============================================
-    // DATA SECTION: DB + Cardinality + Stats
-    // =============================================
-    // Row 44-48: DB Watch (left 8) + Stats (right 4)
-    { id: 'dbwatch', x: 0, y: 44, w: 8, h: 5, minW: 6, minH: 4 },
-    { id: 'cardinality', x: 8, y: 44, w: 4, h: 5, minW: 3, minH: 4 },
-
-    // =============================================
-    // COST SECTION: Value proposition (marketing)
-    // =============================================
-    // Row 49-52: Cost Intelligence (full width - key differentiator)
-    { id: 'costintel', x: 0, y: 49, w: 12, h: 4, minW: 8, minH: 3 },
-
-    // =============================================
-    // DETAIL SECTION: Processes + Connections
-    // =============================================
-    // Row 53-56: Lower-priority detailed views
-    { id: 'procs', x: 0, y: 53, w: 6, h: 4, minW: 3, minH: 3 },
-    { id: 'connlist', x: 6, y: 53, w: 6, h: 4, minW: 3, minH: 3 },
-
-    // Quick stats (small cards - can be placed in gaps or at bottom)
-    { id: 'conns', x: 0, y: 57, w: 2, h: 2, minW: 2, minH: 2 },
-    { id: 'reqs', x: 2, y: 57, w: 2, h: 2, minW: 2, minH: 2 },
-    { id: 'errs', x: 4, y: 57, w: 2, h: 2, minW: 2, minH: 2 },
-    { id: 'watches', x: 6, y: 57, w: 6, h: 2, minW: 4, minH: 2 },
+    // Row 7-10: Logs (common investigation) + Traces (distributed tracing)
+    { id: 'logs', x: 0, y: 7, w: 8, h: 4, minW: 5, minH: 3 },
+    { id: 'traces', x: 8, y: 7, w: 4, h: 4, minW: 3, minH: 3 },
 ];
 
 function widgetCPU() {
@@ -2761,6 +2680,7 @@ async function saveDashboard() {
                 body: JSON.stringify({ name, layout })
             });
             loadDashboards();
+            loadDashboardTree();
         } catch (e) { alert('Failed to save dashboard'); }
     } else {
         // Create new dashboard
@@ -2775,6 +2695,7 @@ async function saveDashboard() {
             const dash = await resp.json();
             currentDashboardId = dash.id;
             loadDashboards();
+            loadDashboardTree();
             document.getElementById('dashboard-select').value = dash.id;
         } catch (e) { alert('Failed to create dashboard'); }
     }
@@ -2826,6 +2747,7 @@ async function setDefaultDashboard(id) {
         await fetch(`/api/dashboards/${id}/default`, { method: 'POST' });
         await loadDashboards();
         renderDashboardList();
+        loadDashboardTree();
     } catch (e) { alert('Failed to set default'); }
 }
 
@@ -2839,8 +2761,253 @@ async function deleteDashboard(id) {
         }
         await loadDashboards();
         renderDashboardList();
+        loadDashboardTree();
     } catch (e) { alert('Failed to delete dashboard'); }
 }
+
+// =====================================
+// Dashboard Tree (Folder Navigation)
+// =====================================
+let dashboardFolders = [];
+let expandedFolders = new Set();
+
+async function loadDashboardTree() {
+    try {
+        const resp = await fetch('/api/folders/tree');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        dashboardFolders = data.folders || [];
+        const rootDashboards = data.dashboards || [];
+        renderDashboardTree(dashboardFolders, rootDashboards);
+    } catch (e) {
+        console.error('Failed to load dashboard tree:', e);
+    }
+}
+
+function renderDashboardTree(folders, rootDashboards) {
+    const container = document.getElementById('dashboard-tree-content');
+    if (!container) return;
+
+    let html = '';
+
+    // Render folders
+    folders.forEach(folder => {
+        html += renderTreeFolder(folder);
+    });
+
+    // Render root dashboards
+    if (rootDashboards && rootDashboards.length > 0) {
+        rootDashboards.forEach(dash => {
+            html += renderTreeDashboard(dash);
+        });
+    }
+
+    // Default layout option
+    html += `
+        <div class="tree-dashboard ${!currentDashboardId ? 'active' : ''}" onclick="loadDashboard('')">
+            <span class="tree-dashboard-icon">&#128200;</span>
+            <span class="tree-dashboard-name">Default Layout</span>
+        </div>
+    `;
+
+    container.innerHTML = html;
+}
+
+function renderTreeFolder(folder, depth = 0) {
+    const isExpanded = expandedFolders.has(folder.id);
+    let html = `
+        <div class="tree-folder ${isExpanded ? 'expanded' : ''}" data-folder-id="${folder.id}">
+            <div class="tree-folder-header" onclick="toggleFolder('${folder.id}')">
+                <span class="tree-folder-icon">&#9658;</span>
+                <span class="tree-folder-name">${escapeHtml(folder.name)}</span>
+                <div class="tree-folder-actions" onclick="event.stopPropagation()">
+                    <button onclick="renameFolder('${folder.id}', '${escapeHtml(folder.name)}')" title="Rename">&#9998;</button>
+                    <button onclick="deleteFolder('${folder.id}')" title="Delete">&#128465;</button>
+                </div>
+            </div>
+            <div class="tree-folder-children">
+    `;
+
+    // Render child folders
+    if (folder.children) {
+        folder.children.forEach(child => {
+            html += renderTreeFolder(child, depth + 1);
+        });
+    }
+
+    // Render dashboards in folder
+    if (folder.dashboards) {
+        folder.dashboards.forEach(dash => {
+            html += renderTreeDashboard(dash);
+        });
+    }
+
+    html += '</div></div>';
+    return html;
+}
+
+function renderTreeDashboard(dash) {
+    const isActive = currentDashboardId === dash.id;
+    return `
+        <div class="tree-dashboard ${isActive ? 'active' : ''}" onclick="loadDashboardFromTree('${dash.id}')">
+            <span class="tree-dashboard-icon">&#128196;</span>
+            <span class="tree-dashboard-name">${escapeHtml(dash.name)}</span>
+            ${dash.is_default ? '<span class="tree-dashboard-default">*</span>' : ''}
+            <div class="tree-dashboard-actions" onclick="event.stopPropagation()">
+                <button onclick="moveDashboardPrompt('${dash.id}')" title="Move">&#128193;</button>
+            </div>
+        </div>
+    `;
+}
+
+function toggleFolder(folderId) {
+    if (expandedFolders.has(folderId)) {
+        expandedFolders.delete(folderId);
+    } else {
+        expandedFolders.add(folderId);
+    }
+    // Re-render with current data
+    loadDashboardTree();
+}
+
+async function loadDashboardFromTree(id) {
+    currentDashboardId = id;
+    await loadDashboard(id);
+    // Update tree to show active state
+    document.querySelectorAll('.tree-dashboard').forEach(el => {
+        el.classList.remove('active');
+    });
+    const activeEl = document.querySelector(`.tree-dashboard[onclick*="'${id}'"]`);
+    if (activeEl) activeEl.classList.add('active');
+    // Sync dropdown
+    const select = document.getElementById('dashboard-select');
+    if (select) select.value = id;
+}
+
+function showCreateFolderModal() {
+    const name = prompt('Folder name:');
+    if (!name) return;
+    createFolder(name);
+}
+
+async function createFolder(name, parentId = null) {
+    try {
+        const body = { name };
+        if (parentId) body.parent_id = parentId;
+        const resp = await fetch('/api/folders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        if (resp.ok) {
+            loadDashboardTree();
+        } else {
+            alert('Failed to create folder');
+        }
+    } catch (e) {
+        alert('Failed to create folder');
+    }
+}
+
+async function renameFolder(id, currentName) {
+    const name = prompt('Folder name:', currentName);
+    if (!name || name === currentName) return;
+    try {
+        const resp = await fetch(`/api/folders/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+        });
+        if (resp.ok) {
+            loadDashboardTree();
+        } else {
+            alert('Failed to rename folder');
+        }
+    } catch (e) {
+        alert('Failed to rename folder');
+    }
+}
+
+async function deleteFolder(id) {
+    if (!confirm('Delete this folder? Dashboards inside will be moved to root.')) return;
+    try {
+        const resp = await fetch(`/api/folders/${id}`, { method: 'DELETE' });
+        if (resp.ok) {
+            expandedFolders.delete(id);
+            loadDashboardTree();
+        } else {
+            alert('Failed to delete folder');
+        }
+    } catch (e) {
+        alert('Failed to delete folder');
+    }
+}
+
+async function moveDashboardPrompt(dashboardId) {
+    // Build folder options
+    let options = '<option value="">Root (no folder)</option>';
+    function addFolderOptions(folders, prefix = '') {
+        folders.forEach(f => {
+            options += `<option value="${f.id}">${prefix}${escapeHtml(f.name)}</option>`;
+            if (f.children) {
+                addFolderOptions(f.children, prefix + '&nbsp;&nbsp;');
+            }
+        });
+    }
+    addFolderOptions(dashboardFolders);
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+        <div class="modal">
+            <div class="modal-header">
+                <span class="modal-title">Move Dashboard</span>
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <label style="display: block; margin-bottom: 0.5rem;">Select folder:</label>
+                <select id="move-folder-select" class="form-select" style="width: 100%;">
+                    ${options}
+                </select>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+                <button class="btn btn-primary" onclick="moveDashboard('${dashboardId}')">Move</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+}
+
+async function moveDashboard(dashboardId) {
+    const select = document.getElementById('move-folder-select');
+    const folderId = select.value || null;
+    try {
+        const resp = await fetch(`/api/dashboards/${dashboardId}/move`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ folder_id: folderId })
+        });
+        if (resp.ok) {
+            document.querySelector('.modal-overlay').remove();
+            loadDashboardTree();
+            loadDashboards();
+        } else {
+            alert('Failed to move dashboard');
+        }
+    } catch (e) {
+        alert('Failed to move dashboard');
+    }
+}
+
+// Expose folder functions globally
+window.showCreateFolderModal = showCreateFolderModal;
+window.toggleFolder = toggleFolder;
+window.loadDashboardFromTree = loadDashboardFromTree;
+window.renameFolder = renameFolder;
+window.deleteFolder = deleteFolder;
+window.moveDashboardPrompt = moveDashboardPrompt;
+window.moveDashboard = moveDashboard;
 
 // Note: grid.on, loadLayout, loadDashboards are now called in initGrid() and the DOMContentLoaded handler
 // to ensure proper initialization order and avoid calling methods on null grid object

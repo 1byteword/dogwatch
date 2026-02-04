@@ -368,3 +368,211 @@
 .sidebar-resizing * {
     cursor: col-resize !important;
 }
+
+/* ==================== Dashboard Tree ==================== */
+
+.dashboard-tree {
+    padding: 0.5rem 0;
+    overflow-y: auto;
+    max-height: 300px;
+}
+
+.dashboard-tree-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 1rem;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+}
+
+.dashboard-tree-header button {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0.25rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    line-height: 1;
+}
+
+.dashboard-tree-header button:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+/* Tree folder */
+.tree-folder {
+    margin: 0;
+}
+
+.tree-folder-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.75rem 0.4rem 1rem;
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    transition: background 0.15s ease;
+    user-select: none;
+}
+
+.tree-folder-header:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.tree-folder-icon {
+    font-size: 0.75rem;
+    width: 16px;
+    text-align: center;
+    transition: transform 0.15s ease;
+}
+
+.tree-folder.expanded > .tree-folder-header .tree-folder-icon {
+    transform: rotate(90deg);
+}
+
+.tree-folder-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tree-folder-actions {
+    opacity: 0;
+    display: flex;
+    gap: 0.25rem;
+}
+
+.tree-folder-header:hover .tree-folder-actions {
+    opacity: 1;
+}
+
+.tree-folder-actions button {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0.15rem 0.3rem;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    line-height: 1;
+}
+
+.tree-folder-actions button:hover {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+}
+
+/* Tree folder children */
+.tree-folder-children {
+    display: none;
+    padding-left: 0.75rem;
+}
+
+.tree-folder.expanded > .tree-folder-children {
+    display: block;
+}
+
+/* Tree dashboard item */
+.tree-dashboard {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0.75rem 0.35rem 1.5rem;
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    transition: background 0.15s ease;
+    text-decoration: none;
+}
+
+.tree-dashboard:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.tree-dashboard.active {
+    color: var(--color-info);
+    background: var(--bg-active);
+}
+
+.tree-dashboard-icon {
+    font-size: 0.7rem;
+    width: 14px;
+    opacity: 0.7;
+}
+
+.tree-dashboard-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tree-dashboard-default {
+    font-size: 0.6rem;
+    color: var(--color-info);
+    opacity: 0.8;
+}
+
+.tree-dashboard-actions {
+    opacity: 0;
+    display: flex;
+    gap: 0.25rem;
+}
+
+.tree-dashboard:hover .tree-dashboard-actions {
+    opacity: 1;
+}
+
+.tree-dashboard-actions button {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0.15rem 0.3rem;
+    border-radius: 3px;
+    font-size: 0.65rem;
+    line-height: 1;
+}
+
+.tree-dashboard-actions button:hover {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+}
+
+/* Root dashboards (not in folder) */
+.tree-root-dashboards {
+    border-top: 1px solid var(--border-color);
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+}
+
+/* Collapsed sidebar - hide tree */
+.sidebar.collapsed .dashboard-tree {
+    display: none;
+}
+
+/* Create folder modal input */
+.folder-name-input {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+}
+
+.folder-name-input:focus {
+    outline: none;
+    border-color: var(--color-info);
+}

@@ -1,31 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-  <!-- Sitting dog facing left - matching the logo -->
-
-  <!-- Left ear -->
-  <path d="M8 12 L6 4 L11 10"/>
-
-  <!-- Right ear -->
-  <path d="M14 10 L16 4 L14 12"/>
-
-  <!-- Head outline -->
-  <path d="M6 12 C4 14 4 18 8 20 L12 20 C16 18 17 14 15 12"/>
-
-  <!-- Snout -->
-  <path d="M4 16 C2 16 2 19 4 19 L8 20"/>
-
-  <!-- Eye -->
-  <circle cx="9" cy="14" r="1" fill="currentColor"/>
-
-  <!-- Nose -->
-  <circle cx="3" cy="17" r="0.8" fill="currentColor"/>
-
-  <!-- Body - sitting -->
-  <path d="M12 20 C14 22 14 26 12 28 L10 30"/>
-  <path d="M8 20 C6 22 5 26 7 28 L10 30"/>
-
-  <!-- Front legs/paws -->
-  <path d="M10 30 L14 30"/>
-
-  <!-- Tail curving up -->
-  <path d="M12 26 C16 26 18 22 17 18"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="currentColor">
+  <!-- Geometric dog head - works at 16px, 24px, 32px, 48px -->
+  <path d="M8 26 L8 14 L6 6 L10 10 L14 6 L16 10 L20 6 L18 14 L18 18 L22 18 L24 20 L24 24 L22 26 L8 26 Z"/>
+  <!-- Eye cutout -->
+  <circle cx="12" cy="18" r="1.5" fill="var(--bg, #0f1419)"/>
+  <!-- Nose cutout -->
+  <ellipse cx="23" cy="22" rx="1" ry="0.75" fill="var(--bg, #0f1419)"/>
 </svg>

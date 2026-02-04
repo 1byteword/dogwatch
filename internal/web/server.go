@@ -215,6 +215,11 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	mux.HandleFunc("/api/dashboards/", s.handleDashboard)
 	mux.HandleFunc("/api/dashboards/default", s.handleDefaultDashboard)
 
+	// Dashboard folder endpoints
+	mux.HandleFunc("/api/folders", s.handleFolders)
+	mux.HandleFunc("/api/folders/", s.handleFolder)
+	mux.HandleFunc("/api/folders/tree", s.handleFolderTree)
+
 	// Log endpoints
 	mux.HandleFunc("/api/logs", s.handleLogs)
 	mux.HandleFunc("/api/logs/ingest", s.handleLogIngest)
@@ -2112,6 +2117,30 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Handle move endpoint
+	if strings.HasSuffix(id, "/move") {
+		id = strings.TrimSuffix(id, "/move")
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			FolderID *string `json:"folder_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := s.dashboardStore.MoveDashboard(id, req.FolderID); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		dash, _ := s.dashboardStore.Get(id)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(dash)
+		return
+	}
+
 	if id == "" {
 		http.Error(w, "Dashboard ID required", http.StatusBadRequest)
 		return
@@ -2180,6 +2209,138 @@ func (s *Server) handleDefaultDashboard(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(dash)
+}
+
+// Folder handlers
+
+func (s *Server) handleFolders(w http.ResponseWriter, r *http.Request) {
+	if s.dashboardStore == nil {
+		http.Error(w, "Dashboard storage not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		folders, err := s.dashboardStore.ListFolders()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(folders)
+
+	case http.MethodPost:
+		var req struct {
+			Name     string  `json:"name"`
+			ParentID *string `json:"parent_id,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Name == "" {
+			http.Error(w, "Name is required", http.StatusBadRequest)
+			return
+		}
+		folder, err := s.dashboardStore.CreateFolder(req.Name, req.ParentID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(folder)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleFolder(w http.ResponseWriter, r *http.Request) {
+	if s.dashboardStore == nil {
+		http.Error(w, "Dashboard storage not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	id := strings.TrimPrefix(r.URL.Path, "/api/folders/")
+	if id == "" || id == "tree" {
+		// Let handleFolderTree handle this
+		if id == "tree" {
+			s.handleFolderTree(w, r)
+			return
+		}
+		http.Error(w, "Folder ID required", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		folder, err := s.dashboardStore.GetFolder(id)
+		if err != nil || folder == nil {
+			http.Error(w, "Folder not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(folder)
+
+	case http.MethodPut:
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Name == "" {
+			http.Error(w, "Name is required", http.StatusBadRequest)
+			return
+		}
+		if err := s.dashboardStore.UpdateFolder(id, req.Name); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		folder, _ := s.dashboardStore.GetFolder(id)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(folder)
+
+	case http.MethodDelete:
+		if err := s.dashboardStore.DeleteFolder(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleFolderTree(w http.ResponseWriter, r *http.Request) {
+	if s.dashboardStore == nil {
+		http.Error(w, "Dashboard storage not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	folders, rootDashboards, err := s.dashboardStore.GetFolderTreeWithRootDashboards()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	response := struct {
+		Folders    []dashboard.FolderTree `json:"folders"`
+		Dashboards []dashboard.Dashboard  `json:"dashboards"`
+	}{
+		Folders:    folders,
+		Dashboards: rootDashboards,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
 
 // Log handlers
