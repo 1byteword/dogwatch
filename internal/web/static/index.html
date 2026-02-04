@@ -11,6 +11,7 @@
         :root {
             --bg: #0f1419;
             --bg-card: #16181c;
+            --bg-gradient: #1a1f2e;
             --border: #2f3336;
             --text: #e7e9ea;
             --text-muted: #71767b;
@@ -18,6 +19,22 @@
             --success: #00ba7c;
             --error: #f4212e;
             --warning: #ffd400;
+            --shadow-color: rgba(0,0,0,0.5);
+        }
+
+        /* Light theme overrides */
+        [data-theme="light"] {
+            --bg: #ffffff;
+            --bg-card: #f8f9fa;
+            --bg-gradient: #e9ecef;
+            --border: #dee2e6;
+            --text: #212529;
+            --text-muted: #868e96;
+            --accent: #0d6efd;
+            --success: #198754;
+            --error: #dc3545;
+            --warning: #ffc107;
+            --shadow-color: rgba(0,0,0,0.15);
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -93,7 +110,7 @@
 
         /* Header - critical for layout shift prevention */
         .header {
-            background: linear-gradient(135deg, #1a1f2e 0%, var(--bg) 100%);
+            background: linear-gradient(135deg, var(--bg-gradient) 0%, var(--bg) 100%);
             padding: 0.75rem 1.5rem;
             border-bottom: 1px solid var(--border);
             display: flex;
@@ -124,7 +141,7 @@
         .login-screen {
             position: fixed;
             inset: 0;
-            background: linear-gradient(135deg, var(--bg) 0%, #1a1f2e 50%, var(--bg) 100%);
+            background: linear-gradient(135deg, var(--bg) 0%, var(--bg-gradient) 50%, var(--bg) 100%);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -146,7 +163,7 @@
             padding: 2rem;
             width: 100%;
             max-width: 400px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+            box-shadow: 0 20px 60px var(--shadow-color);
             transform: translateY(10px);
             transition: transform 0.3s ease;
         }
@@ -179,6 +196,7 @@
     <link rel="stylesheet" href="/css/bundle.css">
     <link rel="stylesheet" href="/css/sidebar.css">
     <link rel="stylesheet" href="/css/logo.css">
+    <link rel="stylesheet" href="/css/theme.css">
 </head>
 <body>
     <!-- Loading skeleton - shows instantly -->
@@ -371,6 +389,11 @@
                             <button class="btn btn-primary" onclick="grid.compact()">Compact</button>
                             <button class="btn btn-primary" onclick="toggleWidgetPicker()" title="Add Widget">+ Widget</button>
                         </div>
+                        <!-- Theme Toggle -->
+                        <button class="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark mode">
+                            <span class="icon-dark">&#9788;</span>
+                            <span class="icon-light">&#9790;</span>
+                        </button>
                         <!-- User Menu -->
                         <div class="user-menu" id="user-menu" style="display: none;">
                             <button class="user-menu-btn" onclick="toggleUserMenu()">
@@ -570,6 +593,33 @@
             display: none;
         }
     </style>
+
+    <!-- Theme initialization - runs early to prevent flash -->
+    <script>
+        // Apply saved theme immediately to prevent flash
+        (function() {
+            const savedTheme = localStorage.getItem('dogwatch-theme');
+            if (savedTheme === 'light') {
+                document.documentElement.setAttribute('data-theme', 'light');
+            }
+        })();
+
+        function toggleTheme() {
+            const html = document.documentElement;
+            const currentTheme = html.getAttribute('data-theme');
+            const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+
+            if (newTheme === 'light') {
+                html.setAttribute('data-theme', 'light');
+                localStorage.setItem('dogwatch-theme', 'light');
+            } else {
+                html.removeAttribute('data-theme');
+                localStorage.setItem('dogwatch-theme', 'dark');
+            }
+        }
+
+        window.toggleTheme = toggleTheme;
+    </script>
 
     <!-- Lazy-loaded library loader -->
     <script>
