@@ -2894,7 +2894,7 @@ async function createFolder(name, parentId = null) {
     try {
         const body = { name };
         if (parentId) body.parent_id = parentId;
-        const resp = await fetch('/api/folders', {
+        const resp = await secureFetch('/api/folders', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
@@ -2913,7 +2913,7 @@ async function renameFolder(id, currentName) {
     const name = prompt('Folder name:', currentName);
     if (!name || name === currentName) return;
     try {
-        const resp = await fetch(`/api/folders/${id}`, {
+        const resp = await secureFetch(`/api/folders/${id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name })
@@ -2931,7 +2931,7 @@ async function renameFolder(id, currentName) {
 async function deleteFolder(id) {
     if (!confirm('Delete this folder? Dashboards inside will be moved to root.')) return;
     try {
-        const resp = await fetch(`/api/folders/${id}`, { method: 'DELETE' });
+        const resp = await secureFetch(`/api/folders/${id}`, { method: 'DELETE' });
         if (resp.ok) {
             expandedFolders.delete(id);
             loadDashboardTree();
@@ -2983,7 +2983,7 @@ async function moveDashboard(dashboardId) {
     const select = document.getElementById('move-folder-select');
     const folderId = select.value || null;
     try {
-        const resp = await fetch(`/api/dashboards/${dashboardId}/move`, {
+        const resp = await secureFetch(`/api/dashboards/${dashboardId}/move`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ folder_id: folderId })
