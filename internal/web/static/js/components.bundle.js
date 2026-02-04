@@ -4119,280 +4119,263 @@ customElements.define('error-budget', ErrorBudget);
 
 /**
  * Geo Map Component
- * Geographic visualization of traffic/errors by region
+ * Geographic visualization using MapLibre GL JS (open-source, no API key needed)
  */
 class GeoMap extends HTMLElement {
     constructor() {
         super();
+        this.map = null;
         this.data = null;
+        this.markers = [];
+        this.resizeObserver = null;
     }
 
     connectedCallback() {
         this.render();
-        this.loadData();
+        this.initMap();
+        this.resizeObserver = new ResizeObserver(() => {
+            if (this.map) this.map.resize();
+        });
+        this.resizeObserver.observe(this);
     }
 
-    static get observedAttributes() {
-        return ['metric', 'time-range'];
+    disconnectedCallback() {
+        if (this.resizeObserver) this.resizeObserver.disconnect();
+        if (this.map) { this.map.remove(); this.map = null; }
+    }
+
+    static get observedAttributes() { return ['metric', 'time-range', 'style-url']; }
+
+    attributeChangedCallback(name, oldValue, newValue) {
+        if (oldValue !== newValue && this.isConnected) {
+            if (name === 'style-url' && this.map) this.map.setStyle(this.styleUrl);
+            else this.loadData();
+        }
     }
 
     get metric() { return this.getAttribute('metric') || 'requests'; }
     get timeRange() { return this.getAttribute('time-range') || '1h'; }
+    get styleUrl() { return this.getAttribute('style-url') || 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'; }
 
     render() {
         this.innerHTML = `
             <style>
-                .geomap-container {
-                    display: flex;
-                    flex-direction: column;
-                    height: 100%;
-                    background: var(--bg-card, #16181c);
-                    border-radius: 8px;
-                    overflow: hidden;
-                }
-                .geomap-header {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    padding: 0.75rem 1rem;
-                    background: var(--bg-elevated, #1a1f2e);
-                    border-bottom: 1px solid var(--border-color, #2f3336);
-                }
-                .geomap-title {
-                    font-weight: 600;
-                    font-size: 0.9rem;
-                    display: flex;
-                    align-items: center;
-                    gap: 0.5rem;
-                }
-                .geomap-body {
-                    flex: 1;
-                    position: relative;
-                    min-height: 300px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                }
-                .geomap-svg {
-                    width: 100%;
-                    height: 100%;
-                }
-                .geomap-region {
-                    fill: var(--bg-elevated, #1a1f2e);
-                    stroke: var(--border-color, #2f3336);
-                    stroke-width: 0.5;
-                    transition: fill 0.2s ease;
-                }
-                .geomap-region:hover {
-                    stroke: var(--color-info, #1d9bf0);
-                    stroke-width: 1;
-                }
-                .geomap-dot {
-                    cursor: pointer;
-                    transition: r 0.2s ease;
-                }
-                .geomap-dot:hover {
-                    r: 12;
-                }
-                .geomap-tooltip {
-                    position: fixed;
-                    background: var(--bg-elevated, #1a1f2e);
-                    border: 1px solid var(--border-color, #2f3336);
-                    border-radius: 6px;
-                    padding: 0.75rem;
-                    font-size: 0.8rem;
-                    pointer-events: none;
-                    z-index: 1000;
-                    display: none;
-                }
-                .geomap-legend {
-                    position: absolute;
-                    bottom: 1rem;
-                    left: 1rem;
-                    background: var(--bg-elevated, #1a1f2e);
-                    border: 1px solid var(--border-color, #2f3336);
-                    border-radius: 6px;
-                    padding: 0.75rem;
-                    font-size: 0.75rem;
-                }
-                .geomap-legend-gradient {
-                    width: 100px;
-                    height: 8px;
-                    background: linear-gradient(to right, #22c55e, #f59e0b, #f43f5e);
-                    border-radius: 4px;
-                    margin-bottom: 0.5rem;
-                }
-                .geomap-legend-labels {
-                    display: flex;
-                    justify-content: space-between;
-                    color: var(--text-muted, #71767b);
-                }
-                .geomap-stats {
-                    display: flex;
-                    gap: 1.5rem;
-                    padding: 0.75rem 1rem;
-                    background: var(--bg-elevated, #1a1f2e);
-                    border-top: 1px solid var(--border-color, #2f3336);
-                    font-size: 0.8rem;
-                }
-                .geomap-stat {
-                    display: flex;
-                    gap: 0.5rem;
-                }
-                .geomap-stat-label {
-                    color: var(--text-muted, #71767b);
-                }
+                .geomap-container { display: flex; flex-direction: column; height: 100%; background: var(--bg-card, #16181c); border-radius: 8px; overflow: hidden; }
+                .geomap-header { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; background: var(--bg-elevated, #1a1f2e); border-bottom: 1px solid var(--border-color, #2f3336); }
+                .geomap-title { font-weight: 600; font-size: 0.9rem; display: flex; align-items: center; gap: 0.5rem; }
+                .geomap-controls select { background: var(--bg-primary, #0f1419); border: 1px solid var(--border-color, #2f3336); border-radius: 4px; padding: 0.3rem 0.5rem; color: var(--text-primary, #e7e9ea); font-size: 0.75rem; cursor: pointer; }
+                .geomap-body { flex: 1; position: relative; min-height: 300px; }
+                .geomap-map { width: 100%; height: 100%; }
+                .geomap-stats { display: flex; gap: 1.5rem; padding: 0.75rem 1rem; background: var(--bg-elevated, #1a1f2e); border-top: 1px solid var(--border-color, #2f3336); font-size: 0.8rem; }
+                .geomap-stat { display: flex; gap: 0.5rem; }
+                .geomap-stat-label { color: var(--text-muted, #71767b); }
+                .geomap-loading { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-muted, #71767b); }
+                .geomap-marker { border-radius: 50%; cursor: pointer; transition: transform 0.2s ease; box-shadow: 0 2px 8px rgba(0,0,0,0.4); border: 2px solid rgba(255,255,255,0.3); }
+                .geomap-marker:hover { transform: scale(1.2); z-index: 10; }
+                .maplibregl-popup-content { background: var(--bg-elevated, #1a1f2e) !important; color: var(--text-primary, #e7e9ea) !important; border-radius: 8px !important; padding: 12px !important; box-shadow: 0 4px 16px rgba(0,0,0,0.4) !important; border: 1px solid var(--border-color, #2f3336) !important; }
+                .maplibregl-popup-tip { border-top-color: var(--bg-elevated, #1a1f2e) !important; }
+                .maplibregl-popup-close-button { color: var(--text-muted, #71767b) !important; font-size: 18px !important; }
+                .geomap-popup-title { font-weight: 600; margin-bottom: 8px; font-size: 14px; }
+                .geomap-popup-row { display: flex; justify-content: space-between; gap: 16px; font-size: 12px; margin: 4px 0; }
+                .geomap-popup-label { color: var(--text-muted, #71767b); }
+                .geomap-popup-value { font-weight: 500; }
+                .geomap-popup-error { color: var(--color-error, #f43f5e); }
+                .geomap-legend { position: absolute; bottom: 24px; left: 12px; background: var(--bg-elevated, #1a1f2e); border: 1px solid var(--border-color, #2f3336); border-radius: 6px; padding: 10px; font-size: 11px; z-index: 1; }
+                .geomap-legend-title { font-weight: 600; margin-bottom: 6px; }
+                .geomap-legend-gradient { width: 100px; height: 8px; background: linear-gradient(to right, #22c55e, #f59e0b, #f43f5e); border-radius: 4px; margin-bottom: 4px; }
+                .geomap-legend-labels { display: flex; justify-content: space-between; color: var(--text-muted, #71767b); }
+                .maplibregl-ctrl-group { background: var(--bg-elevated, #1a1f2e) !important; border: 1px solid var(--border-color, #2f3336) !important; }
+                .maplibregl-ctrl-group button { background-color: var(--bg-elevated, #1a1f2e) !important; }
+                .maplibregl-ctrl-group button span { filter: invert(1); }
             </style>
             <div class="geomap-container">
                 <div class="geomap-header">
-                    <div class="geomap-title">
-                        <span>&#127758;</span>
-                        <span>Geographic Distribution</span>
+                    <div class="geomap-title"><span>🌐</span><span>Geographic Distribution</span></div>
+                    <div class="geomap-controls">
+                        <select id="style-select">
+                            <option value="dark">Dark</option>
+                            <option value="light">Light</option>
+                            <option value="voyager">Voyager</option>
+                        </select>
                     </div>
                 </div>
-                <div class="geomap-body" id="body">
-                    <svg class="geomap-svg" id="svg" viewBox="0 0 800 400"></svg>
-                    <div class="geomap-legend">
-                        <div class="geomap-legend-gradient"></div>
-                        <div class="geomap-legend-labels">
-                            <span>Low</span>
-                            <span>High</span>
-                        </div>
-                    </div>
-                </div>
+                <div class="geomap-body" id="body"><div class="geomap-loading">Loading map...</div></div>
                 <div class="geomap-stats">
-                    <div class="geomap-stat">
-                        <span class="geomap-stat-label">Total Requests:</span>
-                        <span id="stat-total">0</span>
-                    </div>
-                    <div class="geomap-stat">
-                        <span class="geomap-stat-label">Regions:</span>
-                        <span id="stat-regions">0</span>
-                    </div>
-                    <div class="geomap-stat">
-                        <span class="geomap-stat-label">Top Region:</span>
-                        <span id="stat-top">-</span>
-                    </div>
+                    <div class="geomap-stat"><span class="geomap-stat-label">Total Requests:</span><span id="stat-total">0</span></div>
+                    <div class="geomap-stat"><span class="geomap-stat-label">Regions:</span><span id="stat-regions">0</span></div>
+                    <div class="geomap-stat"><span class="geomap-stat-label">Top Region:</span><span id="stat-top">-</span></div>
                 </div>
-                <div class="geomap-tooltip" id="tooltip"></div>
             </div>
         `;
+        const styleSelect = this.querySelector('#style-select');
+        styleSelect.addEventListener('change', (e) => {
+            const styles = { dark: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json', light: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json', voyager: 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json' };
+            if (this.map) {
+                this.map.setStyle(styles[e.target.value]);
+                this.map.once('style.load', () => this.updateMarkers());
+            }
+        });
+    }
 
-        this.renderMap();
+    async initMap() {
+        const body = this.querySelector('#body');
+        if (!body) return;
+        if (!window.maplibregl) {
+            try {
+                if (window.LibLoader && window.LibLoader.load) {
+                    await Promise.all([window.LibLoader.load('maplibre'), window.LibLoader.load('maplibre-css')]);
+                } else if (window.Loader && window.Loader.load) {
+                    await window.Loader.load('maplibre');
+                } else {
+                    await this.loadMapLibreDirect();
+                }
+            } catch (e) { body.innerHTML = `<div class="geomap-loading">Failed to load map: ${e.message}</div>`; return; }
+        }
+        body.innerHTML = `<div class="geomap-map" id="map"></div><div class="geomap-legend"><div class="geomap-legend-title">Traffic Volume</div><div class="geomap-legend-gradient"></div><div class="geomap-legend-labels"><span>Low</span><span>High</span></div></div>`;
+        const mapContainer = this.querySelector('#map');
+        try {
+            this.map = new maplibregl.Map({ container: mapContainer, style: this.styleUrl, center: [0, 20], zoom: 1.3, attributionControl: false });
+            this.map.addControl(new maplibregl.AttributionControl({ compact: true }));
+            this.map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+            this.map.on('load', () => this.loadData());
+        } catch (e) { body.innerHTML = `<div class="geomap-loading">Failed to initialize map: ${e.message}</div>`; }
+    }
+
+    async loadMapLibreDirect() {
+        return new Promise((resolve, reject) => {
+            const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = 'https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.css'; document.head.appendChild(link);
+            const script = document.createElement('script'); script.src = 'https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.js';
+            script.onload = () => resolve(); script.onerror = () => reject(new Error('Failed to load MapLibre')); document.head.appendChild(script);
+        });
     }
 
     async loadData() {
         try {
             const resp = await fetch(`/api/geo/distribution?metric=${this.metric}&range=${this.timeRange}`);
-            if (!resp.ok) {
-                this.data = this.generateDemoData();
-            } else {
-                this.data = await resp.json();
-            }
-            this.updateMap();
-        } catch (e) {
-            this.data = this.generateDemoData();
-            this.updateMap();
-        }
+            this.data = resp.ok ? await resp.json() : this.generateDemoData();
+        } catch (e) { this.data = this.generateDemoData(); }
+        this.updateMarkers();
     }
 
     generateDemoData() {
-        return {
-            regions: [
-                { code: 'US-W', name: 'US West', lat: 37.7749, lng: -122.4194, requests: 45000, errors: 120, latency: 45 },
-                { code: 'US-E', name: 'US East', lat: 40.7128, lng: -74.0060, requests: 38000, errors: 95, latency: 52 },
-                { code: 'EU-W', name: 'EU West', lat: 51.5074, lng: -0.1278, requests: 28000, errors: 85, latency: 120 },
-                { code: 'EU-C', name: 'EU Central', lat: 52.5200, lng: 13.4050, requests: 22000, errors: 65, latency: 115 },
-                { code: 'APAC', name: 'Asia Pacific', lat: 35.6762, lng: 139.6503, requests: 18000, errors: 45, latency: 180 },
-                { code: 'SA', name: 'South America', lat: -23.5505, lng: -46.6333, requests: 8000, errors: 25, latency: 200 },
-                { code: 'AU', name: 'Australia', lat: -33.8688, lng: 151.2093, requests: 5000, errors: 12, latency: 220 },
-            ],
-            total: 164000
-        };
+        // Hierarchical data: regions contain sub-regions which contain cities
+        return { regions: [
+            // US West - breaks into cities at zoom 3+
+            { code: 'US-W', name: 'US West', lat: 40.0, lng: -120.0, requests: 45000, errors: 120, latency: 45, minZoom: 0, maxZoom: 3 },
+            { code: 'US-W-OR', name: 'Oregon (us-west-2)', lat: 45.5152, lng: -122.6784, requests: 18000, errors: 48, latency: 42, minZoom: 3, maxZoom: 5 },
+            { code: 'US-W-CA', name: 'California (us-west-1)', lat: 37.7749, lng: -122.4194, requests: 22000, errors: 55, latency: 38, minZoom: 3, maxZoom: 5 },
+            { code: 'US-W-WA', name: 'Washington', lat: 47.6062, lng: -122.3321, requests: 5000, errors: 17, latency: 52, minZoom: 3, maxZoom: 5 },
+            // US West cities at zoom 5+
+            { code: 'US-W-PDX', name: 'Portland DC1', lat: 45.5231, lng: -122.6765, requests: 9500, errors: 24, latency: 41, minZoom: 5, maxZoom: 99 },
+            { code: 'US-W-PDX2', name: 'Portland DC2', lat: 45.5051, lng: -122.6750, requests: 8500, errors: 24, latency: 43, minZoom: 5, maxZoom: 99 },
+            { code: 'US-W-SF', name: 'San Francisco', lat: 37.7849, lng: -122.4094, requests: 14000, errors: 35, latency: 36, minZoom: 5, maxZoom: 99 },
+            { code: 'US-W-LA', name: 'Los Angeles', lat: 34.0522, lng: -118.2437, requests: 8000, errors: 20, latency: 40, minZoom: 5, maxZoom: 99 },
+            { code: 'US-W-SEA', name: 'Seattle', lat: 47.6062, lng: -122.3321, requests: 5000, errors: 17, latency: 52, minZoom: 5, maxZoom: 99 },
+
+            // US East
+            { code: 'US-E', name: 'US East', lat: 38.0, lng: -78.0, requests: 38000, errors: 95, latency: 52, minZoom: 0, maxZoom: 3 },
+            { code: 'US-E-VA', name: 'Virginia (us-east-1)', lat: 37.4316, lng: -78.6569, requests: 28000, errors: 70, latency: 48, minZoom: 3, maxZoom: 5 },
+            { code: 'US-E-OH', name: 'Ohio (us-east-2)', lat: 40.4173, lng: -82.9071, requests: 10000, errors: 25, latency: 58, minZoom: 3, maxZoom: 5 },
+            { code: 'US-E-VA1', name: 'Ashburn DC1', lat: 39.0438, lng: -77.4874, requests: 15000, errors: 38, latency: 45, minZoom: 5, maxZoom: 99 },
+            { code: 'US-E-VA2', name: 'Ashburn DC2', lat: 39.0338, lng: -77.4774, requests: 13000, errors: 32, latency: 51, minZoom: 5, maxZoom: 99 },
+            { code: 'US-E-NYC', name: 'New York', lat: 40.7128, lng: -74.0060, requests: 10000, errors: 25, latency: 58, minZoom: 5, maxZoom: 99 },
+
+            // Europe
+            { code: 'EU', name: 'Europe', lat: 50.0, lng: 4.0, requests: 50000, errors: 150, latency: 118, minZoom: 0, maxZoom: 2.5 },
+            { code: 'EU-W', name: 'EU West (Ireland)', lat: 53.1424, lng: -7.6921, requests: 28000, errors: 85, latency: 120, minZoom: 2.5, maxZoom: 5 },
+            { code: 'EU-C', name: 'EU Central (Frankfurt)', lat: 50.1109, lng: 8.6821, requests: 22000, errors: 65, latency: 115, minZoom: 2.5, maxZoom: 5 },
+            { code: 'EU-DUB', name: 'Dublin DC1', lat: 53.3498, lng: -6.2603, requests: 15000, errors: 45, latency: 118, minZoom: 5, maxZoom: 99 },
+            { code: 'EU-DUB2', name: 'Dublin DC2', lat: 53.3398, lng: -6.2503, requests: 13000, errors: 40, latency: 122, minZoom: 5, maxZoom: 99 },
+            { code: 'EU-FRA', name: 'Frankfurt DC1', lat: 50.1109, lng: 8.6821, requests: 12000, errors: 35, latency: 112, minZoom: 5, maxZoom: 99 },
+            { code: 'EU-FRA2', name: 'Frankfurt DC2', lat: 50.1009, lng: 8.6721, requests: 10000, errors: 30, latency: 118, minZoom: 5, maxZoom: 99 },
+
+            // Asia Pacific
+            { code: 'APAC', name: 'Asia Pacific', lat: 25.0, lng: 115.0, requests: 30000, errors: 80, latency: 170, minZoom: 0, maxZoom: 2.5 },
+            { code: 'APAC-TYO', name: 'Tokyo (ap-northeast-1)', lat: 35.6762, lng: 139.6503, requests: 18000, errors: 45, latency: 180, minZoom: 2.5, maxZoom: 5 },
+            { code: 'APAC-SIN', name: 'Singapore (ap-southeast-1)', lat: 1.3521, lng: 103.8198, requests: 12000, errors: 35, latency: 160, minZoom: 2.5, maxZoom: 5 },
+            { code: 'APAC-TYO1', name: 'Tokyo DC1', lat: 35.6862, lng: 139.6603, requests: 10000, errors: 25, latency: 175, minZoom: 5, maxZoom: 99 },
+            { code: 'APAC-TYO2', name: 'Tokyo DC2', lat: 35.6662, lng: 139.6403, requests: 8000, errors: 20, latency: 185, minZoom: 5, maxZoom: 99 },
+            { code: 'APAC-SIN1', name: 'Singapore DC1', lat: 1.3621, lng: 103.8298, requests: 7000, errors: 20, latency: 155, minZoom: 5, maxZoom: 99 },
+            { code: 'APAC-SIN2', name: 'Singapore DC2', lat: 1.3421, lng: 103.8098, requests: 5000, errors: 15, latency: 165, minZoom: 5, maxZoom: 99 },
+
+            // South America
+            { code: 'SA', name: 'South America', lat: -15.0, lng: -55.0, requests: 8000, errors: 25, latency: 200, minZoom: 0, maxZoom: 3 },
+            { code: 'SA-GRU', name: 'São Paulo (sa-east-1)', lat: -23.5505, lng: -46.6333, requests: 8000, errors: 25, latency: 200, minZoom: 3, maxZoom: 99 },
+
+            // Australia
+            { code: 'AU', name: 'Australia', lat: -25.0, lng: 135.0, requests: 5000, errors: 12, latency: 220, minZoom: 0, maxZoom: 3 },
+            { code: 'AU-SYD', name: 'Sydney (ap-southeast-2)', lat: -33.8688, lng: 151.2093, requests: 5000, errors: 12, latency: 220, minZoom: 3, maxZoom: 99 },
+        ], total: 176000 };
     }
 
-    renderMap() {
-        const svg = this.querySelector('#svg');
-        if (!svg) return;
-
-        // Simple world map outline (simplified paths)
-        svg.innerHTML = `
-            <defs>
-                <radialGradient id="dotGradient">
-                    <stop offset="0%" stop-color="rgba(59, 130, 246, 0.8)"/>
-                    <stop offset="100%" stop-color="rgba(59, 130, 246, 0.2)"/>
-                </radialGradient>
-            </defs>
-            <g id="regions"></g>
-            <g id="dots"></g>
-        `;
-    }
-
-    updateMap() {
-        if (!this.data) return;
-
-        const svg = this.querySelector('#svg');
-        const dotsGroup = svg.querySelector('#dots');
-        const tooltip = this.querySelector('#tooltip');
-
-        if (!dotsGroup) return;
-
+    updateMarkers() {
+        if (!this.map || !this.data) return;
         const { regions, total } = this.data;
-        const maxRequests = Math.max(...regions.map(r => r.requests));
+        if (!regions || regions.length === 0) return;
 
-        // Convert lat/lng to SVG coordinates (simple equirectangular projection)
-        const toX = lng => ((lng + 180) / 360) * 800;
-        const toY = lat => ((90 - lat) / 180) * 400;
-
-        dotsGroup.innerHTML = regions.map(r => {
-            const x = toX(r.lng);
-            const y = toY(r.lat);
-            const radius = 5 + (r.requests / maxRequests) * 15;
-            const color = this.getHeatColor(r.requests / maxRequests);
-
-            return `
-                <circle class="geomap-dot" cx="${x}" cy="${y}" r="${radius}"
-                        fill="${color}" fill-opacity="0.7"
-                        data-region="${r.code}"/>
-            `;
-        }).join('');
-
-        // Tooltip events
-        dotsGroup.querySelectorAll('.geomap-dot').forEach((dot, i) => {
-            const r = regions[i];
-
-            dot.addEventListener('mouseenter', (e) => {
-                tooltip.innerHTML = `
-                    <div style="font-weight:600;margin-bottom:0.5rem">${r.name}</div>
-                    <div>Requests: ${r.requests.toLocaleString()}</div>
-                    <div>Errors: ${r.errors} (${(r.errors/r.requests*100).toFixed(2)}%)</div>
-                    <div>Avg Latency: ${r.latency}ms</div>
-                `;
-                tooltip.style.display = 'block';
-            });
-
-            dot.addEventListener('mousemove', (e) => {
-                tooltip.style.left = (e.clientX + 10) + 'px';
-                tooltip.style.top = (e.clientY + 10) + 'px';
-            });
-
-            dot.addEventListener('mouseleave', () => {
-                tooltip.style.display = 'none';
-            });
+        const zoom = this.map.getZoom();
+        // Filter regions visible at current zoom level
+        const visibleRegions = regions.filter(r => {
+            const minZ = r.minZoom ?? 0;
+            const maxZ = r.maxZoom ?? 99;
+            return zoom >= minZ && zoom < maxZ;
         });
 
-        // Update stats
-        const topRegion = regions.reduce((a, b) => a.requests > b.requests ? a : b);
-        this.querySelector('#stat-total').textContent = total.toLocaleString();
-        this.querySelector('#stat-regions').textContent = regions.length;
-        this.querySelector('#stat-top').textContent = `${topRegion.name} (${(topRegion.requests/total*100).toFixed(0)}%)`;
+        const maxRequests = Math.max(...visibleRegions.map(r => r.requests), 1);
+
+        // Build GeoJSON with only visible regions
+        const geojson = {
+            type: 'FeatureCollection',
+            features: visibleRegions.map(r => ({
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: [r.lng, r.lat] },
+                properties: { ...r, intensity: r.requests / maxRequests, color: this.getHeatColor(r.requests / maxRequests), radius: 10 + (r.requests / maxRequests) * 15 }
+            }))
+        };
+
+        // Add or update source
+        if (this.map.getSource('regions')) {
+            this.map.getSource('regions').setData(geojson);
+        } else {
+            this.map.addSource('regions', { type: 'geojson', data: geojson });
+            this.map.addLayer({
+                id: 'region-circles',
+                type: 'circle',
+                source: 'regions',
+                paint: {
+                    'circle-radius': ['get', 'radius'],
+                    'circle-color': ['get', 'color'],
+                    'circle-opacity': 0.8,
+                    'circle-stroke-width': 2,
+                    'circle-stroke-color': 'rgba(255,255,255,0.4)'
+                }
+            });
+
+            // Popup on click
+            this.map.on('click', 'region-circles', (e) => {
+                const props = e.features[0].properties;
+                const errorRate = (props.errors / props.requests * 100).toFixed(2);
+                new maplibregl.Popup({ closeButton: true, maxWidth: '280px' })
+                    .setLngLat(e.lngLat)
+                    .setHTML(`<div class="geomap-popup-title">${props.name}</div><div class="geomap-popup-row"><span class="geomap-popup-label">Requests</span><span class="geomap-popup-value">${Number(props.requests).toLocaleString()}</span></div><div class="geomap-popup-row"><span class="geomap-popup-label">Errors</span><span class="geomap-popup-value${errorRate > 1 ? ' geomap-popup-error' : ''}">${Number(props.errors).toLocaleString()} (${errorRate}%)</span></div><div class="geomap-popup-row"><span class="geomap-popup-label">Avg Latency</span><span class="geomap-popup-value">${props.latency}ms</span></div>`)
+                    .addTo(this.map);
+            });
+            this.map.on('mouseenter', 'region-circles', () => { this.map.getCanvas().style.cursor = 'pointer'; });
+            this.map.on('mouseleave', 'region-circles', () => { this.map.getCanvas().style.cursor = ''; });
+
+            // Update on zoom change
+            this.map.on('zoomend', () => this.updateMarkers());
+        }
+
+        // Update stats based on visible regions
+        const visibleTotal = visibleRegions.reduce((sum, r) => sum + r.requests, 0);
+        const topRegion = visibleRegions.length > 0 ? visibleRegions.reduce((a, b) => a.requests > b.requests ? a : b) : null;
+        const statTotal = this.querySelector('#stat-total'); if (statTotal) statTotal.textContent = total.toLocaleString();
+        const statRegions = this.querySelector('#stat-regions'); if (statRegions) statRegions.textContent = visibleRegions.length;
+        const statTop = this.querySelector('#stat-top'); if (statTop && topRegion) statTop.textContent = `${topRegion.name.split('(')[0].trim()} (${(topRegion.requests / visibleTotal * 100).toFixed(0)}%)`;
     }
 
-    getHeatColor(intensity) {
-        if (intensity < 0.3) return '#22c55e';
-        if (intensity < 0.6) return '#f59e0b';
-        return '#f43f5e';
-    }
+    getHeatColor(intensity) { return intensity < 0.33 ? '#22c55e' : intensity < 0.66 ? '#f59e0b' : '#f43f5e'; }
 }
 
 customElements.define('geo-map', GeoMap);

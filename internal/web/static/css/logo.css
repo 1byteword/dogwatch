@@ -1,59 +1,53 @@
-/* Space Age Logo Styling for Dogwatch */
+/* Sketchy Hand-drawn Logo Styling for Dogwatch */
 
-/* Import a space-age style font - Orbitron is similar to the Space Age look */
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&display=swap');
+/* Import a hand-drawn style font - Caveat for that sketch look */
+@import url('https://fonts.googleapis.com/css2?family=Caveat:wght@500;600;700&display=swap');
 
 /* Logo text styling */
 .logo-text,
 .logo h1,
 .brand-text {
-    font-family: 'Orbitron', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: 'Caveat', cursive;
     font-weight: 600;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
+    letter-spacing: 0.02em;
 }
 
-/* Dog icon styling */
-.logo-icon-svg {
-    width: 1.5em;
-    height: 1.5em;
-    color: currentColor;
+/* Dog icon styling - now using emoji */
+.logo-icon {
+    font-size: 1.5rem;
+    line-height: 1;
 }
 
 /* Large logo variant (for login screen, etc) */
-.logo-large .logo-icon-svg {
-    width: 3em;
-    height: 3em;
+.logo-large .logo-icon {
+    font-size: 3rem;
 }
 
 .logo-large .logo-text {
-    font-size: 2rem;
+    font-size: 2.2rem;
 }
 
 /* Sidebar logo */
-.sidebar-header .logo-icon-svg {
-    width: 1.25em;
-    height: 1.25em;
+.sidebar-header .logo-icon {
+    font-size: 1.25rem;
     flex-shrink: 0;
 }
 
 .sidebar-header .logo-text {
-    font-size: 0.95rem;
+    font-size: 1.4rem;
 }
 
 /* Loading skeleton */
-.skeleton-logo-svg {
-    width: 4rem;
-    height: 4rem;
+.skeleton-logo {
+    font-size: 4rem;
     color: var(--accent, #1d9bf0);
     animation: pulse 2s ease-in-out infinite;
 }
 
 .skeleton-text.brand {
-    font-family: 'Orbitron', sans-serif;
+    font-family: 'Caveat', cursive;
     font-weight: 600;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
+    letter-spacing: 0.02em;
 }
 
 /* Accent color variants */
@@ -71,10 +65,11 @@
 /* Animation for logo icon */
 @keyframes wag {
     0%, 100% { transform: rotate(0deg); }
-    25% { transform: rotate(-5deg); }
-    75% { transform: rotate(5deg); }
+    25% { transform: rotate(-8deg); }
+    75% { transform: rotate(8deg); }
 }
 
-.logo-icon-svg:hover {
-    animation: wag 0.5s ease-in-out;
+.logo-icon:hover {
+    display: inline-block;
+    animation: wag 0.4s ease-in-out;
 }

@@ -272,20 +272,54 @@ class ServiceMap extends HTMLElement {
     _generateDemoData() {
         return {
             nodes: [
-                { id: 'api-gateway', name: 'api-gateway', status: 'healthy', rps: 1200, latency: 45, errorRate: 0.001 },
-                { id: 'auth-service', name: 'auth-service', status: 'healthy', rps: 800, latency: 25, errorRate: 0 },
-                { id: 'user-service', name: 'user-service', status: 'degraded', rps: 600, latency: 85, errorRate: 0.02 },
-                { id: 'order-service', name: 'order-service', status: 'healthy', rps: 400, latency: 65, errorRate: 0.005 },
-                { id: 'postgres', name: 'postgres', status: 'healthy', rps: 2000, latency: 5, errorRate: 0 },
-                { id: 'redis', name: 'redis', status: 'healthy', rps: 5000, latency: 1, errorRate: 0 },
+                // Tier 0: Entry point (nucleus)
+                { id: 'api-gateway', name: 'api-gateway', status: 'healthy', rps: 2500, latency: 12, errorRate: 0.001 },
+
+                // Tier 1: Core services (first electron shell)
+                { id: 'auth-service', name: 'auth-service', status: 'healthy', rps: 1800, latency: 25, errorRate: 0 },
+                { id: 'user-service', name: 'user-service', status: 'degraded', rps: 1200, latency: 85, errorRate: 0.02 },
+                { id: 'order-service', name: 'order-service', status: 'healthy', rps: 900, latency: 65, errorRate: 0.005 },
+                { id: 'product-service', name: 'product-service', status: 'healthy', rps: 1100, latency: 45, errorRate: 0.001 },
+                { id: 'search-service', name: 'search-service', status: 'healthy', rps: 800, latency: 35, errorRate: 0 },
+
+                // Tier 2: Supporting services (second shell)
+                { id: 'notification-svc', name: 'notification-svc', status: 'healthy', rps: 400, latency: 120, errorRate: 0 },
+                { id: 'payment-service', name: 'payment-service', status: 'healthy', rps: 350, latency: 180, errorRate: 0.003 },
+                { id: 'inventory-svc', name: 'inventory-svc', status: 'healthy', rps: 600, latency: 55, errorRate: 0 },
+                { id: 'recommendation', name: 'recommendation', status: 'healthy', rps: 500, latency: 95, errorRate: 0 },
+
+                // Tier 3: Data stores (outer shell)
+                { id: 'postgres', name: 'postgres', status: 'healthy', rps: 3500, latency: 5, errorRate: 0 },
+                { id: 'redis', name: 'redis', status: 'healthy', rps: 8000, latency: 1, errorRate: 0 },
+                { id: 'elasticsearch', name: 'elasticsearch', status: 'healthy', rps: 1200, latency: 15, errorRate: 0 },
+                { id: 'kafka', name: 'kafka', status: 'healthy', rps: 2000, latency: 8, errorRate: 0 },
             ],
             edges: [
-                { source: 'api-gateway', target: 'auth-service', rps: 800, errorRate: 0 },
-                { source: 'api-gateway', target: 'user-service', rps: 400, errorRate: 0.02 },
-                { source: 'api-gateway', target: 'order-service', rps: 300, errorRate: 0 },
-                { source: 'auth-service', target: 'redis', rps: 2000, errorRate: 0 },
-                { source: 'user-service', target: 'postgres', rps: 500, errorRate: 0 },
-                { source: 'order-service', target: 'postgres', rps: 400, errorRate: 0 },
+                // Gateway to core services
+                { source: 'api-gateway', target: 'auth-service', rps: 1800, errorRate: 0 },
+                { source: 'api-gateway', target: 'user-service', rps: 1200, errorRate: 0.02 },
+                { source: 'api-gateway', target: 'order-service', rps: 900, errorRate: 0 },
+                { source: 'api-gateway', target: 'product-service', rps: 1100, errorRate: 0 },
+                { source: 'api-gateway', target: 'search-service', rps: 800, errorRate: 0 },
+
+                // Core to supporting services
+                { source: 'order-service', target: 'payment-service', rps: 350, errorRate: 0.003 },
+                { source: 'order-service', target: 'inventory-svc', rps: 600, errorRate: 0 },
+                { source: 'order-service', target: 'notification-svc', rps: 400, errorRate: 0 },
+                { source: 'user-service', target: 'notification-svc', rps: 200, errorRate: 0 },
+                { source: 'product-service', target: 'recommendation', rps: 500, errorRate: 0 },
+                { source: 'product-service', target: 'inventory-svc', rps: 300, errorRate: 0 },
+
+                // Services to data stores
+                { source: 'auth-service', target: 'redis', rps: 3000, errorRate: 0 },
+                { source: 'user-service', target: 'postgres', rps: 1000, errorRate: 0 },
+                { source: 'order-service', target: 'postgres', rps: 800, errorRate: 0 },
+                { source: 'product-service', target: 'postgres', rps: 700, errorRate: 0 },
+                { source: 'search-service', target: 'elasticsearch', rps: 1200, errorRate: 0 },
+                { source: 'inventory-svc', target: 'postgres', rps: 500, errorRate: 0 },
+                { source: 'recommendation', target: 'redis', rps: 400, errorRate: 0 },
+                { source: 'notification-svc', target: 'kafka', rps: 600, errorRate: 0 },
+                { source: 'payment-service', target: 'kafka', rps: 350, errorRate: 0 },
             ]
         };
     }
@@ -315,21 +349,53 @@ class ServiceMap extends HTMLElement {
         const container = this.shadowRoot.querySelector('.container');
         const width = container.clientWidth;
         const height = container.clientHeight;
+        const centerX = width / 2;
+        const centerY = height / 2;
+
+        // Calculate orbital positions (electron cloud layout)
+        this.calculateOrbitalPositions(nodes, edges, centerX, centerY, Math.min(width, height) * 0.4);
 
         const mainGroup = this.svg.select('.main-group');
         mainGroup.selectAll('*').remove();
 
-        // Create links
+        // Draw orbital rings (electron shells)
+        const orbitGroup = mainGroup.append('g').attr('class', 'orbits');
+        const maxOrbit = Math.max(...nodes.map(n => n._orbit || 0));
+        const baseRadius = Math.min(width, height) * 0.12;
+
+        for (let i = 1; i <= maxOrbit; i++) {
+            orbitGroup.append('circle')
+                .attr('cx', centerX)
+                .attr('cy', centerY)
+                .attr('r', baseRadius * i * 1.8)
+                .attr('fill', 'none')
+                .attr('stroke', 'rgba(63, 67, 70, 0.3)')
+                .attr('stroke-width', 1)
+                .attr('stroke-dasharray', '4 4');
+        }
+
+        // Create curved links
         const linkGroup = mainGroup.append('g').attr('class', 'links');
         const links = linkGroup.selectAll('.link')
             .data(edges || [])
             .enter()
-            .append('line')
+            .append('path')
             .attr('class', d => {
                 let cls = 'link';
                 if (d.errorRate > 0.01) cls += ' link-error';
                 else if (d.rps > 0) cls += ' link-active';
                 return cls;
+            })
+            .attr('d', d => {
+                const source = nodes.find(n => (n.id || n.name) === (d.source.id || d.source.name || d.source));
+                const target = nodes.find(n => (n.id || n.name) === (d.target.id || d.target.name || d.target));
+                if (!source || !target) return '';
+
+                // Curved path
+                const dx = target.x - source.x;
+                const dy = target.y - source.y;
+                const dr = Math.sqrt(dx * dx + dy * dy) * 0.8;
+                return `M${source.x},${source.y}A${dr},${dr} 0 0,1 ${target.x},${target.y}`;
             });
 
         // Create nodes
@@ -339,23 +405,33 @@ class ServiceMap extends HTMLElement {
             .enter()
             .append('g')
             .attr('class', d => `node node-${d.status || 'healthy'}`)
+            .attr('transform', d => `translate(${d.x},${d.y})`)
             .call(d3.drag()
                 .on('start', this.dragStarted.bind(this))
-                .on('drag', this.dragged.bind(this))
+                .on('drag', this.draggedOrbital.bind(this))
                 .on('end', this.dragEnded.bind(this)));
 
+        // Nucleus (center node) gets special treatment
         nodeElements.append('circle')
             .attr('class', 'node-circle')
-            .attr('r', 20);
+            .attr('r', d => d._orbit === 0 ? 28 : 20);
+
+        // Add glow effect for center node
+        nodeElements.filter(d => d._orbit === 0)
+            .insert('circle', ':first-child')
+            .attr('r', 35)
+            .attr('fill', 'none')
+            .attr('stroke', 'rgba(29, 155, 240, 0.3)')
+            .attr('stroke-width', 8);
 
         nodeElements.append('text')
             .attr('class', 'node-label')
-            .attr('dy', 30)
-            .text(d => d.name.length > 12 ? d.name.substring(0, 10) + '...' : d.name);
+            .attr('dy', d => d._orbit === 0 ? 45 : 30)
+            .text(d => d.name.length > 14 ? d.name.substring(0, 12) + '...' : d.name);
 
         nodeElements.append('text')
             .attr('class', 'node-metrics')
-            .attr('dy', 42)
+            .attr('dy', d => d._orbit === 0 ? 57 : 42)
             .text(d => d.latency ? `${d.latency}ms` : '');
 
         // Tooltip events
@@ -365,6 +441,7 @@ class ServiceMap extends HTMLElement {
                 tooltip.innerHTML = `
                     <div class="tooltip-title">${d.name}</div>
                     <div class="tooltip-row"><span class="tooltip-label">Status</span><span class="tooltip-value">${d.status || 'unknown'}</span></div>
+                    <div class="tooltip-row"><span class="tooltip-label">Tier</span><span class="tooltip-value">${d._orbit === 0 ? 'Entry Point' : 'Tier ' + d._orbit}</span></div>
                     <div class="tooltip-row"><span class="tooltip-label">RPS</span><span class="tooltip-value">${d.rps || 0}</span></div>
                     <div class="tooltip-row"><span class="tooltip-label">Latency</span><span class="tooltip-value">${d.latency || 0}ms</span></div>
                     <div class="tooltip-row"><span class="tooltip-label">Error Rate</span><span class="tooltip-value">${((d.errorRate || 0) * 100).toFixed(2)}%</span></div>
@@ -380,25 +457,128 @@ class ServiceMap extends HTMLElement {
                 tooltip.classList.remove('visible');
             });
 
-        // Set up force simulation
-        const nodeMap = new Map(nodes.map((n, i) => [n.id || n.name, i]));
+        // Store references for dragging
+        this._nodes = nodes;
+        this._nodeElements = nodeElements;
+        this._links = links;
+        this._centerX = centerX;
+        this._centerY = centerY;
+    }
 
-        this.simulation = d3.forceSimulation(nodes)
-            .force('link', d3.forceLink(edges || [])
-                .id(d => d.id || d.name)
-                .distance(100))
-            .force('charge', d3.forceManyBody().strength(-300))
-            .force('center', d3.forceCenter(width / 2, height / 2))
-            .force('collision', d3.forceCollide().radius(40));
+    calculateOrbitalPositions(nodes, edges, centerX, centerY, maxRadius) {
+        // Build adjacency map (who calls who)
+        const outgoing = new Map();
+        const incoming = new Map();
+        nodes.forEach(n => {
+            const id = n.id || n.name;
+            outgoing.set(id, []);
+            incoming.set(id, []);
+        });
 
-        this.simulation.on('tick', () => {
-            links
-                .attr('x1', d => d.source.x)
-                .attr('y1', d => d.source.y)
-                .attr('x2', d => d.target.x)
-                .attr('y2', d => d.target.y);
+        (edges || []).forEach(e => {
+            const src = e.source.id || e.source.name || e.source;
+            const tgt = e.target.id || e.target.name || e.target;
+            if (outgoing.has(src)) outgoing.get(src).push(tgt);
+            if (incoming.has(tgt)) incoming.get(tgt).push(src);
+        });
 
-            nodeElements.attr('transform', d => `translate(${d.x},${d.y})`);
+        // Find entry point (node with most outgoing and least incoming, typically api-gateway)
+        let entryNode = nodes[0];
+        let bestScore = -Infinity;
+        nodes.forEach(n => {
+            const id = n.id || n.name;
+            const score = (outgoing.get(id)?.length || 0) - (incoming.get(id)?.length || 0) * 2;
+            // Boost score for common entry point names
+            const name = (n.name || '').toLowerCase();
+            const bonus = (name.includes('gateway') || name.includes('ingress') || name.includes('frontend') || name.includes('api')) ? 10 : 0;
+            if (score + bonus > bestScore) {
+                bestScore = score + bonus;
+                entryNode = n;
+            }
+        });
+
+        // BFS to calculate orbit levels (distance from entry point)
+        const orbits = new Map();
+        const entryId = entryNode.id || entryNode.name;
+        orbits.set(entryId, 0);
+
+        const queue = [entryId];
+        while (queue.length > 0) {
+            const current = queue.shift();
+            const currentOrbit = orbits.get(current);
+
+            // Process outgoing connections
+            (outgoing.get(current) || []).forEach(target => {
+                if (!orbits.has(target)) {
+                    orbits.set(target, currentOrbit + 1);
+                    queue.push(target);
+                }
+            });
+        }
+
+        // Assign remaining unconnected nodes to outer orbit
+        const maxOrbit = Math.max(...orbits.values(), 0);
+        nodes.forEach(n => {
+            const id = n.id || n.name;
+            if (!orbits.has(id)) {
+                orbits.set(id, maxOrbit + 1);
+            }
+        });
+
+        // Group nodes by orbit
+        const orbitGroups = new Map();
+        nodes.forEach(n => {
+            const id = n.id || n.name;
+            const orbit = orbits.get(id);
+            n._orbit = orbit;
+            if (!orbitGroups.has(orbit)) orbitGroups.set(orbit, []);
+            orbitGroups.get(orbit).push(n);
+        });
+
+        // Position nodes in orbital layout
+        const baseRadius = maxRadius * 0.3;
+        orbitGroups.forEach((groupNodes, orbit) => {
+            if (orbit === 0) {
+                // Center node
+                groupNodes.forEach(n => {
+                    n.x = centerX;
+                    n.y = centerY;
+                });
+            } else {
+                // Distribute around the orbit
+                const radius = baseRadius * orbit * 1.8;
+                const angleStep = (2 * Math.PI) / groupNodes.length;
+                const startAngle = -Math.PI / 2; // Start from top
+
+                groupNodes.forEach((n, i) => {
+                    const angle = startAngle + angleStep * i;
+                    n.x = centerX + radius * Math.cos(angle);
+                    n.y = centerY + radius * Math.sin(angle);
+                    n._angle = angle;
+                    n._radius = radius;
+                });
+            }
+        });
+    }
+
+    draggedOrbital(event, d) {
+        // Allow free dragging but snap back to orbit on release
+        d.x = event.x;
+        d.y = event.y;
+
+        // Update node position
+        d3.select(event.sourceEvent.target.closest('.node'))
+            .attr('transform', `translate(${d.x},${d.y})`);
+
+        // Update connected links
+        this._links.attr('d', link => {
+            const source = this._nodes.find(n => (n.id || n.name) === (link.source.id || link.source.name || link.source));
+            const target = this._nodes.find(n => (n.id || n.name) === (link.target.id || link.target.name || link.target));
+            if (!source || !target) return '';
+            const dx = target.x - source.x;
+            const dy = target.y - source.y;
+            const dr = Math.sqrt(dx * dx + dy * dy) * 0.8;
+            return `M${source.x},${source.y}A${dr},${dr} 0 0,1 ${target.x},${target.y}`;
         });
     }
 

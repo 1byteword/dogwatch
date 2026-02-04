@@ -2902,10 +2902,13 @@ async function createFolder(name, parentId = null) {
         if (resp.ok) {
             loadDashboardTree();
         } else {
-            alert('Failed to create folder');
+            const err = await resp.text();
+            console.error('Create folder failed:', resp.status, err);
+            alert('Failed to create folder: ' + (err || resp.status));
         }
     } catch (e) {
-        alert('Failed to create folder');
+        console.error('Create folder error:', e);
+        alert('Failed to create folder: ' + e.message);
     }
 }
 

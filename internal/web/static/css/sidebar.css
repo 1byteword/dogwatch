@@ -71,13 +71,12 @@
 }
 
 .sidebar-header .logo-text {
-    font-size: 1rem;
+    font-size: 1.4rem;
     font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
-    font-family: 'Orbitron', -apple-system, BlinkMacSystemFont, sans-serif;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
+    font-family: 'Caveat', cursive;
+    letter-spacing: 0.02em;
 }
 
 /* Sidebar Navigation */

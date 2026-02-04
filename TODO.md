@@ -204,6 +204,89 @@ Brief checklist with links to [VISION.md](VISION.md) for full context.
 
 ---
 
+## Phase 8: Beat VictoriaMetrics (Protocol & Scale Parity)
+
+Goal: Close every feature gap with VictoriaMetrics so there's no reason to choose them over us.
+
+### P0 - Protocol Ingestion (Make Migration Trivial)
+
+| Task | Complexity | Notes |
+|------|------------|-------|
+| Graphite plaintext protocol (`/api/graphite/write`) | 1-2 days | Line format: `metric.path value timestamp` |
+| Graphite pickle protocol | 1 day | Python pickle batched format |
+| InfluxDB line protocol (`/api/influx/write`) | 1-2 days | Format: `measurement,tag=val field=val timestamp` |
+| OpenTSDB HTTP (`/api/opentsdb/write`) | 1 day | JSON array of datapoints |
+| OpenTSDB telnet protocol (port 4242) | 1 day | `put metric timestamp value tags` |
+| Prometheus remote read (`/api/v1/read`) | 2-3 days | Return metrics for external Prometheus queries |
+| DataDog agent protocol (`/api/v1/series`) | 1-2 days | Native DD agent compatibility |
+
+### P0 - MetricsQL Extensions
+
+| Task | Complexity | Notes |
+|------|------------|-------|
+| `label_set(q, "label", "value")` | 1 day | Add/override labels |
+| `label_del(q, "label1", "label2")` | 1 day | Remove labels |
+| `label_keep(q, "label1", "label2")` | 1 day | Keep only specified labels |
+| `label_copy(q, "src", "dst")` | 1 day | Copy label value |
+| `label_move(q, "src", "dst")` | 1 day | Move label (copy + delete) |
+| `label_transform(q, "label", "regex", "replacement")` | 1 day | Regex transform |
+| `label_match(q, "label", "regex")` | 1 day | Filter by label regex |
+| `label_mismatch(q, "label", "regex")` | 1 day | Filter by label not matching |
+| `union(q1, q2, ...)` | 1 day | Merge multiple queries |
+| `ru(free, max)` | 1 day | Resource utilization: `(max - free) / max` |
+| `ttf(q)` | 2 days | Time-to-fill: predict when resource exhausts |
+| `range_median(q)` | 1 day | Median over range |
+| `range_first(q)` | 1 day | First value in range |
+| `range_last(q)` | 1 day | Last value in range |
+| `running_sum(q)` | 1 day | Cumulative sum |
+| `running_max(q)` | 1 day | Cumulative max |
+| `running_min(q)` | 1 day | Cumulative min |
+| `running_avg(q)` | 1 day | Cumulative average |
+| `smooth_exponential(q, sf)` | 1 day | Exponential smoothing |
+| `outliers_mad(q, threshold)` | 2 days | MAD-based outlier detection |
+| `outliers_iqr(q, threshold)` | 2 days | IQR-based outlier detection |
+| `histogram_share(q, le)` | 1 day | Fraction of histogram <= le |
+| `histogram_avg(q)` | 1 day | Average from histogram |
+| `histogram_stdvar(q)` | 1 day | Variance from histogram |
+| `duration_over_time(q, threshold)` | 2 days | Time spent over threshold |
+| `share_gt_over_time(q, threshold)` | 1 day | Fraction of time > threshold |
+| `share_le_over_time(q, threshold)` | 1 day | Fraction of time <= threshold |
+| `count_gt_over_time(q, threshold)` | 1 day | Count of samples > threshold |
+| `count_le_over_time(q, threshold)` | 1 day | Count of samples <= threshold |
+| `lag(q)` | 1 day | Time since last sample |
+| `lifetime(q)` | 1 day | Duration from first to last sample |
+| `scrape_interval(q)` | 1 day | Detected scrape interval |
+
+### P1 - Data Processing
+
+| Task | Complexity | Notes |
+|------|------------|-------|
+| Downsampling at ingest | 3-4 days | Reduce resolution for old data automatically |
+| Configurable downsampling rules | 2 days | Per-metric downsampling policies |
+| Streaming aggregation | 1 week | Pre-aggregate at ingest time (sum, count, min, max, avg) |
+| Deduplication | 2-3 days | Detect and remove duplicate samples |
+| Relabeling at ingest | 2-3 days | Transform labels before storage |
+
+### P2 - Scale Features (When Needed)
+
+| Task | Complexity | Notes |
+|------|------------|-------|
+| Multi-tenancy | 2-3 weeks | Isolated data per tenant, per-tenant auth |
+| Clustering (vmselect/vminsert/vmstorage model) | 4-6 weeks | Distributed storage and query |
+| Cross-tenant queries | 1 week | Admin queries across tenants |
+| Per-tenant retention | 1 week | Different retention per tenant |
+| Per-tenant rate limits | 3-4 days | Protect against noisy neighbors |
+
+### P2 - Operational
+
+| Task | Complexity | Notes |
+|------|------------|-------|
+| Kubernetes operator | 2-3 weeks | CRDs for dogwatch resources |
+| Helm chart | 3-4 days | Production-ready Helm deployment |
+| vmctl-equivalent migration tool | 1 week | Migrate data from Prometheus/VictoriaMetrics/Thanos |
+
+---
+
 ## Technical Moats (Competitive Differentiators)
 
 These are the deep technical capabilities that create defensible competitive advantage. See [VISION.md Technical Moats](VISION.md#technical-moats) for full context.
@@ -310,7 +393,6 @@ These are the deep technical capabilities that create defensible competitive adv
 | Custom ML models | Use LLM APIs instead | [Explicitly Skipped](VISION.md#explicitly-skipped) |
 | 600+ integrations | Focus on auto-discovery | [Explicitly Skipped](VISION.md#explicitly-skipped) |
 | Session replay | Different product | [Explicitly Skipped](VISION.md#explicitly-skipped) |
-| HA clustering | Premature | [Do NOT Build Yet](VISION.md#do-not-build-yet) |
 
 ---
 

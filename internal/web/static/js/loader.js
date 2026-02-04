@@ -42,6 +42,11 @@ const Loader = {
             js: 'https://cdn.jsdelivr.net/npm/gridstack@10.0.1/dist/gridstack-all.min.js',
             css: 'https://cdn.jsdelivr.net/npm/gridstack@10.0.1/dist/gridstack.min.css',
             check: () => typeof GridStack !== 'undefined'
+        },
+        'maplibre': {
+            js: 'https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.js',
+            css: 'https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.css',
+            check: () => typeof maplibregl !== 'undefined'
         }
     },
 

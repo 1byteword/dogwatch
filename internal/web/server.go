@@ -122,8 +122,8 @@ func gzipMiddleware(next http.Handler) http.Handler {
 
 		// Add cache headers for static assets
 		if strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".css") {
-			// Cache JS/CSS for 1 hour, allow stale-while-revalidate
-			w.Header().Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
+			// JS/CSS: always revalidate to pick up code changes quickly
+			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 		} else if strings.HasSuffix(path, ".woff2") || strings.HasSuffix(path, ".woff") || strings.HasSuffix(path, ".ttf") {
 			// Cache fonts for 1 year (they rarely change)
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")

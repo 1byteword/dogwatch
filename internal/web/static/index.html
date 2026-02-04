@@ -128,7 +128,7 @@
         }
 
         .logo-icon { font-size: 1.5rem; }
-        .logo h1 { font-size: 1.1rem; font-weight: 600; font-family: 'Orbitron', sans-serif; letter-spacing: 0.05em; text-transform: uppercase; }
+        .logo h1 { font-size: 1.6rem; font-weight: 600; font-family: 'Caveat', cursive; letter-spacing: 0.02em; }
         .logo span { color: var(--text-muted); font-size: 0.7rem; margin-left: 0.5rem; }
 
         .header-controls {
@@ -177,8 +177,8 @@
             margin-bottom: 2rem;
         }
 
-        .login-logo .logo-icon { display: block; color: var(--accent); }
-        .login-logo h1 { font-size: 1.5rem; margin-top: 0.5rem; font-family: 'Orbitron', sans-serif; letter-spacing: 0.05em; text-transform: uppercase; }
+        .login-logo .logo-icon { display: block; font-size: 3rem; }
+        .login-logo h1 { font-size: 2.2rem; margin-top: 0.5rem; font-family: 'Caveat', cursive; letter-spacing: 0.02em; }
         .login-logo p { color: var(--text-muted); font-size: 0.85rem; margin-top: 0.3rem; }
     </style>
 
@@ -189,8 +189,8 @@
     <link rel="preload" href="/css/bundle.css" as="style">
     <link rel="preload" href="/js/components.bundle.js" as="script">
 
-    <!-- Space Age font for logo -->
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Sketchy handwritten font for logo -->
+    <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600;700&display=swap" rel="stylesheet">
 
     <!-- Bundled CSS (6 files -> 1 request, 111KB -> 15KB gzipped) -->
     <link rel="stylesheet" href="/css/bundle.css">
@@ -202,11 +202,7 @@
     <!-- Loading skeleton - shows instantly -->
     <div class="skeleton" id="loading-skeleton">
         <div class="skeleton-logo">
-            <svg viewBox="0 0 32 32" fill="currentColor" width="64" height="64">
-                <path d="M8 26 L8 14 L6 6 L10 10 L14 6 L16 10 L20 6 L18 14 L18 18 L22 18 L24 20 L24 24 L22 26 L8 26 Z"/>
-                <circle cx="12" cy="18" r="1.5" fill="var(--bg, #0f1419)"/>
-                <ellipse cx="23" cy="22" rx="1" ry="0.75" fill="var(--bg, #0f1419)"/>
-            </svg>
+            <span style="font-size: 4rem;">🐕</span>
         </div>
         <div class="skeleton-text">DOGWATCH</div>
         <div class="skeleton-spinner"></div>
@@ -216,13 +212,7 @@
     <div id="login-screen" class="login-screen">
         <div class="login-card">
             <div class="login-logo">
-                <span class="logo-icon">
-                    <svg viewBox="0 0 32 32" fill="currentColor" width="48" height="48">
-                        <path d="M8 26 L8 14 L6 6 L10 10 L14 6 L16 10 L20 6 L18 14 L18 18 L22 18 L24 20 L24 24 L22 26 L8 26 Z"/>
-                        <circle cx="12" cy="18" r="1.5" fill="var(--bg, #0f1419)"/>
-                        <ellipse cx="23" cy="22" rx="1" ry="0.75" fill="var(--bg, #0f1419)"/>
-                    </svg>
-                </span>
+                <span class="logo-icon">🐕</span>
                 <h1>DOGWATCH</h1>
                 <p>eBPF Observability Platform</p>
             </div>
@@ -271,14 +261,8 @@
             <aside class="sidebar" id="sidebar">
                 <div class="sidebar-resize-handle" id="sidebar-resize-handle"></div>
                 <div class="sidebar-header">
-                    <span class="logo-icon">
-                        <svg viewBox="0 0 32 32" fill="currentColor" width="24" height="24">
-                            <path d="M8 26 L8 14 L6 6 L10 10 L14 6 L16 10 L20 6 L18 14 L18 18 L22 18 L24 20 L24 24 L22 26 L8 26 Z"/>
-                            <circle cx="12" cy="18" r="1.5" fill="var(--bg, #0f1419)"/>
-                            <ellipse cx="23" cy="22" rx="1" ry="0.75" fill="var(--bg, #0f1419)"/>
-                        </svg>
-                    </span>
-                    <span class="logo-text">DOGWATCH</span>
+                    <span class="logo-icon">🐕</span>
+                    <span class="logo-text">dogwatch</span>
                 </div>
 
                 <nav class="sidebar-nav">
@@ -1066,6 +1050,6 @@
     <script src="/js/components.bundle.js" defer></script>
 
     <!-- Main application - deferred for non-blocking load -->
-    <script src="/js/app.js" defer></script>
+    <script src="/js/app.js?v=20260204" defer></script>
 </body>
 </html>
