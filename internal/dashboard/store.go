@@ -60,7 +60,7 @@ func NewStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	// Create tables
+	// Create tables - base schema without folder columns for backwards compatibility
 	schema := `
 	CREATE TABLE IF NOT EXISTS dashboard_folders (
 		id TEXT PRIMARY KEY,
@@ -77,13 +77,10 @@ func NewStore(dbPath string) (*Store, error) {
 		name TEXT NOT NULL,
 		layout TEXT NOT NULL,
 		is_default INTEGER DEFAULT 0,
-		folder_id TEXT REFERENCES dashboard_folders(id),
-		position INTEGER DEFAULT 0,
 		created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
 	CREATE INDEX IF NOT EXISTS idx_dashboards_default ON dashboards(is_default);
-	CREATE INDEX IF NOT EXISTS idx_dashboards_folder ON dashboards(folder_id);
 	`
 
 	if _, err := db.Exec(schema); err != nil {
@@ -99,6 +96,9 @@ func NewStore(dbPath string) (*Store, error) {
 	for _, m := range migrations {
 		db.Exec(m) // Ignore errors - column may already exist
 	}
+
+	// Create index on folder_id (after migration ensures column exists)
+	db.Exec("CREATE INDEX IF NOT EXISTS idx_dashboards_folder ON dashboards(folder_id)")
 
 	return &Store{db: db}, nil
 }
