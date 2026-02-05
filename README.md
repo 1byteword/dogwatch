@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="internal/web/static/img/logo-new.png" alt="dogwatch logo" width="200">
+</p>
+
 # dogwatch
 
 **eBPF-powered observability platform for Linux.** A Datadog/Grafana/PagerDuty alternative in a single binary.
