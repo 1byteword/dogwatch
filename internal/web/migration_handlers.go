@@ -96,6 +96,7 @@ func handleDatadogDashboardImport(w http.ResponseWriter, r *http.Request) {
 		_, err = migrationDashStore.Create(
 			converted.Dashboard.Name,
 			converted.Dashboard.Layout,
+			map[string]dashboard.WidgetConfig{},
 			converted.Dashboard.IsDefault,
 		)
 		if err != nil {
@@ -165,6 +166,7 @@ func handleGrafanaDashboardImport(w http.ResponseWriter, r *http.Request) {
 		_, err = migrationDashStore.Create(
 			converted.Dashboard.Name,
 			converted.Dashboard.Layout,
+			map[string]dashboard.WidgetConfig{},
 			converted.Dashboard.IsDefault,
 		)
 		if err != nil {
@@ -554,9 +556,9 @@ func handleMigrationPreview(w http.ResponseWriter, r *http.Request) {
 			importer := migration.NewDatadogImporter(migration.DashboardImportOptions{})
 			if dash, err := importer.ParseDashboard(data); err == nil {
 				preview["items"] = append(preview["items"].([]any), map[string]any{
-					"type":          "dashboard",
-					"name":          dash.Title,
-					"widget_count":  len(dash.Widgets),
+					"type":           "dashboard",
+					"name":           dash.Title,
+					"widget_count":   len(dash.Widgets),
 					"variable_count": len(dash.TemplateVariables),
 				})
 			}
@@ -566,8 +568,8 @@ func handleMigrationPreview(w http.ResponseWriter, r *http.Request) {
 			if monitors, err := importer.ParseMonitors(data); err == nil {
 				for _, m := range monitors {
 					preview["items"] = append(preview["items"].([]any), map[string]any{
-						"type":      "alert",
-						"name":      m.Name,
+						"type":       "alert",
+						"name":       m.Name,
 						"alert_type": m.Type,
 					})
 				}

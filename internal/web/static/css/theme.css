@@ -4,6 +4,9 @@
  */
 
 [data-theme="light"] {
+    --color-brand: #0d6efd;
+    --color-brand-strong: #0a58ca;
+
     /* Color Palette - Light Base */
     --color-black: #ffffff;
     --color-gray-900: #f8f9fa;
@@ -23,7 +26,7 @@
     --bg-tertiary: #f1f3f5;
     --bg-elevated: #ffffff;
     --bg-hover: rgba(0, 0, 0, 0.04);
-    --bg-active: rgba(29, 155, 240, 0.1);
+    --bg-active: rgba(13, 110, 253, 0.1);
 
     /* Border Colors */
     --border-color: #dee2e6;
@@ -54,6 +57,11 @@
 [data-theme="light"] body {
     background: var(--bg-primary);
     color: var(--text-primary);
+}
+
+[data-theme="light"] body::before,
+[data-theme="light"] body::after {
+    display: none;
 }
 
 [data-theme="light"] .header,
@@ -88,8 +96,8 @@
 }
 
 [data-theme="light"] .btn-primary {
-    background: var(--color-info);
-    border-color: var(--color-info);
+    background: var(--color-brand);
+    border-color: var(--color-brand);
     color: white;
 }
 

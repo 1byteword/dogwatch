@@ -1,32 +1,38 @@
 /* Design Tokens for dogwatch */
 :root {
+    /* Brand and accent colors */
+    --color-brand: #ccff00;
+    --color-brand-strong: #a9d600;
+    --color-rust: #ad4d2e;
+    --color-cyan: #8be9fd;
+
     /* Color Palette - Base */
-    --color-black: #0f1419;
-    --color-gray-900: #16181c;
-    --color-gray-800: #1a1f2e;
-    --color-gray-700: #1d1f23;
-    --color-gray-600: #2f3336;
-    --color-gray-500: #3f4346;
-    --color-gray-400: #536471;
-    --color-gray-300: #71767b;
-    --color-gray-200: #8b949e;
-    --color-gray-100: #e7e9ea;
+    --color-black: #030303;
+    --color-gray-900: #0b0b0b;
+    --color-gray-800: #121212;
+    --color-gray-700: #171717;
+    --color-gray-600: #242424;
+    --color-gray-500: #343434;
+    --color-gray-400: #656565;
+    --color-gray-300: #9a9a9a;
+    --color-gray-200: #cccccc;
+    --color-gray-100: #f2f2f2;
     --color-white: #ffffff;
 
     /* Semantic Colors */
-    --color-success: #00ba7c;
-    --color-success-dark: #0d4429;
-    --color-success-muted: #1a3d2e;
-    --color-warning: #ffd400;
-    --color-warning-dark: #4a3d19;
-    --color-warning-alt: #ff9800;
-    --color-warning-alt-dark: #4a2d19;
-    --color-error: #f4212e;
-    --color-error-dark: #4a1919;
-    --color-error-muted: #7a1919;
-    --color-info: #1d9bf0;
-    --color-info-dark: #1a2d3d;
-    --color-info-alt: #1d4ed8;
+    --color-success: #2ed67a;
+    --color-success-dark: #0d3a1f;
+    --color-success-muted: #163422;
+    --color-warning: #ffc34d;
+    --color-warning-dark: #4a3618;
+    --color-warning-alt: #ff9d4d;
+    --color-warning-alt-dark: #4c2e18;
+    --color-error: #ff4d55;
+    --color-error-dark: #4d1b20;
+    --color-error-muted: #7b212a;
+    --color-info: var(--color-cyan);
+    --color-info-dark: #1a3138;
+    --color-info-alt: #5fb8cc;
     --color-purple: #7c3aed;
     --color-purple-dark: #2a2a4a;
 
@@ -35,17 +41,17 @@
     --bg-secondary: var(--color-gray-900);
     --bg-tertiary: var(--color-gray-700);
     --bg-elevated: var(--color-gray-800);
-    --bg-hover: rgba(255, 255, 255, 0.02);
-    --bg-active: rgba(29, 155, 240, 0.1);
+    --bg-hover: rgba(255, 255, 255, 0.045);
+    --bg-active: rgba(204, 255, 0, 0.12);
 
     /* Border Colors */
-    --border-color: var(--color-gray-600);
-    --border-color-light: var(--color-gray-500);
+    --border-color: #2f2f2f;
+    --border-color-light: #3d3d3d;
 
     /* Text Colors */
-    --text-primary: var(--color-gray-100);
-    --text-secondary: var(--color-gray-300);
-    --text-muted: var(--color-gray-400);
+    --text-primary: #efefef;
+    --text-secondary: #b2b2b2;
+    --text-muted: #7d7d7d;
 
     /* Status Colors */
     --status-operational: var(--color-success);
@@ -61,10 +67,10 @@
     --severity-low: var(--color-info);
 
     /* Chart Colors */
-    --chart-cpu: linear-gradient(90deg, #1d9bf0, #1d4ed8);
-    --chart-mem: linear-gradient(90deg, #00ba7c, #059669);
-    --chart-disk: linear-gradient(90deg, #f4212e, #dc2626);
-    --chart-net: linear-gradient(90deg, #7c3aed, #6d28d9);
+    --chart-cpu: linear-gradient(90deg, #8be9fd, #3cbfd6);
+    --chart-mem: linear-gradient(90deg, #6dff9f, #2db76b);
+    --chart-disk: linear-gradient(90deg, #ff6b72, #d43a42);
+    --chart-net: linear-gradient(90deg, #ccff00, #9fc700);
 
     /* Spacing Scale */
     --space-1: 0.25rem;
@@ -76,36 +82,37 @@
     --space-8: 2rem;
 
     /* Border Radius */
-    --radius-sm: 3px;
-    --radius-md: 6px;
-    --radius-lg: 8px;
-    --radius-xl: 10px;
-    --radius-2xl: 12px;
+    --radius-sm: 2px;
+    --radius-md: 4px;
+    --radius-lg: 6px;
+    --radius-xl: 8px;
+    --radius-2xl: 10px;
     --radius-full: 50%;
 
     /* Font Sizes - optimized for readability */
-    --text-xs: 0.7rem;
-    --text-sm: 0.75rem;
-    --text-base: 0.8rem;
-    --text-md: 0.85rem;
-    --text-lg: 0.9rem;
-    --text-xl: 0.95rem;
-    --text-2xl: 1.1rem;
-    --text-3xl: 1.2rem;
-    --text-4xl: 1.35rem;
-    --text-5xl: 1.6rem;
-    --text-6xl: 2rem;
-    --text-7xl: 2.25rem;
+    --text-xs: 0.72rem;
+    --text-sm: 0.8rem;
+    --text-base: 0.875rem;
+    --text-md: 0.93rem;
+    --text-lg: 1rem;
+    --text-xl: 1.05rem;
+    --text-2xl: 1.2rem;
+    --text-3xl: 1.32rem;
+    --text-4xl: 1.48rem;
+    --text-5xl: 1.72rem;
+    --text-6xl: 2.1rem;
+    --text-7xl: 2.4rem;
 
     /* Font Families */
-    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    --font-mono: 'SF Mono', Consolas, Monaco, monospace;
+    --font-sans: "IBM Plex Sans", "Segoe UI", "Trebuchet MS", sans-serif;
+    --font-display: "Arial Narrow", "Franklin Gothic Medium", "Segoe UI", sans-serif;
+    --font-mono: "JetBrains Mono", "SF Mono", Consolas, Monaco, monospace;
 
     /* Shadows */
-    --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.2);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
-    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.4);
-    --shadow-xl: 0 20px 60px rgba(0, 0, 0, 0.5);
+    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
+    --shadow-md: 0 8px 20px rgba(0, 0, 0, 0.45);
+    --shadow-lg: 0 14px 32px rgba(0, 0, 0, 0.52);
+    --shadow-xl: 0 24px 60px rgba(0, 0, 0, 0.62);
 
     /* Transitions */
     --transition-fast: 0.1s;

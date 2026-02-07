@@ -162,7 +162,7 @@
             border-radius: 16px;
             padding: 2rem;
             width: 100%;
-            max-width: 400px;
+            max-width: 480px;
             box-shadow: 0 20px 60px var(--shadow-color);
             transform: translateY(10px);
             transition: transform 0.3s ease;
@@ -202,9 +202,8 @@
     <!-- Loading skeleton - shows instantly -->
     <div class="skeleton" id="loading-skeleton">
         <div class="skeleton-logo">
-            <span style="font-size: 4rem;">🐕</span>
+            <img src="/img/logo-new.png" alt="dogwatch" style="height: 100px;">
         </div>
-        <div class="skeleton-text">DOGWATCH</div>
         <div class="skeleton-spinner"></div>
     </div>
 
@@ -212,9 +211,7 @@
     <div id="login-screen" class="login-screen">
         <div class="login-card">
             <div class="login-logo">
-                <span class="logo-icon">🐕</span>
-                <h1>DOGWATCH</h1>
-                <p>eBPF Observability Platform</p>
+                <img src="/img/logo-new.png?v=2" alt="dogwatch" style="width: 400px !important; max-width: 90% !important; margin-bottom: 1rem;">
             </div>
             <div class="login-error" id="login-error"></div>
 
@@ -261,8 +258,7 @@
             <aside class="sidebar" id="sidebar">
                 <div class="sidebar-resize-handle" id="sidebar-resize-handle"></div>
                 <div class="sidebar-header">
-                    <span class="logo-icon">🐕</span>
-                    <span class="logo-text">dogwatch</span>
+                    <img src="/img/logo-new.png?v=4" alt="dogwatch" class="sidebar-logo" style="width: 90%; height: auto;">
                 </div>
 
                 <nav class="sidebar-nav">
@@ -434,149 +430,6 @@
             <!-- Categories populated by JS -->
         </div>
     </aside>
-
-    <style>
-        .widget-picker-overlay {
-            position: fixed;
-            inset: 0;
-            background: rgba(0,0,0,0.5);
-            z-index: 999;
-            opacity: 0;
-            visibility: hidden;
-            transition: opacity 0.2s ease, visibility 0.2s ease;
-        }
-        .widget-picker-overlay.open {
-            opacity: 1;
-            visibility: visible;
-        }
-        .widget-picker {
-            position: fixed;
-            top: 0;
-            right: -360px;
-            width: 360px;
-            height: 100vh;
-            background: var(--bg-card, #16181c);
-            border-left: 1px solid var(--border, #2f3336);
-            z-index: 1000;
-            display: flex;
-            flex-direction: column;
-            transition: right 0.25s ease;
-            box-shadow: -4px 0 20px rgba(0,0,0,0.3);
-        }
-        .widget-picker.open {
-            right: 0;
-        }
-        .widget-picker-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 1rem 1.25rem;
-            border-bottom: 1px solid var(--border, #2f3336);
-            background: var(--bg-elevated, #1a1f2e);
-        }
-        .widget-picker-header h3 {
-            margin: 0;
-            font-size: 1.1rem;
-            font-weight: 600;
-        }
-        .widget-picker-close {
-            background: none;
-            border: none;
-            color: var(--text-muted, #71767b);
-            font-size: 1.5rem;
-            cursor: pointer;
-            padding: 0;
-            line-height: 1;
-        }
-        .widget-picker-close:hover {
-            color: var(--text, #e7e9ea);
-        }
-        .widget-picker-search {
-            padding: 0.75rem 1.25rem;
-            border-bottom: 1px solid var(--border, #2f3336);
-        }
-        .widget-picker-search input {
-            width: 100%;
-            padding: 0.6rem 0.75rem;
-            background: var(--bg, #0f1419);
-            border: 1px solid var(--border, #2f3336);
-            border-radius: 6px;
-            color: var(--text, #e7e9ea);
-            font-size: 0.9rem;
-        }
-        .widget-picker-search input:focus {
-            outline: none;
-            border-color: var(--accent, #1d9bf0);
-        }
-        .widget-picker-content {
-            flex: 1;
-            overflow-y: auto;
-            padding: 0.5rem 0;
-        }
-        .widget-category {
-            padding: 0 1.25rem;
-            margin-bottom: 1rem;
-        }
-        .widget-category-title {
-            font-size: 0.75rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--text-muted, #71767b);
-            margin-bottom: 0.5rem;
-            padding: 0.5rem 0;
-        }
-        .widget-item {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            padding: 0.75rem;
-            border-radius: 6px;
-            cursor: pointer;
-            transition: background 0.15s ease;
-        }
-        .widget-item:hover {
-            background: var(--bg-elevated, #1a1f2e);
-        }
-        .widget-item-icon {
-            width: 36px;
-            height: 36px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: var(--bg, #0f1419);
-            border-radius: 8px;
-            font-size: 1.1rem;
-        }
-        .widget-item-info {
-            flex: 1;
-            min-width: 0;
-        }
-        .widget-item-name {
-            font-weight: 500;
-            font-size: 0.9rem;
-            margin-bottom: 0.15rem;
-        }
-        .widget-item-desc {
-            font-size: 0.75rem;
-            color: var(--text-muted, #71767b);
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        .widget-item-add {
-            color: var(--accent, #1d9bf0);
-            font-size: 1.25rem;
-            opacity: 0;
-            transition: opacity 0.15s ease;
-        }
-        .widget-item:hover .widget-item-add {
-            opacity: 1;
-        }
-        .widget-item.hidden {
-            display: none;
-        }
-    </style>
 
     <!-- Theme initialization - runs early to prevent flash -->
     <script>

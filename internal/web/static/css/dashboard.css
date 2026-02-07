@@ -614,6 +614,18 @@
     color: var(--text-primary);
 }
 
+.deploy-stat-success {
+    color: var(--color-success);
+}
+
+.deploy-stat-fail {
+    color: var(--color-error);
+}
+
+.deploy-stat-neutral {
+    color: var(--text-secondary);
+}
+
 .deploy-stat-label {
     color: var(--text-secondary);
     font-size: var(--text-xs);
@@ -629,7 +641,7 @@
 }
 
 .deploy-item:hover {
-    background: var(--bg-hover);
+    background: rgba(204, 255, 0, 0.05);
 }
 
 .deploy-marker {
@@ -752,6 +764,12 @@
     color: var(--text-secondary);
     font-size: var(--text-xs);
     text-transform: uppercase;
+}
+
+.cluster-local {
+    margin-left: auto;
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
 }
 
 .cluster-node-item {
@@ -1032,6 +1050,18 @@
     color: var(--text-primary);
 }
 
+.catalog-stat-critical {
+    color: var(--color-error);
+}
+
+.catalog-stat-healthy {
+    color: var(--color-success);
+}
+
+.catalog-stat-unhealthy {
+    color: var(--color-error);
+}
+
 .catalog-stat-label {
     color: var(--text-secondary);
     font-size: var(--text-xs);
@@ -1047,10 +1077,16 @@
 .catalog-filters select {
     padding: 0.3rem 0.5rem;
     font-size: var(--text-base);
-    background: var(--color-gray-600);
-    border: 1px solid var(--color-gray-500);
+    background: rgba(21, 21, 21, 0.92);
+    border: 1px solid var(--border-color-light);
     border-radius: var(--radius-sm);
     color: var(--text-primary);
+}
+
+.catalog-filters select:focus {
+    outline: none;
+    border-color: var(--color-brand);
+    box-shadow: 0 0 0 1px rgba(204, 255, 0, 0.2);
 }
 
 .service-item {
@@ -1063,7 +1099,7 @@
 }
 
 .service-item:hover {
-    background: var(--bg-hover);
+    background: rgba(204, 255, 0, 0.05);
 }
 
 .service-health {
@@ -1207,6 +1243,14 @@
     color: var(--text-primary);
 }
 
+.k8s-stat-value.health-ok {
+    color: var(--color-success);
+}
+
+.k8s-stat-value.health-warn {
+    color: var(--color-warning);
+}
+
 .k8s-stat-label {
     color: var(--text-secondary);
     font-size: var(--text-xs);
@@ -1234,8 +1278,8 @@
 }
 
 .k8s-tab.active {
-    color: var(--color-info);
-    border-bottom-color: var(--color-info);
+    color: var(--color-brand);
+    border-bottom-color: var(--color-brand);
 }
 
 .k8s-content {
@@ -1257,7 +1301,7 @@
 }
 
 .k8s-item:hover {
-    background: var(--bg-hover);
+    background: rgba(204, 255, 0, 0.05);
 }
 
 .k8s-status {
@@ -1336,6 +1380,16 @@
 .k8s-metric-value {
     font-weight: 600;
     color: var(--text-primary);
+}
+
+.k8s-ip {
+    font-size: 0.65rem;
+}
+
+.k8s-cluster-name {
+    margin-left: auto;
+    font-size: 0.75rem;
+    color: var(--text-muted);
 }
 
 .k8s-badge {
@@ -2283,18 +2337,31 @@
 }
 
 .trace-select {
-    background: var(--color-gray-600);
-    border: 1px solid var(--color-gray-500);
+    background: rgba(21, 21, 21, 0.92);
+    border: 1px solid var(--border-color-light);
     border-radius: var(--radius-sm);
     color: var(--text-primary);
     padding: 0.2rem 0.5rem;
     font-size: var(--text-base);
 }
 
+.trace-select:focus {
+    outline: none;
+    border-color: var(--color-brand);
+    box-shadow: 0 0 0 1px rgba(204, 255, 0, 0.2);
+}
+
+.traces-split {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
 .trace-list {
     max-height: 200px;
     overflow-y: auto;
-    border-bottom: 1px solid var(--border-color);
+    border-bottom: 1px solid var(--border-color-light);
+    background: linear-gradient(180deg, rgba(15, 15, 15, 0.95), rgba(9, 9, 9, 0.94));
 }
 
 .trace-item {
@@ -2304,16 +2371,18 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    transition: all var(--transition-normal);
+    transition: background var(--transition-normal), border-color var(--transition-normal);
+    position: relative;
 }
 
 .trace-item:hover {
-    background: var(--bg-active);
+    background: rgba(204, 255, 0, 0.05);
+    border-bottom-color: rgba(204, 255, 0, 0.2);
 }
 
 .trace-item.selected {
-    background: linear-gradient(90deg, rgba(29, 155, 240, 0.2), rgba(29, 155, 240, 0.1));
-    border-left: 3px solid var(--color-info);
+    background: linear-gradient(90deg, rgba(204, 255, 0, 0.16), rgba(204, 255, 0, 0.04));
+    border-left: 3px solid var(--color-brand);
 }
 
 .trace-item:last-child {
@@ -2321,7 +2390,7 @@
 }
 
 .trace-name {
-    font-weight: 500;
+    font-weight: 600;
     font-size: var(--text-md);
 }
 
@@ -2337,6 +2406,7 @@
 .trace-duration {
     font-family: var(--font-mono);
     font-size: var(--text-base);
+    color: var(--text-primary);
 }
 
 .trace-time {
@@ -2377,6 +2447,7 @@
     color: var(--text-secondary);
     font-size: var(--text-xl);
     gap: 12px;
+    background: radial-gradient(circle at center, rgba(255, 255, 255, 0.015), rgba(0, 0, 0, 0) 60%);
 }
 
 .no-trace-selected-icon {

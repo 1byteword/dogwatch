@@ -1669,15 +1669,15 @@ function widgetNet() {
 }
 function widgetStat(title, id, isError) {
     return `<div class="widget-header"><span class="widget-title">${title}</span></div>
-        <div class="widget-body" style="display:flex;align-items:center;justify-content:center;">
-            <div class="stat-big ${isError ? 'error' : ''}" id="${id}">-</div>
+        <div class="widget-body overview-stat-wrap">
+            <div class="stat-big overview-stat ${isError ? 'error' : ''}" id="${id}">-</div>
         </div>`;
 }
 function widgetServiceMap() {
     return `<div class="widget-header">
             <span class="widget-title">Service Map</span>
-            <div style="display:flex;gap:0.3rem;align-items:center;">
-                <select id="svcmap-filter" class="trace-select" style="height:26px;font-size:0.7rem;" onchange="filterServiceMap()">
+            <div class="widget-actions">
+                <select id="svcmap-filter" class="trace-select trace-select-xs" onchange="filterServiceMap()">
                     <option value="">All Nodes</option>
                     <option value="services">Services</option>
                     <option value="external">External</option>
@@ -1724,25 +1724,25 @@ function widgetChart(title, id) {
                 <button class="time-btn" data-dur="6h">6h</button>
             </div>
         </div>
-        <div class="widget-body" style="position:relative;"><div class="chart-wrap"><canvas id="${id}"></canvas></div></div>`;
+        <div class="widget-body widget-body-rel"><div class="chart-wrap"><canvas id="${id}"></canvas></div></div>`;
 }
 function widgetEndpoints() {
     return `<div class="widget-header"><span class="widget-title">HTTP Endpoints</span></div>
-        <div class="widget-body no-pad" style="overflow:auto;">
+        <div class="widget-body no-pad">
             <table><thead><tr><th>Method</th><th>Path</th><th>Count</th><th>Err%</th><th>P50</th><th>P99</th></tr></thead>
             <tbody id="endpoints-body"><tr><td colspan="6" class="empty-state">No data</td></tr></tbody></table>
         </div>`;
 }
 function widgetConnections() {
     return `<div class="widget-header"><span class="widget-title">Connections</span></div>
-        <div class="widget-body no-pad" style="overflow:auto;">
+        <div class="widget-body no-pad">
             <table><thead><tr><th>Process</th><th>Remote</th><th>Count</th></tr></thead>
             <tbody id="connections-body"><tr><td colspan="3" class="empty-state">No data</td></tr></tbody></table>
         </div>`;
 }
 function widgetProcesses() {
     return `<div class="widget-header"><span class="widget-title">Top Processes</span></div>
-        <div class="widget-body no-pad" style="overflow:auto;">
+        <div class="widget-body no-pad">
             <table><thead><tr><th>PID</th><th>Name</th><th>CPU%</th><th>Mem</th></tr></thead>
             <tbody id="processes-body"><tr><td colspan="4" class="empty-state">Loading...</td></tr></tbody></table>
         </div>`;
@@ -1750,7 +1750,7 @@ function widgetProcesses() {
 function widgetFlameGraph() {
     return `<div class="widget-header">
             <span class="widget-title">CPU Flame Graph</span>
-            <div style="display:flex;gap:0.3rem;">
+            <div class="widget-actions">
                 <button class="btn" onclick="clearFlameGraph()">Clear</button>
                 <button class="btn" onclick="updateFlameGraph()">Refresh</button>
             </div>
@@ -1790,7 +1790,7 @@ function widgetTraces() {
                 <button class="btn" onclick="loadTraces()">Refresh</button>
             </div>
         </div>
-        <div class="widget-body no-pad" style="display:flex;flex-direction:column;height:100%;">
+        <div class="widget-body no-pad traces-split">
             <div class="trace-list" id="trace-list">
                 <div class="empty-state">No traces yet. Configure OTLP export to http://localhost:9999/v1/traces</div>
             </div>
@@ -1802,7 +1802,7 @@ function widgetTraces() {
 function widgetWatches() {
     return `<div class="widget-header">
             <span class="widget-title">Watches</span>
-            <div style="display:flex;gap:0.3rem;">
+            <div class="widget-actions">
                 <button class="btn" onclick="showChannels()">Channels</button>
                 <button class="btn btn-primary" onclick="showCreateWatch()">+ New</button>
             </div>
@@ -1814,7 +1814,7 @@ function widgetWatches() {
 function widgetLogs() {
     return `<div class="widget-header">
             <span class="widget-title">Logs</span>
-            <div style="display:flex;gap:0.3rem;align-items:center;">
+            <div class="widget-actions">
                 <button class="btn" id="log-tail-btn" onclick="toggleLogTail()" title="Live tail">
                     <span id="log-tail-icon">▶</span> Live
                 </button>
@@ -1822,9 +1822,9 @@ function widgetLogs() {
             </div>
         </div>
         <div class="log-controls">
-            <div style="display:flex;gap:0.3rem;flex:1;min-width:200px;">
-                <input type="text" id="log-search" placeholder="Search logs..." onkeyup="if(event.key==='Enter')searchLogs()" style="flex:1;">
-                <button class="btn btn-primary" onclick="searchLogs()" style="padding:0.3rem 0.6rem;">Search</button>
+            <div class="log-search-wrap">
+                <input type="text" id="log-search" placeholder="Search logs..." onkeyup="if(event.key==='Enter')searchLogs()">
+                <button class="btn btn-primary log-search-btn" onclick="searchLogs()">Search</button>
             </div>
             <select id="log-level" onchange="updateLogFilters()">
                 <option value="">All Levels</option>
@@ -1846,7 +1846,7 @@ function widgetLogs() {
                 <option value="custom">Custom range...</option>
             </select>
         </div>
-        <div id="log-filter-pills" style="display:none;padding:0.3rem 0.8rem;background:#1a1d21;border-bottom:1px solid #2f3336;"></div>
+        <div id="log-filter-pills" class="log-filter-pills" style="display:none;"></div>
         <div class="widget-body no-pad" id="logs-list" style="overflow:auto;">
             <div class="empty-state">No logs yet</div>
         </div>`;
@@ -1854,29 +1854,29 @@ function widgetLogs() {
 function widgetSynthetics() {
     return `<div class="widget-header">
             <span class="widget-title">Synthetic Checks</span>
-            <div style="display:flex;gap:0.3rem;">
+            <div class="widget-actions">
                 <button class="btn btn-primary" onclick="showCreateSynthetic()">+ New</button>
             </div>
         </div>
-        <div class="widget-body no-pad" id="synthetics-list" style="overflow:auto;">
+        <div class="widget-body no-pad" id="synthetics-list">
             <div class="empty-state">No synthetic checks configured</div>
         </div>`;
 }
 function widgetSLOs() {
     return `<div class="widget-header">
             <span class="widget-title">Service Level Objectives</span>
-            <div style="display:flex;gap:0.3rem;">
+            <div class="widget-actions">
                 <button class="btn btn-primary" onclick="showCreateSLO()">+ New</button>
             </div>
         </div>
-        <div class="widget-body no-pad" id="slos-list" style="overflow:auto;">
+        <div class="widget-body no-pad" id="slos-list">
             <div class="empty-state">No SLOs configured</div>
         </div>`;
 }
 function widgetPatterns() {
     return `<div class="widget-header">
             <span class="widget-title">Log Patterns</span>
-            <div style="display:flex;gap:0.3rem;">
+            <div class="widget-actions">
                 <select id="pattern-filter" onchange="loadPatterns()">
                     <option value="all">All Patterns</option>
                     <option value="new">New (24h)</option>
@@ -1886,26 +1886,26 @@ function widgetPatterns() {
             </div>
         </div>
         <div class="pattern-stats" id="pattern-stats"></div>
-        <div class="widget-body no-pad" id="patterns-list" style="overflow:auto;">
+        <div class="widget-body no-pad" id="patterns-list">
             <div class="empty-state">No patterns detected yet</div>
         </div>`;
 }
 function widgetContainers() {
     return `<div class="widget-header">
             <span class="widget-title">Containers</span>
-            <div style="display:flex;gap:0.3rem;">
+            <div class="widget-actions">
                 <button class="btn" onclick="loadContainers()">Refresh</button>
             </div>
         </div>
         <div class="container-summary" id="container-summary"></div>
-        <div class="widget-body no-pad" id="containers-list" style="overflow:auto;">
+        <div class="widget-body no-pad" id="containers-list">
             <div class="empty-state">No containers found</div>
         </div>`;
 }
 function widgetDeployments() {
     return `<div class="widget-header">
             <span class="widget-title">Deployments</span>
-            <div style="display:flex;gap:0.3rem;">
+            <div class="widget-actions">
                 <button class="btn" onclick="showNewDeployModal()">+ Deploy</button>
                 <button class="btn" onclick="loadDeployments()">Refresh</button>
             </div>
@@ -1919,7 +1919,7 @@ function widgetDeployments() {
 function widgetIncidents() {
     return `<div class="widget-header">
             <span class="widget-title">Incidents</span>
-            <div style="display:flex;gap:0.3rem;">
+            <div class="widget-actions">
                 <button class="btn" onclick="showNewIncidentModal()">+ Incident</button>
                 <button class="btn" onclick="loadIncidents()">Refresh</button>
             </div>
@@ -1930,14 +1930,14 @@ function widgetIncidents() {
                 <span class="incident-stat-label">Active</span>
             </div>
             <div class="incident-stat">
-                <span class="incident-stat-value" id="inc-triggered" style="color:#f4212e">0</span>
+                <span class="incident-stat-value inc-stat-triggered" id="inc-triggered">0</span>
                 <span class="incident-stat-label">Triggered</span>
             </div>
             <div class="incident-stat">
-                <span class="incident-stat-value" id="inc-acked" style="color:#ffd400">0</span>
+                <span class="incident-stat-value inc-stat-acked" id="inc-acked">0</span>
                 <span class="incident-stat-label">Acked</span>
             </div>
-            <div id="oncall-display" style="margin-left:auto;"></div>
+            <div id="oncall-display" class="incident-oncall"></div>
         </div>
         <div class="widget-body no-pad" id="incidents-list" style="overflow:auto;">
             <div class="empty-state">No active incidents</div>
@@ -1947,30 +1947,30 @@ function widgetIncidents() {
 function widgetSecurity() {
     return `<div class="widget-header">
             <span class="widget-title">Security</span>
-            <div style="display:flex;gap:0.3rem;">
+            <div class="widget-actions">
                 <a href="/security.html" class="btn">Full Dashboard</a>
                 <button class="btn" onclick="loadSecurityWidget()">Refresh</button>
             </div>
         </div>
-        <div class="security-summary" id="security-summary" style="display:flex;gap:1rem;padding:0.5rem 0;border-bottom:1px solid #2f3336;">
-            <div class="security-stat" style="text-align:center;flex:1;">
-                <span class="security-stat-value" id="sec-critical" style="font-size:1.5rem;font-weight:700;color:#f4212e;">0</span>
-                <span class="security-stat-label" style="display:block;font-size:0.7rem;color:#71767b;">Critical</span>
+        <div class="security-summary" id="security-summary">
+            <div class="security-stat">
+                <span class="security-stat-value critical" id="sec-critical">0</span>
+                <span class="security-stat-label">Critical</span>
             </div>
-            <div class="security-stat" style="text-align:center;flex:1;">
-                <span class="security-stat-value" id="sec-high" style="font-size:1.5rem;font-weight:700;color:#ff6b35;">0</span>
-                <span class="security-stat-label" style="display:block;font-size:0.7rem;color:#71767b;">High</span>
+            <div class="security-stat">
+                <span class="security-stat-value high" id="sec-high">0</span>
+                <span class="security-stat-label">High</span>
             </div>
-            <div class="security-stat" style="text-align:center;flex:1;">
-                <span class="security-stat-value" id="sec-open" style="font-size:1.5rem;font-weight:700;color:#ffd400;">0</span>
-                <span class="security-stat-label" style="display:block;font-size:0.7rem;color:#71767b;">Open Alerts</span>
+            <div class="security-stat">
+                <span class="security-stat-value open" id="sec-open">0</span>
+                <span class="security-stat-label">Open Alerts</span>
             </div>
-            <div class="security-stat" style="text-align:center;flex:1;">
-                <span class="security-stat-value" id="sec-today" style="font-size:1.5rem;font-weight:700;color:#1d9bf0;">0</span>
-                <span class="security-stat-label" style="display:block;font-size:0.7rem;color:#71767b;">Today</span>
+            <div class="security-stat">
+                <span class="security-stat-value today" id="sec-today">0</span>
+                <span class="security-stat-label">Today</span>
             </div>
         </div>
-        <div class="widget-body no-pad" id="security-alerts-list" style="overflow:auto;max-height:200px;">
+        <div class="widget-body no-pad security-alerts-list" id="security-alerts-list">
             <div class="empty-state">No security alerts</div>
         </div>`;
 }
@@ -1998,13 +1998,13 @@ async function loadSecurityWidget() {
             const container = document.getElementById('security-alerts-list');
             if (container) {
                 if (alerts.length === 0) {
-                    container.innerHTML = '<div class="empty-state" style="padding:1rem;">No open security alerts</div>';
+                    container.innerHTML = '<div class="empty-state security-empty">No open security alerts</div>';
                 } else {
                     container.innerHTML = alerts.map(alert => `
-                        <div style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0.75rem;border-bottom:1px solid #2f3336;">
-                            <span style="display:inline-block;padding:0.15rem 0.4rem;border-radius:4px;font-size:0.65rem;font-weight:600;text-transform:uppercase;background:${getSeverityBg(alert.severity)};color:${getSeverityColor(alert.severity)};">${alert.severity}</span>
-                            <span style="flex:1;font-size:0.8rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(alert.title)}</span>
-                            <span style="font-size:0.7rem;color:#71767b;">${formatTimeAgo(new Date(alert.detected_at))}</span>
+                        <div class="security-alert-item">
+                            <span class="security-alert-severity ${getSeverityClass(alert.severity)}">${escapeHtml(alert.severity || 'info')}</span>
+                            <span class="security-alert-title">${escapeHtml(alert.title)}</span>
+                            <span class="security-alert-time">${formatTimeAgo(new Date(alert.detected_at))}</span>
                         </div>
                     `).join('');
                 }
@@ -2015,20 +2015,19 @@ async function loadSecurityWidget() {
     }
 }
 
-function getSeverityColor(severity) {
-    const colors = { critical: '#f4212e', high: '#ff6b35', medium: '#ffd400', low: '#00ba7c', info: '#1d9bf0' };
-    return colors[severity] || '#71767b';
-}
-
-function getSeverityBg(severity) {
-    const bgs = { critical: 'rgba(244,33,46,0.2)', high: 'rgba(255,107,53,0.2)', medium: 'rgba(255,212,0,0.2)', low: 'rgba(0,186,124,0.2)', info: 'rgba(29,155,240,0.2)' };
-    return bgs[severity] || 'rgba(113,118,123,0.2)';
+function getSeverityClass(severity) {
+    const level = (severity || '').toLowerCase();
+    if (level === 'critical') return 'critical';
+    if (level === 'high') return 'high';
+    if (level === 'medium') return 'medium';
+    if (level === 'low') return 'low';
+    return 'info';
 }
 
 function widgetCluster() {
     return `<div class="widget-header">
             <span class="widget-title">Federation Cluster</span>
-            <div style="display:flex;gap:0.3rem;">
+            <div class="widget-actions">
                 <button class="btn" onclick="showJoinClusterModal()">Join Node</button>
                 <button class="btn" onclick="loadCluster()">Refresh</button>
             </div>
@@ -2046,7 +2045,7 @@ function widgetCluster() {
                 <span class="cluster-stat-value" id="cluster-incidents">0</span>
                 <span class="cluster-stat-label">Active Incidents</span>
             </div>
-            <div id="cluster-local" style="margin-left:auto;font-size:0.75rem;color:#888;"></div>
+            <div id="cluster-local" class="cluster-local"></div>
         </div>
         <div class="widget-body no-pad" id="cluster-nodes-list" style="overflow:auto;">
             <div class="empty-state">Federation not enabled. Start with --cluster flag.</div>
@@ -2056,7 +2055,7 @@ function widgetCluster() {
 function widgetStatusPage() {
     return `<div class="widget-header">
             <span class="widget-title">Status Pages</span>
-            <div style="display:flex;gap:0.3rem;">
+            <div class="widget-actions">
                 <button class="btn" onclick="showCreateStatusPage()">+ New Page</button>
                 <button class="btn" onclick="showCreateComponent()">+ Component</button>
                 <button class="btn" onclick="loadStatusPages()">Refresh</button>
@@ -2085,7 +2084,7 @@ function widgetStatusPage() {
 function widgetCatalog() {
     return `<div class="widget-header">
             <span class="widget-title">Service Catalog</span>
-            <div style="display:flex;gap:0.3rem;">
+            <div class="widget-actions">
                 <button class="btn" onclick="showCreateService()">+ Service</button>
                 <button class="btn" onclick="showCreateTeam()">+ Team</button>
                 <button class="btn" onclick="loadCatalog()">Refresh</button>
@@ -2097,15 +2096,15 @@ function widgetCatalog() {
                 <span class="catalog-stat-label">Services</span>
             </div>
             <div class="catalog-stat">
-                <span class="catalog-stat-value" id="cat-critical" style="color:#f4212e">0</span>
+                <span class="catalog-stat-value catalog-stat-critical" id="cat-critical">0</span>
                 <span class="catalog-stat-label">Critical</span>
             </div>
             <div class="catalog-stat">
-                <span class="catalog-stat-value" id="cat-healthy" style="color:#00ba7c">0</span>
+                <span class="catalog-stat-value catalog-stat-healthy" id="cat-healthy">0</span>
                 <span class="catalog-stat-label">Healthy</span>
             </div>
             <div class="catalog-stat">
-                <span class="catalog-stat-value" id="cat-unhealthy" style="color:#f4212e">0</span>
+                <span class="catalog-stat-value catalog-stat-unhealthy" id="cat-unhealthy">0</span>
                 <span class="catalog-stat-label">Unhealthy</span>
             </div>
             <div class="catalog-filters">
@@ -2132,7 +2131,7 @@ function widgetCatalog() {
 function widgetCorrelation() {
     return `<div class="widget-header">
             <span class="widget-title">Correlation Engine</span>
-            <div style="display:flex;gap:0.3rem;">
+            <div class="widget-actions">
                 <select class="trace-select" id="corr-service-select" onchange="loadServiceTimeline()">
                     <option value="">Select Service</option>
                 </select>
@@ -2144,31 +2143,31 @@ function widgetCorrelation() {
                 <button class="btn" onclick="loadCorrelations()">Refresh</button>
             </div>
         </div>
-        <div class="correlation-summary" id="corr-summary" style="display:flex;gap:1rem;padding:0.5rem;background:#1a1a1a;border-bottom:1px solid #333;">
-            <div class="corr-stat" style="text-align:center;">
-                <span id="corr-deploy-incidents" style="font-size:1.5rem;font-weight:bold;color:#f4212e;">0</span>
-                <div style="font-size:0.75rem;color:#888;">Deploy→Incident</div>
+        <div class="correlation-summary" id="corr-summary">
+            <div class="corr-stat">
+                <span id="corr-deploy-incidents" class="corr-stat-value deploy-incidents">0</span>
+                <div class="corr-stat-label">Deploy→Incident</div>
             </div>
-            <div class="corr-stat" style="text-align:center;">
-                <span id="corr-total-events" style="font-size:1.5rem;font-weight:bold;color:#1d9bf0;">0</span>
-                <div style="font-size:0.75rem;color:#888;">Timeline Events</div>
+            <div class="corr-stat">
+                <span id="corr-total-events" class="corr-stat-value timeline-events">0</span>
+                <div class="corr-stat-label">Timeline Events</div>
             </div>
-            <div class="corr-stat" style="text-align:center;">
-                <span id="corr-error-traces" style="font-size:1.5rem;font-weight:bold;color:#ff6b35;">0</span>
-                <div style="font-size:0.75rem;color:#888;">Error Traces</div>
+            <div class="corr-stat">
+                <span id="corr-error-traces" class="corr-stat-value error-traces">0</span>
+                <div class="corr-stat-label">Error Traces</div>
             </div>
         </div>
-        <div style="display:flex;height:calc(100% - 90px);">
-            <div id="corr-correlations" style="width:40%;border-right:1px solid #333;overflow:auto;padding:0.5rem;">
-                <div style="font-weight:bold;margin-bottom:0.5rem;color:#888;">Deploy → Incident Correlations</div>
+        <div class="corr-layout">
+            <div id="corr-correlations" class="corr-panel corr-left">
+                <div class="corr-panel-title">Deploy → Incident Correlations</div>
                 <div id="corr-deploy-list">
-                    <div class="empty-state" style="padding:1rem;text-align:center;color:#666;">No correlations detected</div>
+                    <div class="empty-state corr-empty">No correlations detected</div>
                 </div>
             </div>
-            <div id="corr-timeline" style="width:60%;overflow:auto;padding:0.5rem;">
-                <div style="font-weight:bold;margin-bottom:0.5rem;color:#888;">Service Timeline</div>
+            <div id="corr-timeline" class="corr-panel corr-right">
+                <div class="corr-panel-title">Service Timeline</div>
                 <div id="corr-timeline-list">
-                    <div class="empty-state" style="padding:1rem;text-align:center;color:#666;">Select a service to view timeline</div>
+                    <div class="empty-state corr-empty">Select a service to view timeline</div>
                 </div>
             </div>
         </div>`;
@@ -2177,7 +2176,7 @@ function widgetCorrelation() {
 function widgetKubernetes() {
     return `<div class="widget-header">
             <span class="widget-title">Kubernetes</span>
-            <div style="display:flex;gap:0.3rem;">
+            <div class="widget-actions">
                 <select class="trace-select" id="k8s-namespace-select" onchange="loadKubernetes()">
                     <option value="">All Namespaces</option>
                 </select>
@@ -2201,7 +2200,7 @@ function widgetKubernetes() {
                 <span class="k8s-stat-value" id="k8s-nodes">-</span>
                 <span class="k8s-stat-label">Nodes</span>
             </div>
-            <div id="k8s-cluster-name" style="margin-left:auto;font-size:0.75rem;color:#888;"></div>
+            <div id="k8s-cluster-name" class="k8s-cluster-name"></div>
         </div>
         <div class="k8s-tabs" id="k8s-tabs">
             <button class="k8s-tab active" data-tab="pods" onclick="switchK8sTab('pods')">Pods</button>
@@ -2210,7 +2209,7 @@ function widgetKubernetes() {
             <button class="k8s-tab" data-tab="nodes" onclick="switchK8sTab('nodes')">Nodes</button>
             <button class="k8s-tab" data-tab="events" onclick="switchK8sTab('events')">Events</button>
         </div>
-        <div class="widget-body no-pad" style="display:flex;flex-direction:column;flex:1;">
+        <div class="widget-body no-pad widget-body-stack">
             <div class="k8s-content active" id="k8s-pods-content">
                 <div class="empty-state">No pods found</div>
             </div>
@@ -2232,7 +2231,7 @@ function widgetKubernetes() {
 function widgetAnomaly() {
     return `<div class="widget-header">
             <span class="widget-title">Anomaly Detection</span>
-            <div style="display:flex;gap:0.3rem;">
+            <div class="widget-actions">
                 <button class="btn" onclick="loadAnomalies()">Refresh</button>
             </div>
         </div>
@@ -2254,7 +2253,7 @@ function widgetAnomaly() {
                 <span class="anomaly-stat-label">Metrics</span>
             </div>
         </div>
-        <div class="widget-body no-pad" id="anomaly-list" style="overflow:auto;">
+        <div class="widget-body no-pad" id="anomaly-list">
             <div class="empty-state">No anomalies detected</div>
         </div>`;
 }
@@ -2262,7 +2261,7 @@ function widgetAnomaly() {
 function widgetAlerting() {
     return `<div class="widget-header">
             <span class="widget-title">Alerts</span>
-            <div style="display:flex;gap:0.3rem;">
+            <div class="widget-actions">
                 <button class="btn" onclick="showNewAlertRuleModal()">+ Rule</button>
                 <button class="btn" onclick="showNewSilenceModal()">Silence</button>
                 <button class="btn" onclick="loadAlerts()">Refresh</button>
@@ -2291,7 +2290,7 @@ function widgetAlerting() {
             <button class="alerting-tab" data-tab="rules" onclick="switchAlertingTab('rules')">Rules</button>
             <button class="alerting-tab" data-tab="silences" onclick="switchAlertingTab('silences')">Silences</button>
         </div>
-        <div class="widget-body no-pad" style="display:flex;flex-direction:column;flex:1;">
+        <div class="widget-body no-pad widget-body-stack">
             <div class="alerting-content active" id="alerting-alerts-content">
                 <div class="empty-state">No firing alerts</div>
             </div>
@@ -2307,7 +2306,7 @@ function widgetAlerting() {
 function widgetNotifications() {
     return `<div class="widget-header">
             <span class="widget-title">Notifications</span>
-            <div style="display:flex;gap:0.3rem;">
+            <div class="widget-actions">
                 <button class="btn" onclick="showNotificationChannels()">Manage</button>
                 <button class="btn" onclick="loadNotifyWidget()">Refresh</button>
             </div>
@@ -2334,7 +2333,7 @@ function widgetNotifications() {
             <button class="notify-tab active" data-tab="channels" onclick="switchNotifyTab('channels')">Channels</button>
             <button class="notify-tab" data-tab="history" onclick="switchNotifyTab('history')">History</button>
         </div>
-        <div class="widget-body no-pad" style="display:flex;flex-direction:column;flex:1;">
+        <div class="widget-body no-pad widget-body-stack">
             <div class="notify-content active" id="notify-channels-content">
                 <div class="empty-state">No notification channels configured</div>
             </div>
@@ -2347,7 +2346,7 @@ function widgetNotifications() {
 function widgetOnCall() {
     return `<div class="widget-header">
             <span class="widget-title">On-Call</span>
-            <div style="display:flex;gap:0.3rem;">
+            <div class="widget-actions">
                 <button class="btn" onclick="showNewScheduleModal()">+ Schedule</button>
                 <button class="btn" onclick="loadOnCallWidget()">Refresh</button>
             </div>
@@ -2372,7 +2371,7 @@ function widgetOnCall() {
                 <div class="empty-state" style="padding:0.5rem 0;">No schedules configured</div>
             </div>
         </div>
-        <div class="widget-body no-pad" id="oncall-schedules-list" style="overflow:auto;">
+        <div class="widget-body no-pad" id="oncall-schedules-list">
             <div class="empty-state">No on-call schedules</div>
         </div>`;
 }
@@ -2380,7 +2379,7 @@ function widgetOnCall() {
 function widgetAudit() {
     return `<div class="widget-header">
             <span class="widget-title">Audit Log</span>
-            <div style="display:flex;gap:0.3rem;">
+            <div class="widget-actions">
                 <button class="btn" onclick="exportAuditLogs()">Export</button>
                 <button class="btn" onclick="loadAuditWidget()">Refresh</button>
             </div>
@@ -2419,7 +2418,7 @@ function widgetAudit() {
                 <option value="session">Sessions</option>
             </select>
         </div>
-        <div class="widget-body no-pad" id="audit-list" style="overflow:auto;">
+        <div class="widget-body no-pad" id="audit-list">
             <div class="empty-state">No audit logs available</div>
         </div>`;
 }
@@ -2427,8 +2426,8 @@ function widgetAudit() {
 function widgetCostIntel() {
     return `<div class="widget-header">
             <span class="widget-title">Cost Intelligence</span>
-            <div style="display:flex;gap:0.3rem;">
-                <select id="cost-period" class="trace-select" style="height:26px;" onchange="loadCostIntel()">
+            <div class="widget-actions">
+                <select id="cost-period" class="trace-select trace-select-compact" onchange="loadCostIntel()">
                     <option value="current">Current Usage</option>
                     <option value="projected">Projected (30d)</option>
                 </select>
@@ -2443,8 +2442,8 @@ function widgetCostIntel() {
 function widgetDBWatch() {
     return `<div class="widget-header">
             <span class="widget-title">Database Queries</span>
-            <div style="display:flex;gap:0.3rem;">
-                <select id="dbwatch-db-filter" class="trace-select" style="height:26px;" onchange="loadDBWatch()">
+            <div class="widget-actions">
+                <select id="dbwatch-db-filter" class="trace-select trace-select-compact" onchange="loadDBWatch()">
                     <option value="">All Databases</option>
                     <option value="redis">Redis</option>
                     <option value="postgres">PostgreSQL</option>
@@ -2458,7 +2457,7 @@ function widgetDBWatch() {
             <button class="dbwatch-tab" data-tab="slow" onclick="switchDBWatchTab('slow')">Slow Queries</button>
             <button class="dbwatch-tab" data-tab="stats" onclick="switchDBWatchTab('stats')">Stats</button>
         </div>
-        <div class="widget-body no-pad" id="dbwatch-content" style="overflow:auto;">
+        <div class="widget-body no-pad" id="dbwatch-content">
             <div class="empty-state">Loading database queries...</div>
         </div>`;
 }
@@ -2466,11 +2465,11 @@ function widgetDBWatch() {
 function widgetCardinality() {
     return `<div class="widget-header">
             <span class="widget-title">Cardinality Explorer</span>
-            <div style="display:flex;gap:0.3rem;">
+            <div class="widget-actions">
                 <button class="btn" onclick="loadCardinality()">Refresh</button>
             </div>
         </div>
-        <div class="widget-body" id="cardinality-content" style="overflow:auto;">
+        <div class="widget-body" id="cardinality-content">
             <div class="empty-state">Loading cardinality data...</div>
         </div>`;
 }
@@ -5381,9 +5380,7 @@ function toggleLogTail() {
     const icon = document.getElementById('log-tail-icon');
 
     if (logTailEnabled) {
-        btn.style.background = '#1a3d2e';
-        btn.style.borderColor = '#00ba7c';
-        btn.style.color = '#00ba7c';
+        btn.classList.add('live');
         icon.textContent = '⏸';
         // Poll every 2 seconds
         logTailInterval = setInterval(() => {
@@ -5394,9 +5391,7 @@ function toggleLogTail() {
         }, 2000);
         showToast('Live tail enabled', 'success');
     } else {
-        btn.style.background = '';
-        btn.style.borderColor = '';
-        btn.style.color = '';
+        btn.classList.remove('live');
         icon.textContent = '▶';
         if (logTailInterval) {
             clearInterval(logTailInterval);
@@ -6124,11 +6119,11 @@ function loadDeployments() {
                                 <span class="deploy-stat-label">This Week</span>
                             </div>
                             <div class="deploy-stat">
-                                <span class="deploy-stat-value" style="color:#00ba7c">${(stats.success_rate || 0).toFixed(0)}%</span>
+                                <span class="deploy-stat-value deploy-stat-success">${(stats.success_rate || 0).toFixed(0)}%</span>
                                 <span class="deploy-stat-label">Success Rate</span>
                             </div>
                             <div class="deploy-stat">
-                                <span class="deploy-stat-value" style="color:${stats.recent_failures > 0 ? '#f4212e' : '#71767b'}">${stats.recent_failures || 0}</span>
+                                <span class="deploy-stat-value ${stats.recent_failures > 0 ? 'deploy-stat-fail' : 'deploy-stat-neutral'}">${stats.recent_failures || 0}</span>
                                 <span class="deploy-stat-label">Recent Failures</span>
                             </div>
                         `;
@@ -6143,8 +6138,8 @@ function loadDeployments() {
                                 <div class="deploy-stat"><span class="deploy-stat-value">${stats.total_deployments}</span><span class="deploy-stat-label">Total</span></div>
                                 <div class="deploy-stat"><span class="deploy-stat-value">${stats.deploys_today}</span><span class="deploy-stat-label">Today</span></div>
                                 <div class="deploy-stat"><span class="deploy-stat-value">${stats.deploys_this_week}</span><span class="deploy-stat-label">This Week</span></div>
-                                <div class="deploy-stat"><span class="deploy-stat-value" style="color:#00ba7c">${stats.success_rate.toFixed(0)}%</span><span class="deploy-stat-label">Success Rate</span></div>
-                                <div class="deploy-stat"><span class="deploy-stat-value" style="color:${stats.recent_failures > 0 ? '#f4212e' : '#71767b'}">${stats.recent_failures}</span><span class="deploy-stat-label">Recent Failures</span></div>
+                                <div class="deploy-stat"><span class="deploy-stat-value deploy-stat-success">${stats.success_rate.toFixed(0)}%</span><span class="deploy-stat-label">Success Rate</span></div>
+                                <div class="deploy-stat"><span class="deploy-stat-value ${stats.recent_failures > 0 ? 'deploy-stat-fail' : 'deploy-stat-neutral'}">${stats.recent_failures}</span><span class="deploy-stat-label">Recent Failures</span></div>
                             `;
                         }
                     }
@@ -6166,7 +6161,7 @@ function loadDeployments() {
                     `<a href="${escapeHtml(d.commit_url)}" target="_blank" class="deploy-commit">${escapeHtml(d.commit_sha?.substring(0, 7) || '')}</a>` :
                     (d.commit_sha ? `<span class="deploy-commit">${escapeHtml(d.commit_sha.substring(0, 7))}</span>` : '');
 
-                return `<div class="deploy-item" onclick="showDeployImpact('${d.id}')" style="cursor:pointer">
+                return `<div class="deploy-item" onclick="showDeployImpact('${d.id}')">
                     <div class="deploy-marker ${d.status || 'success'}"></div>
                     <div class="deploy-info">
                         <div class="deploy-header">
@@ -6509,7 +6504,7 @@ function loadIncidents() {
                             <span class="incident-time" title="${time}">${relTime}</span>
                             ${inc.service ? `<span class="incident-source">${escapeHtml(inc.service)}</span>` : ''}
                             ${sourceLabel ? `<span class="incident-source">${sourceLabel}</span>` : ''}
-                            ${inc.assigned_to ? `<span style="color:#00ba7c">@${escapeHtml(inc.assigned_to)}</span>` : ''}
+                            ${inc.assigned_to ? `<span class="incident-owner">@${escapeHtml(inc.assigned_to)}</span>` : ''}
                         </div>
                     </div>
                     <div class="incident-actions" onclick="event.stopPropagation()">
@@ -7937,7 +7932,7 @@ function loadCorrelations() {
 
             if (listEl) {
                 if (correlationData.correlations.length === 0) {
-                    listEl.innerHTML = '<div class="empty-state" style="padding:1rem;text-align:center;color:#666;">No deploy→incident correlations detected</div>';
+                    listEl.innerHTML = '<div class="empty-state corr-empty">No deploy→incident correlations detected</div>';
                 } else {
                     listEl.innerHTML = correlationData.correlations.map(corr => renderCorrelation(corr)).join('');
                 }
@@ -7976,18 +7971,18 @@ function loadCorrelations() {
 
 function renderCorrelation(corr) {
     const confidence = Math.round((corr.confidence || 0) * 100);
-    const confidenceColor = confidence >= 80 ? '#f4212e' : confidence >= 60 ? '#ffd400' : '#71767b';
+    const confidenceClass = confidence >= 80 ? 'high' : confidence >= 60 ? 'medium' : 'low';
     const timeDelta = formatDuration(corr.time_delta);
 
-    return `<div style="padding:0.5rem;border-bottom:1px solid #333;cursor:pointer;" onclick="showDeployContext('${corr.deployment?.id}')">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-            <span style="font-weight:bold;color:#1d9bf0;">${escapeHtml(corr.deployment?.version || 'Unknown')}</span>
-            <span style="font-size:0.75rem;color:${confidenceColor};">${confidence}% confidence</span>
+    return `<div class="corr-list-item" onclick="showDeployContext('${corr.deployment?.id}')">
+        <div class="corr-list-head">
+            <span class="corr-version">${escapeHtml(corr.deployment?.version || 'Unknown')}</span>
+            <span class="corr-confidence ${confidenceClass}">${confidence}% confidence</span>
         </div>
-        <div style="font-size:0.8rem;color:#888;">
+        <div class="corr-meta">
             ${escapeHtml(corr.deployment?.service || '')} • ${timeDelta} before incident
         </div>
-        <div style="font-size:0.75rem;color:#71767b;margin-top:0.3rem;">
+        <div class="corr-reason">
             ${escapeHtml(corr.reason || '')}
         </div>
     </div>`;
@@ -7999,7 +7994,7 @@ function loadServiceTimeline() {
 
     if (!service) {
         const listEl = document.getElementById('corr-timeline-list');
-        if (listEl) listEl.innerHTML = '<div class="empty-state" style="padding:1rem;text-align:center;color:#666;">Select a service to view timeline</div>';
+        if (listEl) listEl.innerHTML = '<div class="empty-state corr-empty">Select a service to view timeline</div>';
         return;
     }
 
@@ -8017,7 +8012,7 @@ function loadServiceTimeline() {
 
             if (listEl) {
                 if (!data.events || data.events.length === 0) {
-                    listEl.innerHTML = '<div class="empty-state" style="padding:1rem;text-align:center;color:#666;">No events in this time range</div>';
+                    listEl.innerHTML = '<div class="empty-state corr-empty">No events in this time range</div>';
                 } else {
                     listEl.innerHTML = data.events.map(evt => renderTimelineEvent(evt)).join('');
                 }
@@ -8026,18 +8021,11 @@ function loadServiceTimeline() {
         .catch(err => {
             console.error('Error loading timeline:', err);
             const listEl = document.getElementById('corr-timeline-list');
-            if (listEl) listEl.innerHTML = '<div class="empty-state" style="padding:1rem;text-align:center;color:#f4212e;">Error loading timeline</div>';
+            if (listEl) listEl.innerHTML = '<div class="empty-state corr-empty corr-empty-error">Error loading timeline</div>';
         });
 }
 
 function renderTimelineEvent(evt) {
-    const typeColors = {
-        'deploy': '#1d9bf0',
-        'incident': '#f4212e',
-        'trace': '#00ba7c',
-        'log': '#71767b',
-        'alert': '#ffd400'
-    };
     const typeIcons = {
         'deploy': '🚀',
         'incident': '🚨',
@@ -8045,20 +8033,23 @@ function renderTimelineEvent(evt) {
         'log': '📝',
         'alert': '⚠️'
     };
-    const color = typeColors[evt.type] || '#71767b';
+    const typeClass = evt.type || 'log';
     const icon = typeIcons[evt.type] || '•';
     const time = new Date(evt.timestamp).toLocaleTimeString();
-    const severityClass = evt.severity === 'error' || evt.severity === 'critical' ? 'color:#f4212e;' :
-                         evt.severity === 'warn' || evt.severity === 'high' ? 'color:#ffd400;' : '';
+    const severityClass = evt.severity === 'error' || evt.severity === 'critical'
+        ? 'error'
+        : evt.severity === 'warn' || evt.severity === 'high'
+            ? 'warn'
+            : '';
 
-    return `<div style="display:flex;gap:0.5rem;padding:0.4rem;border-bottom:1px solid #2f3336;cursor:pointer;" onclick="showEventDetail('${evt.type}', '${evt.id}')">
-        <div style="font-size:0.9rem;">${icon}</div>
-        <div style="flex:1;">
-            <div style="display:flex;justify-content:space-between;">
-                <span style="font-weight:bold;color:${color};font-size:0.8rem;">${evt.type.toUpperCase()}</span>
-                <span style="font-size:0.7rem;color:#71767b;">${time}</span>
+    return `<div class="timeline-item" onclick="showEventDetail('${evt.type}', '${evt.id}')">
+        <div class="timeline-icon">${icon}</div>
+        <div class="timeline-content">
+            <div class="timeline-head">
+                <span class="timeline-type ${typeClass}">${evt.type.toUpperCase()}</span>
+                <span class="timeline-time">${time}</span>
             </div>
-            <div style="font-size:0.8rem;${severityClass}">${escapeHtml(evt.summary || '')}</div>
+            <div class="timeline-summary ${severityClass}">${escapeHtml(evt.summary || '')}</div>
         </div>
     </div>`;
 }
@@ -8313,16 +8304,19 @@ function loadKubernetes() {
 
             if (podsEl) {
                 podsEl.textContent = `${summary.running_pods || 0}/${summary.total_pods || 0}`;
-                podsEl.style.color = summary.running_pods === summary.total_pods ? '#00ba7c' : '#ffd400';
+                podsEl.classList.toggle('health-ok', summary.running_pods === summary.total_pods);
+                podsEl.classList.toggle('health-warn', summary.running_pods !== summary.total_pods);
             }
             if (deploysEl) {
                 deploysEl.textContent = `${summary.ready_deployments || 0}/${summary.total_deployments || 0}`;
-                deploysEl.style.color = summary.ready_deployments === summary.total_deployments ? '#00ba7c' : '#ffd400';
+                deploysEl.classList.toggle('health-ok', summary.ready_deployments === summary.total_deployments);
+                deploysEl.classList.toggle('health-warn', summary.ready_deployments !== summary.total_deployments);
             }
             if (servicesEl) servicesEl.textContent = summary.total_services || 0;
             if (nodesEl) {
                 nodesEl.textContent = `${summary.ready_nodes || 0}/${summary.total_nodes || 0}`;
-                nodesEl.style.color = summary.ready_nodes === summary.total_nodes ? '#00ba7c' : '#ffd400';
+                nodesEl.classList.toggle('health-ok', summary.ready_nodes === summary.total_nodes);
+                nodesEl.classList.toggle('health-warn', summary.ready_nodes !== summary.total_nodes);
             }
             if (clusterNameEl) clusterNameEl.textContent = summary.cluster_name ? `Cluster: ${summary.cluster_name}` : '';
         })
@@ -8376,7 +8370,7 @@ function loadKubernetes() {
                         </div>
                     </div>
                     <div class="k8s-metrics">
-                        ${pod.ip ? `<div class="k8s-metric"><span class="k8s-metric-value" style="font-size:0.65rem">${escapeHtml(pod.ip)}</span><span>IP</span></div>` : ''}
+                        ${pod.ip ? `<div class="k8s-metric"><span class="k8s-metric-value k8s-ip">${escapeHtml(pod.ip)}</span><span>IP</span></div>` : ''}
                     </div>
                 </div>`;
             }).join('');
@@ -8711,21 +8705,21 @@ function loadAlerts() {
             content.innerHTML = rules.map(rule => {
                 const typeLabel = rule.type || 'threshold';
                 return `<div class="alert-item">
-                    <div class="alert-severity ${rule.enabled ? 'info' : 'warning'}" style="opacity:${rule.enabled ? 1 : 0.3}"></div>
+                    <div class="alert-severity ${rule.enabled ? 'info' : 'warning'} ${rule.enabled ? '' : 'alert-rule-disabled'}"></div>
                     <div class="alert-info">
                         <div class="alert-header">
                             <span class="alert-name">${escapeHtml(rule.name)}</span>
                             <span class="alert-label">${typeLabel}</span>
-                            ${!rule.enabled ? '<span class="alert-state" style="background:#2f3336;color:#71767b">disabled</span>' : ''}
+                            ${!rule.enabled ? '<span class="alert-state alert-state-disabled">disabled</span>' : ''}
                         </div>
                         <div class="alert-meta">
                             <span>${rule.condition} ${rule.threshold}</span>
-                            ${rule.query ? `<span style="font-family:monospace;color:#1d9bf0">${escapeHtml(rule.query.substring(0, 30))}...</span>` : ''}
+                            ${rule.query ? `<span class="alert-rule-query">${escapeHtml(rule.query.substring(0, 30))}...</span>` : ''}
                         </div>
                     </div>
                     <div class="alert-actions" onclick="event.stopPropagation()">
                         <button class="btn" onclick="toggleRule('${rule.id}', ${!rule.enabled})">${rule.enabled ? 'Disable' : 'Enable'}</button>
-                        <button class="btn" style="color:#f4212e" onclick="deleteRule('${rule.id}')">Delete</button>
+                        <button class="btn alert-btn-danger" onclick="deleteRule('${rule.id}')">Delete</button>
                     </div>
                 </div>`;
             }).join('');
@@ -8758,7 +8752,7 @@ function loadAlerts() {
                         <span>Ends: ${endsAt}</span>
                         ${s.comment ? `<span>${escapeHtml(s.comment)}</span>` : ''}
                         ${s.created_by ? `<span>by ${escapeHtml(s.created_by)}</span>` : ''}
-                        ${state === 'active' ? `<button class="btn" style="margin-left:auto" onclick="expireSilence('${s.id}')">Expire</button>` : ''}
+                        ${state === 'active' ? `<button class="btn silence-expire-btn" onclick="expireSilence('${s.id}')">Expire</button>` : ''}
                     </div>
                 </div>`;
             }).join('');

@@ -37,10 +37,10 @@ type Incident struct {
 	Description string            `json:"description"`
 	Severity    Severity          `json:"severity"`
 	Status      Status            `json:"status"`
-	Service     string            `json:"service"`      // Affected service name (for display)
-	ServiceID   string            `json:"service_id"`   // Link to service catalog
-	Source      string            `json:"source"`       // watch, slo, synthetic, manual
-	SourceID    string            `json:"source_id"`    // ID of triggering alert
+	Service     string            `json:"service"`    // Affected service name (for display)
+	ServiceID   string            `json:"service_id"` // Link to service catalog
+	Source      string            `json:"source"`     // watch, slo, synthetic, manual
+	SourceID    string            `json:"source_id"`  // ID of triggering alert
 	CreatedAt   time.Time         `json:"created_at"`
 	UpdatedAt   time.Time         `json:"updated_at"`
 	AckedAt     *time.Time        `json:"acked_at,omitempty"`
@@ -63,21 +63,21 @@ type TimelineEvent struct {
 
 // OnCallSchedule defines who is on-call
 type OnCallSchedule struct {
-	ID          string         `json:"id"`
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	Timezone    string         `json:"timezone"`
-	Rotations   []Rotation     `json:"rotations"`
-	Overrides   []Override     `json:"overrides"` // Temporary overrides
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Timezone    string     `json:"timezone"`
+	Rotations   []Rotation `json:"rotations"`
+	Overrides   []Override `json:"overrides"` // Temporary overrides
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 // Rotation defines a recurring on-call rotation
 type Rotation struct {
 	ID        string   `json:"id"`
 	Name      string   `json:"name"`
-	Type      string   `json:"type"` // daily, weekly, custom
+	Type      string   `json:"type"`       // daily, weekly, custom
 	StartTime string   `json:"start_time"` // HH:MM
 	Duration  int      `json:"duration_hours"`
 	Users     []string `json:"users"` // User IDs/names in rotation order
@@ -94,21 +94,21 @@ type Override struct {
 
 // EscalationPolicy defines how to escalate
 type EscalationPolicy struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Description string            `json:"description"`
-	Rules       []EscalationRule  `json:"rules"`
-	RepeatAfter int               `json:"repeat_after_minutes"` // 0 = don't repeat
-	CreatedAt   time.Time         `json:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
+	ID          string           `json:"id"`
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	Rules       []EscalationRule `json:"rules"`
+	RepeatAfter int              `json:"repeat_after_minutes"` // 0 = don't repeat
+	CreatedAt   time.Time        `json:"created_at"`
+	UpdatedAt   time.Time        `json:"updated_at"`
 }
 
 // EscalationRule defines one level of escalation
 type EscalationRule struct {
-	Level           int      `json:"level"`
-	DelayMinutes    int      `json:"delay_minutes"`    // Wait before escalating
-	Targets         []Target `json:"targets"`          // Who to notify
-	NotifyChannels  []string `json:"notify_channels"`  // slack, webhook, email
+	Level          int      `json:"level"`
+	DelayMinutes   int      `json:"delay_minutes"`   // Wait before escalating
+	Targets        []Target `json:"targets"`         // Who to notify
+	NotifyChannels []string `json:"notify_channels"` // slack, webhook, email
 }
 
 // Target for notifications
@@ -121,9 +121,9 @@ type Target struct {
 type NotificationLog struct {
 	ID         string    `json:"id"`
 	IncidentID string    `json:"incident_id"`
-	Channel    string    `json:"channel"`    // slack, webhook, email
-	Target     string    `json:"target"`     // Where it was sent
-	Status     string    `json:"status"`     // sent, failed, delivered
+	Channel    string    `json:"channel"` // slack, webhook, email
+	Target     string    `json:"target"`  // Where it was sent
+	Status     string    `json:"status"`  // sent, failed, delivered
 	SentAt     time.Time `json:"sent_at"`
 	Message    string    `json:"message"`
 }
@@ -476,17 +476,47 @@ func (s *Store) AddNote(id, user, note string) error {
 	return err
 }
 
+// AssignIncident assigns an incident to a responder and appends a timeline event.
+func (s *Store) AssignIncident(id, user, assignee string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+
+	var timelineJSON string
+	err := s.db.QueryRow(`SELECT timeline FROM incidents WHERE id = ?`, id).Scan(&timelineJSON)
+	if err != nil {
+		return err
+	}
+
+	var timeline []TimelineEvent
+	json.Unmarshal([]byte(timelineJSON), &timeline)
+	timeline = append(timeline, TimelineEvent{
+		Timestamp: now,
+		Type:      "assigned",
+		User:      user,
+		Message:   fmt.Sprintf("Assigned to %s by %s", assignee, user),
+	})
+	newTimelineJSON, _ := json.Marshal(timeline)
+
+	_, err = s.db.Exec(`
+		UPDATE incidents SET assigned_to = ?, updated_at = ?, timeline = ?
+		WHERE id = ?`,
+		assignee, now, string(newTimelineJSON), id)
+	return err
+}
+
 // GetStats returns incident statistics
 type IncidentStats struct {
-	TotalIncidents      int            `json:"total_incidents"`
-	ActiveIncidents     int            `json:"active_incidents"`
-	TriggeredCount      int            `json:"triggered_count"`
-	AcknowledgedCount   int            `json:"acknowledged_count"`
-	ResolvedToday       int            `json:"resolved_today"`
-	MTTA                float64        `json:"mtta_minutes"`        // Mean time to acknowledge
-	MTTR                float64        `json:"mttr_minutes"`        // Mean time to resolve
-	BySeverity          map[string]int `json:"by_severity"`
-	ByService           map[string]int `json:"by_service"`
+	TotalIncidents    int            `json:"total_incidents"`
+	ActiveIncidents   int            `json:"active_incidents"`
+	TriggeredCount    int            `json:"triggered_count"`
+	AcknowledgedCount int            `json:"acknowledged_count"`
+	ResolvedToday     int            `json:"resolved_today"`
+	MTTA              float64        `json:"mtta_minutes"` // Mean time to acknowledge
+	MTTR              float64        `json:"mttr_minutes"` // Mean time to resolve
+	BySeverity        map[string]int `json:"by_severity"`
+	ByService         map[string]int `json:"by_service"`
 }
 
 func (s *Store) GetStats() (*IncidentStats, error) {

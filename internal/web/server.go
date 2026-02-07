@@ -22,22 +22,22 @@ import (
 	"dogwatch/internal/anomaly"
 	"dogwatch/internal/bubbleup"
 	"dogwatch/internal/catalog"
-	"dogwatch/internal/correlation"
-	"dogwatch/internal/query"
 	"dogwatch/internal/containers"
+	"dogwatch/internal/correlation"
 	"dogwatch/internal/custommetrics"
-	"dogwatch/internal/deploys"
 	"dogwatch/internal/dashboard"
+	"dogwatch/internal/deploys"
 	"dogwatch/internal/federation"
 	"dogwatch/internal/incidents"
 	"dogwatch/internal/kubernetes"
 	"dogwatch/internal/logs"
-	"dogwatch/internal/oncall"
 	"dogwatch/internal/metrics"
+	"dogwatch/internal/oncall"
+	"dogwatch/internal/query"
 	"dogwatch/internal/slo"
+	"dogwatch/internal/statuspage"
 	"dogwatch/internal/storage"
 	"dogwatch/internal/synthetics"
-	"dogwatch/internal/statuspage"
 	"dogwatch/internal/trace"
 	"dogwatch/internal/watch"
 
@@ -1140,11 +1140,11 @@ func (s *Server) Stop() error {
 
 // StatsResponse is the JSON response for /api/stats
 type StatsResponse struct {
-	UpdatedAt        string             `json:"updated_at"`
-	TotalConnections int64              `json:"total_connections"`
-	TotalRequests    int64              `json:"total_requests"`
-	TotalErrors      int64              `json:"total_errors"`
-	Endpoints        []EndpointResponse `json:"endpoints"`
+	UpdatedAt        string               `json:"updated_at"`
+	TotalConnections int64                `json:"total_connections"`
+	TotalRequests    int64                `json:"total_requests"`
+	TotalErrors      int64                `json:"total_errors"`
+	Endpoints        []EndpointResponse   `json:"endpoints"`
 	Connections      []ConnectionResponse `json:"connections"`
 }
 
@@ -2068,9 +2068,10 @@ func (s *Server) handleDashboards(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPost:
 		var req struct {
-			Name      string                     `json:"name"`
-			Layout    []dashboard.WidgetPosition `json:"layout"`
-			IsDefault bool                       `json:"is_default"`
+			Name         string                            `json:"name"`
+			Layout       []dashboard.WidgetPosition        `json:"layout"`
+			WidgetConfig map[string]dashboard.WidgetConfig `json:"widget_config"`
+			IsDefault    bool                              `json:"is_default"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -2080,7 +2081,7 @@ func (s *Server) handleDashboards(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Name is required", http.StatusBadRequest)
 			return
 		}
-		dash, err := s.dashboardStore.Create(req.Name, req.Layout, req.IsDefault)
+		dash, err := s.dashboardStore.Create(req.Name, req.Layout, req.WidgetConfig, req.IsDefault)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -2158,14 +2159,15 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPut:
 		var req struct {
-			Name   string                     `json:"name"`
-			Layout []dashboard.WidgetPosition `json:"layout"`
+			Name         string                            `json:"name"`
+			Layout       []dashboard.WidgetPosition        `json:"layout"`
+			WidgetConfig map[string]dashboard.WidgetConfig `json:"widget_config"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := s.dashboardStore.Update(id, req.Name, req.Layout); err != nil {
+		if err := s.dashboardStore.Update(id, req.Name, req.Layout, req.WidgetConfig); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -3808,6 +3810,9 @@ func (s *Server) handleIncident(w http.ResponseWriter, r *http.Request) {
 		case "note":
 			s.handleIncidentNote(w, r, incidentID)
 			return
+		case "assign":
+			s.handleIncidentAssign(w, r, incidentID)
+			return
 		case "notifications":
 			s.handleIncidentNotifications(w, r, incidentID)
 			return
@@ -3919,6 +3924,38 @@ func (s *Server) handleIncidentNote(w http.ResponseWriter, r *http.Request, inci
 	}
 
 	if err := s.incidentStore.AddNote(incidentID, req.User, req.Note); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	inc, _ := s.incidentStore.GetIncident(incidentID)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(inc)
+}
+
+func (s *Server) handleIncidentAssign(w http.ResponseWriter, r *http.Request, incidentID string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		User     string `json:"user"`
+		Assignee string `json:"assignee"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.User == "" {
+		req.User = "api"
+	}
+	if req.Assignee == "" {
+		http.Error(w, "Assignee is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.incidentStore.AssignIncident(incidentID, req.User, req.Assignee); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -4174,11 +4211,11 @@ func (s *Server) handleEscalationPolicy(w http.ResponseWriter, r *http.Request) 
 
 // ClusterInfoResponse is the response for /api/cluster
 type ClusterInfoResponse struct {
-	Enabled     bool                       `json:"enabled"`
-	NodeID      string                     `json:"node_id,omitempty"`
-	NodeCount   int                        `json:"node_count"`
-	GossipAddr  string                     `json:"gossip_addr,omitempty"`
-	LocalNode   *federation.NodeStatus     `json:"local_node,omitempty"`
+	Enabled    bool                   `json:"enabled"`
+	NodeID     string                 `json:"node_id,omitempty"`
+	NodeCount  int                    `json:"node_count"`
+	GossipAddr string                 `json:"gossip_addr,omitempty"`
+	LocalNode  *federation.NodeStatus `json:"local_node,omitempty"`
 }
 
 func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
@@ -4918,9 +4955,9 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		"columns": result.Columns,
 		"rows":    result.Rows,
 		"stats": map[string]interface{}{
-			"rows_returned":   result.Stats.RowsReturned,
-			"execution_time":  result.Stats.ExecutionTime.String(),
-			"execution_ms":    result.Stats.ExecutionTime.Milliseconds(),
+			"rows_returned":  result.Stats.RowsReturned,
+			"execution_time": result.Stats.ExecutionTime.String(),
+			"execution_ms":   result.Stats.ExecutionTime.Milliseconds(),
 		},
 	})
 }
@@ -5006,8 +5043,8 @@ func (s *Server) handleQueryValidate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"valid":   false,
-			"error":   err.Error(),
+			"valid": false,
+			"error": err.Error(),
 		})
 		return
 	}

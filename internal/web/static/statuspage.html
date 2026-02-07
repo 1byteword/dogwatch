@@ -4,25 +4,27 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Status</title>
+    <link rel="stylesheet" href="/css/bundle.css">
+    <link rel="stylesheet" href="/css/standalone.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
         :root {
-            --bg-primary: #0f1419;
-            --bg-secondary: #16181c;
-            --bg-tertiary: #1d1f23;
-            --border-color: #2f3336;
-            --text-primary: #e7e9ea;
-            --text-secondary: #71767b;
-            --operational: #00ba7c;
-            --degraded: #ffd400;
-            --partial-outage: #ff9800;
-            --major-outage: #f4212e;
-            --maintenance: #1d9bf0;
+            --bg-primary: var(--color-black);
+            --bg-secondary: var(--color-gray-800);
+            --bg-tertiary: var(--color-gray-700);
+            --border-color: #2f2f2f;
+            --text-primary: #efefef;
+            --text-secondary: #7d7d7d;
+            --operational: var(--color-success);
+            --degraded: var(--color-warning);
+            --partial-outage: var(--color-warning-alt);
+            --major-outage: var(--color-error);
+            --maintenance: var(--color-info);
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: var(--font-sans);
             background: var(--bg-primary);
             color: var(--text-primary);
             line-height: 1.5;
@@ -472,7 +474,7 @@
         }
     </style>
 </head>
-<body>
+<body class="standalone-page">
     <div class="container">
         <div id="content">
             <div class="loading">

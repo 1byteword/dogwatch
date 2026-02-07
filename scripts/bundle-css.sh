@@ -26,6 +26,7 @@ FILES=(
     "components.css"
     "components-shared.css"
     "layout.css"
+    "standalone.css"
     "dashboard.css"
 )
 

@@ -13,3 +13,5 @@ internal/probe/*.o
 .DS_Store
 data/
 dogwatch-backup
+ui-v2/node_modules/
+ui-v2/dist/
