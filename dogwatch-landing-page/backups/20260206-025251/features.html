@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DOGWATCH // FEATURES</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        mono: ['"Space Mono"', 'monospace'],
+                        display: ['Rajdhani', 'sans-serif']
+                    },
+                    colors: {
+                        'acid-green': '#ccff00',
+                        'off-black': '#050505',
+                        'signal-cyan': '#8be9fd',
+                        'rust': '#ad4d2e'
+                    },
+                    backgroundImage: {
+                        'grid-pattern': "linear-gradient(to right, #171717 1px, transparent 1px), linear-gradient(to bottom, #171717 1px, transparent 1px)"
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        :root {
+            --panel: rgba(10, 10, 10, 0.9);
+            --edge: #2b2b2b;
+            --edge-strong: #555;
+            --acid: #ccff00;
+            --cyan: #8be9fd;
+        }
+
+        body {
+            margin: 0;
+            background: radial-gradient(circle at 18% 10%, #121212 0%, #060606 44%, #030303 100%);
+            color: #d8d8d8;
+            font-family: 'Space Mono', monospace;
+        }
+
+        .scanlines {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 50;
+            opacity: 0.2;
+            background: linear-gradient(to bottom, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0) 48%, rgba(0, 0, 0, 0.2) 49%, rgba(0, 0, 0, 0.2));
+            background-size: 100% 4px;
+        }
+
+        .noise {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 2;
+            opacity: 0.12;
+            background-image:
+                radial-gradient(circle at 16% 22%, rgba(173, 77, 46, 0.18), transparent 28%),
+                radial-gradient(circle at 80% 78%, rgba(255, 255, 255, 0.08), transparent 24%),
+                repeating-linear-gradient(106deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.03) 1px, transparent 1px, transparent 3px);
+            mix-blend-mode: screen;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--edge);
+            box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.65);
+        }
+
+        .panel:hover { border-color: var(--edge-strong); }
+
+        .chip {
+            border: 1px solid #343434;
+            background: rgba(15, 15, 15, 0.82);
+            padding: 0.2rem 0.48rem;
+            font-size: 0.66rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .section-head {
+            font-family: 'Rajdhani', sans-serif;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+        }
+
+        .map-board {
+            position: relative;
+            min-height: 290px;
+            background:
+                radial-gradient(circle at 20% 18%, rgba(139, 233, 253, 0.12), transparent 40%),
+                radial-gradient(circle at 80% 74%, rgba(204, 255, 0, 0.08), transparent 42%),
+                linear-gradient(125deg, rgba(15, 15, 15, 0.96), rgba(7, 7, 7, 0.94));
+            overflow: hidden;
+        }
+
+        .map-board::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background-image:
+                linear-gradient(to right, rgba(46, 46, 46, 0.36) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(46, 46, 46, 0.36) 1px, transparent 1px);
+            background-size: 28px 28px;
+            opacity: 0.32;
+        }
+
+        .map-node {
+            position: absolute;
+            border: 1px solid #3b3b3b;
+            background: rgba(10, 10, 10, 0.9);
+            padding: 0.3rem 0.5rem;
+            font-size: 0.64rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #ddd;
+        }
+
+        .map-node.core {
+            border-color: #ccff00;
+            color: #ccff00;
+            box-shadow: 0 0 20px rgba(204, 255, 0, 0.2);
+        }
+
+        .route {
+            position: absolute;
+            height: 1px;
+            background: linear-gradient(to right, rgba(139, 233, 253, 0), rgba(139, 233, 253, 0.8), rgba(204, 255, 0, 0));
+            transform-origin: left center;
+            opacity: 0.82;
+        }
+
+        .mini-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.76rem;
+        }
+
+        .mini-table th,
+        .mini-table td {
+            border-bottom: 1px solid #252525;
+            text-align: left;
+            padding: 0.55rem 0.45rem;
+            vertical-align: top;
+        }
+
+        .mini-table th {
+            color: #8f8f8f;
+            font-size: 0.66rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .sequence {
+            border: 1px solid #2f2f2f;
+            background: rgba(10, 10, 10, 0.92);
+            padding: 0.7rem;
+        }
+
+        .sequence-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.55rem;
+        }
+
+        .lane {
+            border: 1px solid #343434;
+            background: #101010;
+            min-height: 170px;
+            position: relative;
+            padding: 0.4rem;
+        }
+
+        .lane-title {
+            color: #cfcfcf;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-size: 0.64rem;
+            border-bottom: 1px solid #2d2d2d;
+            padding-bottom: 0.3rem;
+            margin-bottom: 0.45rem;
+        }
+
+        .event {
+            border: 1px solid #3b3b3b;
+            background: #0a0a0a;
+            font-size: 0.62rem;
+            padding: 0.28rem 0.34rem;
+            margin-bottom: 0.36rem;
+            color: #c2c2c2;
+        }
+
+        .event.hot {
+            border-color: rgba(204, 255, 0, 0.7);
+            color: #ccff00;
+        }
+
+        .bars {
+            display: grid;
+            gap: 0.55rem;
+        }
+
+        .bar-row {
+            border: 1px solid #2e2e2e;
+            background: #0f0f0f;
+            padding: 0.5rem;
+        }
+
+        .bar-track {
+            height: 0.54rem;
+            background: #151515;
+            border: 1px solid #2b2b2b;
+            margin-top: 0.34rem;
+            position: relative;
+        }
+
+        .bar-a,
+        .bar-b {
+            position: absolute;
+            inset: 0 auto 0 0;
+            height: 100%;
+        }
+
+        .bar-a {
+            width: var(--a);
+            background: rgba(139, 233, 253, 0.55);
+        }
+
+        .bar-b {
+            width: var(--b);
+            background: rgba(204, 255, 0, 0.74);
+        }
+
+        .timeline {
+            border: 1px solid #2f2f2f;
+            background: #0f0f0f;
+            padding: 0.9rem;
+            position: relative;
+        }
+
+        .timeline::before {
+            content: "";
+            position: absolute;
+            left: 1rem;
+            top: 1rem;
+            bottom: 1rem;
+            width: 1px;
+            background: #313131;
+        }
+
+        .tick {
+            position: relative;
+            padding-left: 1.35rem;
+            margin-bottom: 0.7rem;
+        }
+
+        .tick::before {
+            content: "";
+            position: absolute;
+            left: 0.86rem;
+            top: 0.33rem;
+            width: 0.4rem;
+            height: 0.4rem;
+            border-radius: 999px;
+            background: #676767;
+            transform: translateX(-50%);
+        }
+
+        .tick.high::before { background: #ccff00; box-shadow: 0 0 8px rgba(204, 255, 0, 0.7); }
+        .tick.low::before { background: #f59e0b; }
+
+        .matrix {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.55rem;
+        }
+
+        .matrix-card {
+            border: 1px solid #303030;
+            background: #101010;
+            padding: 0.65rem;
+            min-height: 115px;
+        }
+
+        .matrix-card p {
+            margin: 0;
+        }
+
+        .matrix-card .h {
+            color: #fff;
+            font-size: 0.71rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 0.38rem;
+        }
+
+        .matrix-card .d {
+            font-size: 0.72rem;
+            color: #a8a8a8;
+            line-height: 1.55;
+        }
+
+        @media (max-width: 980px) {
+            .sequence-grid,
+            .matrix {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @media (max-width: 640px) {
+            .sequence-grid,
+            .matrix {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            * {
+                animation: none !important;
+                transition: none !important;
+            }
+        }
+
+        ::selection {
+            background: #ccff00;
+            color: #000;
+        }
+    </style>
+</head>
+<body class="bg-off-black min-h-screen relative selection:bg-acid-green selection:text-black">
+    <div class="scanlines"></div>
+    <div class="noise"></div>
+    <div class="fixed inset-0 bg-grid-pattern bg-[length:36px_36px] pointer-events-none opacity-22 z-0"></div>
+
+    <div class="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 py-6 border-x border-[#1a1a1a] min-h-screen bg-[#050505]/92">
+        <header class="panel px-4 sm:px-6 py-4 mb-6">
+            <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                <div>
+                    <a href="index.html" class="text-3xl font-bold font-display tracking-tight text-white">dogwatch<span class="text-acid-green">_</span></a>
+                    <p class="text-xs text-gray-500">Seven killer capabilities, mapped as operator workflows.</p>
+                </div>
+                <nav class="flex flex-wrap gap-2 text-[11px] sm:text-xs font-bold uppercase tracking-wider">
+                    <a href="index.html" class="chip hover:text-acid-green">Home</a>
+                    <a href="features.html" class="chip text-acid-green">Features</a>
+                    <a href="docs.html" class="chip hover:text-acid-green">Docs</a>
+                    <a href="downloads.html" class="chip hover:text-acid-green">Downloads</a>
+                    <a href="pricing.html" class="chip hover:text-acid-green">Pricing</a>
+                </nav>
+            </div>
+        </header>
+
+        <main class="space-y-6 pb-6">
+            <section class="grid lg:grid-cols-12 gap-6">
+                <article class="lg:col-span-6 panel p-6 sm:p-7">
+                    <div class="flex flex-wrap gap-2 mb-4">
+                        <span class="chip">Feature Deck</span>
+                        <span class="chip">v1.2.0-rc.3</span>
+                        <span class="chip">Kernel + Control Plane</span>
+                    </div>
+                    <h1 class="section-head text-4xl sm:text-5xl text-white mb-4">System Capabilities</h1>
+                    <p class="text-sm sm:text-base text-gray-300 leading-relaxed mb-5">The platform is designed as one connected product surface. eBPF capture, trace assembly, RCA, cost visibility, and runtime security all run on the same signal chain.</p>
+                    <div class="grid grid-cols-2 gap-3 text-xs">
+                        <div class="panel p-3"><p class="text-acid-green text-xl font-display leading-none">01</p><p class="text-gray-400 uppercase tracking-widest text-[10px]">Zero-config tracing</p></div>
+                        <div class="panel p-3"><p class="text-acid-green text-xl font-display leading-none">02</p><p class="text-gray-400 uppercase tracking-widest text-[10px]">Cost intelligence</p></div>
+                        <div class="panel p-3"><p class="text-acid-green text-xl font-display leading-none">03</p><p class="text-gray-400 uppercase tracking-widest text-[10px]">Control plane shaping</p></div>
+                        <div class="panel p-3"><p class="text-acid-green text-xl font-display leading-none">04-07</p><p class="text-gray-400 uppercase tracking-widest text-[10px]">RCA + change + security + migration</p></div>
+                    </div>
+                </article>
+
+                <article class="lg:col-span-6 panel map-board p-4">
+                    <div class="map-node core" style="top:126px; left:214px;">dogwatch core</div>
+                    <div class="map-node" style="top:34px; left:34px;">ebpf capture</div>
+                    <div class="map-node" style="top:40px; left:348px;">control plane</div>
+                    <div class="map-node" style="top:210px; left:36px;">bubbleup rca</div>
+                    <div class="map-node" style="top:218px; left:344px;">security runtime</div>
+                    <div class="map-node" style="top:18px; left:206px;">cost intelligence</div>
+                    <div class="map-node" style="top:252px; left:204px;">migration assistant</div>
+
+                    <div class="route" style="width:184px; top:54px; left:100px; transform: rotate(31deg);"></div>
+                    <div class="route" style="width:156px; top:71px; left:278px; transform: rotate(126deg);"></div>
+                    <div class="route" style="width:188px; top:200px; left:102px; transform: rotate(-24deg);"></div>
+                    <div class="route" style="width:160px; top:200px; left:280px; transform: rotate(23deg);"></div>
+                    <div class="route" style="width:123px; top:130px; left:252px; transform: rotate(-90deg);"></div>
+                    <div class="route" style="width:125px; top:155px; left:248px; transform: rotate(90deg);"></div>
+
+                    <div class="absolute bottom-3 left-3 right-3 panel p-3 text-[11px]">
+                        <p class="text-gray-500 uppercase tracking-widest mb-1">Shared Signal Backbone</p>
+                        <p class="text-acid-green">one event stream -> multiple product surfaces</p>
+                    </div>
+                </article>
+            </section>
+
+            <section class="panel p-5 sm:p-6">
+                <div class="flex items-end justify-between gap-3 mb-4">
+                    <h2 class="section-head text-2xl sm:text-3xl text-white">01 // Zero-Config Distributed Tracing</h2>
+                    <span class="chip">No SDK rollout</span>
+                </div>
+                <p class="text-sm text-gray-400 mb-4">Automatic request stitching from kernel and protocol events. This is the key to 60-second setup.</p>
+                <div class="sequence">
+                    <div class="sequence-grid">
+                        <div class="lane">
+                            <p class="lane-title">Service A</p>
+                            <div class="event">HTTP GET /checkout</div>
+                            <div class="event">tcp_sendmsg()</div>
+                            <div class="event hot">trace root span created</div>
+                        </div>
+                        <div class="lane">
+                            <p class="lane-title">Service B</p>
+                            <div class="event">inet_csk_accept()</div>
+                            <div class="event">SQL query to shard</div>
+                            <div class="event hot">child span linked by socket+time</div>
+                        </div>
+                        <div class="lane">
+                            <p class="lane-title">Database</p>
+                            <div class="event">postgres wire parse</div>
+                            <div class="event">latency 12ms</div>
+                            <div class="event hot">query attributed to trace</div>
+                        </div>
+                        <div class="lane">
+                            <p class="lane-title">Control Plane</p>
+                            <div class="event">span ingest</div>
+                            <div class="event">golden signal emit</div>
+                            <div class="event hot">exemplar attached to latency point</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="grid lg:grid-cols-2 gap-6">
+                <article class="panel p-5 sm:p-6">
+                    <div class="flex items-end justify-between gap-3 mb-4">
+                        <h2 class="section-head text-2xl sm:text-3xl text-white">02 // BubbleUp RCA</h2>
+                        <span class="chip">Statistical Divergence</span>
+                    </div>
+                    <p class="text-sm text-gray-400 mb-4">Compare anomalous requests to baseline across dimensions, then rank by explanatory power.</p>
+                    <div class="bars text-xs">
+                        <div class="bar-row" style="--a: 8%; --b: 98%;">
+                            <div class="flex justify-between"><span class="text-gray-400">db_shard = 7</span><span class="text-acid-green">12.25x lift</span></div>
+                            <div class="bar-track"><div class="bar-a"></div><div class="bar-b"></div></div>
+                        </div>
+                        <div class="bar-row" style="--a: 12%; --b: 94%;">
+                            <div class="flex justify-between"><span class="text-gray-400">region = eu-west-1</span><span class="text-acid-green">7.83x lift</span></div>
+                            <div class="bar-track"><div class="bar-a"></div><div class="bar-b"></div></div>
+                        </div>
+                        <div class="bar-row" style="--a: 14%; --b: 81%;">
+                            <div class="flex justify-between"><span class="text-gray-400">version = v2.4.2</span><span class="text-acid-green">4.39x lift</span></div>
+                            <div class="bar-track"><div class="bar-a"></div><div class="bar-b"></div></div>
+                        </div>
+                    </div>
+                </article>
+
+                <article class="panel p-5 sm:p-6">
+                    <div class="flex items-end justify-between gap-3 mb-4">
+                        <h2 class="section-head text-2xl sm:text-3xl text-white">03 // Control Plane</h2>
+                        <span class="chip">Data Shaping</span>
+                    </div>
+                    <p class="text-sm text-gray-400 mb-4">Utility scoring and recommendation engine prevent cardinality runaway before billing and query cost spike.</p>
+                    <div class="overflow-x-auto">
+                        <table class="mini-table min-w-[520px]">
+                            <thead>
+                                <tr>
+                                    <th>Metric</th>
+                                    <th>Current Series</th>
+                                    <th>Suggested Rule</th>
+                                    <th>Projected Series</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="text-white">http_requests_total</td>
+                                    <td>2.4M</td>
+                                    <td class="text-acid-green">drop labels: pod,node</td>
+                                    <td class="text-acid-green">12K</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white">process_open_fds</td>
+                                    <td>423</td>
+                                    <td class="text-acid-green">drop metric (unused 30d)</td>
+                                    <td class="text-acid-green">0</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white">go_gc_duration_seconds</td>
+                                    <td>847</td>
+                                    <td class="text-acid-green">downsample 15s -> 60s</td>
+                                    <td class="text-acid-green">212</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+            </section>
+
+            <section class="grid lg:grid-cols-2 gap-6">
+                <article class="panel p-5 sm:p-6">
+                    <div class="flex items-end justify-between gap-3 mb-4">
+                        <h2 class="section-head text-2xl sm:text-3xl text-white">04 // Change Correlation</h2>
+                        <span class="chip">What Changed?</span>
+                    </div>
+                    <div class="timeline text-xs">
+                        <div class="tick high">
+                            <p class="text-acid-green uppercase tracking-widest text-[10px]">14:28 deploy</p>
+                            <p class="text-white">api-service v2.4.1 -> v2.4.2 (commit 8f2a91)</p>
+                            <p class="text-gray-500">incident onset after 4m, same service, high score</p>
+                        </div>
+                        <div class="tick low">
+                            <p class="text-yellow-300 uppercase tracking-widest text-[10px]">14:15 config update</p>
+                            <p class="text-white">rate limit policy changed on edge gateway</p>
+                            <p class="text-gray-500">different service path, lower correlation</p>
+                        </div>
+                        <div class="tick">
+                            <p class="text-gray-400 uppercase tracking-widest text-[10px]">13:45 feature flag</p>
+                            <p class="text-white">dark_mode_enabled=true</p>
+                            <p class="text-gray-500">UI scoped, unlikely root cause</p>
+                        </div>
+                    </div>
+                </article>
+
+                <article class="panel p-5 sm:p-6">
+                    <div class="flex items-end justify-between gap-3 mb-4">
+                        <h2 class="section-head text-2xl sm:text-3xl text-white">05 // Security Observability</h2>
+                        <span class="chip">Runtime Detections</span>
+                    </div>
+                    <div class="matrix text-xs">
+                        <div class="matrix-card">
+                            <p class="h">Shell Spawn in Container</p>
+                            <p class="d"><span class="text-acid-green">Hook:</span> sys_execve</p>
+                            <p class="d"><span class="text-acid-green">Rule:</span> process not in baseline</p>
+                        </div>
+                        <div class="matrix-card">
+                            <p class="h">Unusual Outbound</p>
+                            <p class="d"><span class="text-acid-green">Hook:</span> tcp_connect</p>
+                            <p class="d"><span class="text-acid-green">Rule:</span> first-seen external destination</p>
+                        </div>
+                        <div class="matrix-card">
+                            <p class="h">Sensitive File Access</p>
+                            <p class="d"><span class="text-acid-green">Hook:</span> sys_open</p>
+                            <p class="d"><span class="text-acid-green">Rule:</span> /etc/shadow or keys</p>
+                        </div>
+                    </div>
+                </article>
+            </section>
+
+            <section class="panel p-5 sm:p-6">
+                <div class="flex items-end justify-between gap-3 mb-4">
+                    <h2 class="section-head text-2xl sm:text-3xl text-white">06-07 // Cost + Migration Conversion Path</h2>
+                    <a href="pricing.html" class="text-xs uppercase tracking-widest text-gray-500 hover:text-acid-green">Pricing Protocol</a>
+                </div>
+                <div class="grid lg:grid-cols-2 gap-6">
+                    <article class="panel p-4 text-sm">
+                        <h3 class="text-white font-bold uppercase tracking-widest text-xs mb-2">Cost Intelligence Snapshot</h3>
+                        <p class="text-gray-400 mb-3">Your measured telemetry usage mapped into competitor pricing models.</p>
+                        <div class="space-y-2 text-xs">
+                            <div class="flex justify-between border-b border-[#262626] pb-1"><span class="text-gray-400">Datadog estimate</span><span class="text-red-400">$47,234/mo</span></div>
+                            <div class="flex justify-between border-b border-[#262626] pb-1"><span class="text-gray-400">dogwatch supported</span><span class="text-acid-green">$299/mo</span></div>
+                            <div class="flex justify-between"><span class="text-white uppercase tracking-widest text-[10px]">delta</span><span class="text-acid-green font-bold">$46,935/mo</span></div>
+                        </div>
+                    </article>
+                    <article class="panel p-4 text-sm">
+                        <h3 class="text-white font-bold uppercase tracking-widest text-xs mb-2">Migration Assistant Report</h3>
+                        <div class="overflow-x-auto">
+                            <table class="mini-table min-w-[480px] text-xs">
+                                <thead>
+                                    <tr>
+                                        <th>Resource</th>
+                                        <th>Compatible</th>
+                                        <th>Needs Review</th>
+                                        <th>Incompatible</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td class="text-white">Dashboards</td>
+                                        <td class="text-acid-green">18</td>
+                                        <td>4</td>
+                                        <td>1</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="text-white">Monitors</td>
+                                        <td class="text-acid-green">42</td>
+                                        <td>8</td>
+                                        <td>3</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="text-white">SLOs</td>
+                                        <td class="text-acid-green">12</td>
+                                        <td>2</td>
+                                        <td>0</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </article>
+                </div>
+            </section>
+
+            <section class="panel p-6 sm:p-7 bg-[linear-gradient(135deg,rgba(173,77,46,0.12),rgba(8,8,8,0.96)_44%)]">
+                <div class="grid md:grid-cols-[1fr_auto] gap-4 items-end">
+                    <div>
+                        <h2 class="section-head text-3xl sm:text-4xl text-white mb-2">Explore It Live</h2>
+                        <p class="text-sm sm:text-base text-gray-300">Install from downloads, follow docs, and map each feature to an operator workflow in your own stack.</p>
+                    </div>
+                    <div class="flex flex-col sm:flex-row md:flex-col gap-3">
+                        <a href="downloads.html" class="text-center bg-acid-green text-black font-bold uppercase text-sm px-6 py-3 border border-acid-green hover:bg-black hover:text-acid-green transition">Open Downloads</a>
+                        <a href="docs.html" class="text-center border border-white text-white font-bold uppercase text-sm px-6 py-3 hover:bg-white hover:text-black transition">Open Docs</a>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+</body>
+</html>

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DOGWATCH // MODULES</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { mono: ['"Space Mono"', 'monospace'] },
+                    colors: { 'acid-green': '#ccff00', 'off-black': '#050505' },
+                    backgroundImage: { 'grid-pattern': "linear-gradient(to right, #1a1a1a 1px, transparent 1px), linear-gradient(to bottom, #1a1a1a 1px, transparent 1px)" }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background-color: #050505; color: #d4d4d4; font-family: 'Space Mono', monospace; }
+        .scanlines { background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.1) 50%, rgba(0,0,0,0.1)); background-size: 100% 4px; position: fixed; inset: 0; pointer-events: none; z-index: 50; }
+        .acid-border:hover { border-color: #ccff00; box-shadow: 4px 4px 0px #ccff00; color: white; }
+    </style>
+</head>
+<body class="bg-off-black min-h-screen relative selection:bg-acid-green selection:text-black">
+    <div class="scanlines"></div>
+    <div class="fixed inset-0 bg-grid-pattern bg-[length:40px_40px] pointer-events-none opacity-20 z-0"></div>
+
+    <div class="relative z-10 max-w-6xl mx-auto px-6 py-8 border-x border-[#1a1a1a] min-h-screen bg-[#050505]/95">
+        
+        <header class="flex justify-between items-end border-b-2 border-white pb-6 mb-16">
+            <a href="index.html" class="text-2xl font-bold tracking-tighter hover:text-acid-green">dogwatch<span class="text-acid-green">_</span></a>
+            <nav class="hidden md:flex gap-8 text-sm font-bold uppercase">
+                <a href="features.html" class="text-acid-green underline decoration-2 underline-offset-4">Features</a>
+                <a href="docs.html" class="hover:text-acid-green">Docs</a>
+                <a href="downloads.html" class="hover:text-acid-green">Downloads</a>
+                <a href="pricing.html" class="hover:text-acid-green">Pricing</a>
+            </nav>
+        </header>
+
+        <h1 class="text-5xl font-bold uppercase mb-12 text-white">System <span class="text-acid-green">Capabilities</span></h1>
+
+        <section class="grid md:grid-cols-2 gap-12 mb-24 border-b border-gray-800 pb-12">
+            <div>
+                <div class="text-acid-green font-bold text-xs mb-2">01 // KERNEL LEVEL VISIBILITY</div>
+                <h2 class="text-3xl font-bold text-white mb-6 uppercase">eBPF Auto-Instrumentation</h2>
+                <p class="text-gray-400 mb-6 leading-relaxed">
+                    We use <strong>Extended Berkeley Packet Filter</strong> technology to run sandboxed programs directly in the kernel space. This allows us to observe syscalls, network traffic, and function calls without touching your application code.
+                </p>
+                <ul class="space-y-3 text-sm">
+                    <li class="flex items-start gap-2"><span class="text-acid-green">></span> <span><strong>Wire Format Parsing:</strong> We read raw TCP bytes to decode MySQL, Redis, and HTTP headers.</span></li>
+                    <li class="flex items-start gap-2"><span class="text-acid-green">></span> <span><strong>Uprobes:</strong> We hook into <code class="bg-gray-800 px-1">SSL_write</code> to see traffic before encryption.</span></li>
+                    <li class="flex items-start gap-2"><span class="text-acid-green">></span> <span><strong>Zero Overhead:</strong> No sidecars. No heavy agents.</span></li>
+                </ul>
+            </div>
+            <div class="bg-[#111] border border-gray-800 p-4 font-mono text-xs text-gray-500 overflow-hidden relative">
+                <div class="absolute top-0 right-0 bg-acid-green text-black px-2 py-1 text-[10px] font-bold">KERNEL SPACE</div>
+                <pre class="mt-4">
+fn kprobe_tcp_sendmsg(ctx) {
+    let sock = ctx.load_arg(0);
+    let size = ctx.load_arg(2);
+    
+    // Captured without context switch
+    events.perf_submit(ctx, &event, sizeof(event));
+    
+    return 0;
+}</pre>
+            </div>
+        </section>
+
+        <section class="grid md:grid-cols-2 gap-12 mb-24 border-b border-gray-800 pb-12">
+            <div class="order-2 md:order-1 bg-[#111] border border-gray-800 p-6 flex items-center justify-center">
+                <div class="relative w-full h-48 border-l border-b border-gray-600">
+                    <div class="absolute bottom-0 left-0 w-full h-full flex items-end gap-1 px-2 pb-2">
+                        <div class="w-2 h-10 bg-gray-700"></div>
+                        <div class="w-2 h-12 bg-gray-700"></div>
+                        <div class="w-2 h-8 bg-gray-700"></div>
+                        <div class="w-2 h-32 bg-acid-green animate-pulse"></div> <div class="w-2 h-10 bg-gray-700"></div>
+                    </div>
+                    <div class="absolute top-4 right-4 text-right">
+                        <div class="text-xs text-gray-500">DIMENSION FOUND</div>
+                        <div class="text-acid-green font-bold">region: us-east-1</div>
+                    </div>
+                </div>
+            </div>
+            <div class="order-1 md:order-2">
+                <div class="text-acid-green font-bold text-xs mb-2">02 // ROOT CAUSE ANALYSIS</div>
+                <h2 class="text-3xl font-bold text-white mb-6 uppercase">BubbleUp™</h2>
+                <p class="text-gray-400 mb-6 leading-relaxed">
+                    Statistical anomaly detection. Drag your mouse over a cluster of "bad" requests (high latency or errors). BubbleUp instantly compares them to "good" requests to find the distinguishing factor.
+                </p>
+                <p class="text-gray-400 text-sm">
+                    It answers questions like: <em>"Is it a specific host? A specific customer ID? A bad deploy version?"</em> in milliseconds.
+                </p>
+            </div>
+        </section>
+
+        <section class="mb-24">
+            <div class="max-w-3xl">
+                <div class="text-acid-green font-bold text-xs mb-2">03 // DATA MANAGEMENT</div>
+                <h2 class="text-3xl font-bold text-white mb-6 uppercase">The Control Plane</h2>
+                <p class="text-gray-400 mb-8 text-lg">
+                    <strong>Cardinality Explosion is the enemy.</strong><br>
+                    Legacy tools crash when you tag metrics with User IDs or Request IDs. We don't.
+                </p>
+            </div>
+            
+            <div class="grid md:grid-cols-3 gap-6">
+                <div class="border border-gray-800 p-6 hover:border-white transition">
+                    <h3 class="font-bold text-white mb-2">Aggregation</h3>
+                    <p class="text-sm text-gray-500">We analyze and drop unused labels <em>before</em> they hit permanent storage.</p>
+                </div>
+                <div class="border border-gray-800 p-6 hover:border-white transition">
+                    <h3 class="font-bold text-white mb-2">Quotas</h3>
+                    <p class="text-sm text-gray-500">Enforce team-level limits to prevent one bad deploy from blowing the budget.</p>
+                </div>
+                <div class="border border-gray-800 p-6 hover:border-white transition">
+                    <h3 class="font-bold text-white mb-2">Tail Sampling</h3>
+                    <p class="text-sm text-gray-500">We buffer traces and only store the interesting ones (errors/latency). Drop the noise.</p>
+                </div>
+            </div>
+        </section>
+
+        <footer class="border-t-2 border-white pt-12 flex justify-between text-xs text-gray-500">
+            <div>DOGWATCH SYSTEMS INC.</div>
+            <div><a href="downloads.html" class="hover:text-acid-green">INSTALL</a> // <a href="#" class="hover:text-acid-green">LOGIN</a></div>
+        </footer>
+
+    </div>
+</body>
+</html>

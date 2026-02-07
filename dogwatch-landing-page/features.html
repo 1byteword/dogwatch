@@ -1,0 +1,995 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DOGWATCH // FEATURES</title>
+    <meta name="color-scheme" content="dark">
+    <link rel="dns-prefetch" href="//fonts.googleapis.com">
+    <link rel="dns-prefetch" href="//fonts.gstatic.com">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preload" href="assets/tailwind.generated.css" as="style">
+    <link rel="preload" as="image" href="assets/dogwatch-logo.webp" type="image/webp">
+    <link rel="stylesheet" href="assets/tailwind.generated.css">
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --panel: rgba(10, 10, 10, 0.9);
+            --edge: #2b2b2b;
+            --edge-strong: #555;
+            --acid: #ccff00;
+            --cyan: #8be9fd;
+        }
+
+        body {
+            margin: 0;
+            background: radial-gradient(circle at 18% 10%, #121212 0%, #060606 44%, #030303 100%);
+            color: #d8d8d8;
+            font-family: 'Space Mono', monospace;
+        }
+
+        .scanlines {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 50;
+            opacity: 0.2;
+            background: linear-gradient(to bottom, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0) 48%, rgba(0, 0, 0, 0.2) 49%, rgba(0, 0, 0, 0.2));
+            background-size: 100% 4px;
+        }
+
+        .noise {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 2;
+            opacity: 0.12;
+            background-image:
+                radial-gradient(circle at 16% 22%, rgba(173, 77, 46, 0.18), transparent 28%),
+                radial-gradient(circle at 80% 78%, rgba(255, 255, 255, 0.08), transparent 24%),
+                repeating-linear-gradient(106deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.03) 1px, transparent 1px, transparent 3px);
+            mix-blend-mode: screen;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--edge);
+            box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.65);
+        }
+
+        .panel:hover { border-color: var(--edge-strong); }
+
+        .chip {
+            border: 1px solid #343434;
+            background: rgba(15, 15, 15, 0.82);
+            padding: 0.2rem 0.48rem;
+            font-size: 0.66rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .section-head {
+            font-family: 'Rajdhani', sans-serif;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+        }
+
+        .map-board {
+            position: relative;
+            min-height: 290px;
+            background:
+                radial-gradient(circle at 20% 18%, rgba(139, 233, 253, 0.12), transparent 40%),
+                radial-gradient(circle at 80% 74%, rgba(204, 255, 0, 0.08), transparent 42%),
+                linear-gradient(125deg, rgba(15, 15, 15, 0.96), rgba(7, 7, 7, 0.94));
+            overflow: hidden;
+        }
+
+        .map-board::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background-image:
+                linear-gradient(to right, rgba(46, 46, 46, 0.36) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(46, 46, 46, 0.36) 1px, transparent 1px);
+            background-size: 28px 28px;
+            opacity: 0.32;
+        }
+
+        .map-node {
+            position: absolute;
+            border: 1px solid #3b3b3b;
+            background: rgba(10, 10, 10, 0.9);
+            padding: 0.3rem 0.5rem;
+            font-size: 0.64rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #ddd;
+        }
+
+        .map-node.core {
+            border-color: #ccff00;
+            color: #ccff00;
+            box-shadow: 0 0 20px rgba(204, 255, 0, 0.2);
+        }
+
+        .route {
+            position: absolute;
+            height: 1px;
+            background: linear-gradient(to right, rgba(139, 233, 253, 0), rgba(139, 233, 253, 0.8), rgba(204, 255, 0, 0));
+            transform-origin: left center;
+            opacity: 0.82;
+        }
+
+        .mini-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.76rem;
+        }
+
+        .mini-table th,
+        .mini-table td {
+            border-bottom: 1px solid #252525;
+            text-align: left;
+            padding: 0.55rem 0.45rem;
+            vertical-align: top;
+        }
+
+        .mini-table th {
+            color: #8f8f8f;
+            font-size: 0.66rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .sequence {
+            border: 1px solid #2f2f2f;
+            background: rgba(10, 10, 10, 0.92);
+            padding: 0.7rem;
+        }
+
+        .sequence-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.55rem;
+        }
+
+        .lane {
+            border: 1px solid #343434;
+            background: #101010;
+            min-height: 170px;
+            position: relative;
+            padding: 0.4rem;
+        }
+
+        .lane-title {
+            color: #cfcfcf;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-size: 0.64rem;
+            border-bottom: 1px solid #2d2d2d;
+            padding-bottom: 0.3rem;
+            margin-bottom: 0.45rem;
+        }
+
+        .event {
+            border: 1px solid #3b3b3b;
+            background: #0a0a0a;
+            font-size: 0.62rem;
+            padding: 0.28rem 0.34rem;
+            margin-bottom: 0.36rem;
+            color: #c2c2c2;
+        }
+
+        .event.hot {
+            border-color: rgba(204, 255, 0, 0.7);
+            color: #ccff00;
+        }
+
+        .bars {
+            display: grid;
+            gap: 0.55rem;
+        }
+
+        .bar-row {
+            border: 1px solid #2e2e2e;
+            background: #0f0f0f;
+            padding: 0.5rem;
+        }
+
+        .bar-track {
+            height: 0.54rem;
+            background: #151515;
+            border: 1px solid #2b2b2b;
+            margin-top: 0.34rem;
+            position: relative;
+        }
+
+        .bar-a,
+        .bar-b {
+            position: absolute;
+            inset: 0 auto 0 0;
+            height: 100%;
+        }
+
+        .bar-a {
+            width: var(--a);
+            background: rgba(139, 233, 253, 0.55);
+        }
+
+        .bar-b {
+            width: var(--b);
+            background: rgba(204, 255, 0, 0.74);
+        }
+
+        .timeline {
+            border: 1px solid #2f2f2f;
+            background: #0f0f0f;
+            padding: 0.9rem;
+            position: relative;
+        }
+
+        .timeline::before {
+            content: "";
+            position: absolute;
+            left: 1rem;
+            top: 1rem;
+            bottom: 1rem;
+            width: 1px;
+            background: #313131;
+        }
+
+        .tick {
+            position: relative;
+            padding-left: 1.35rem;
+            margin-bottom: 0.7rem;
+        }
+
+        .tick::before {
+            content: "";
+            position: absolute;
+            left: 0.86rem;
+            top: 0.33rem;
+            width: 0.4rem;
+            height: 0.4rem;
+            border-radius: 999px;
+            background: #676767;
+            transform: translateX(-50%);
+        }
+
+        .tick.high::before { background: #ccff00; box-shadow: 0 0 8px rgba(204, 255, 0, 0.7); }
+        .tick.low::before { background: #f59e0b; }
+
+        .matrix {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.55rem;
+        }
+
+        .matrix-card {
+            border: 1px solid #303030;
+            background: #101010;
+            padding: 0.65rem;
+            min-height: 115px;
+        }
+
+        .matrix-card p {
+            margin: 0;
+        }
+
+        .matrix-card .h {
+            color: #fff;
+            font-size: 0.71rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 0.38rem;
+        }
+
+        .matrix-card .d {
+            font-size: 0.72rem;
+            color: #a8a8a8;
+            line-height: 1.55;
+        }
+
+        .coverage-board {
+            border: 1px solid #2f2f2f;
+            background: #0f0f0f;
+            padding: 0.7rem;
+        }
+
+        .status-chip {
+            display: inline-block;
+            font-size: 0.63rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            border: 1px solid #363636;
+            padding: 0.12rem 0.4rem;
+            background: #111;
+        }
+
+        .status-chip.ok {
+            color: #ccff00;
+            border-color: rgba(204, 255, 0, 0.5);
+        }
+
+        .status-chip.wip {
+            color: #fbbf24;
+            border-color: rgba(251, 191, 36, 0.55);
+        }
+
+        .status-chip.planned {
+            color: #9ca3af;
+            border-color: rgba(156, 163, 175, 0.35);
+        }
+
+        .ops-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.6rem;
+        }
+
+        .ops-card {
+            border: 1px solid #303030;
+            background: #101010;
+            padding: 0.7rem;
+            min-height: 116px;
+        }
+
+        .query-pre {
+            margin: 0;
+            padding: 0.7rem;
+            border: 1px solid #2f2f2f;
+            background: #0d0d0d;
+            color: #b6b6b6;
+            font-size: 0.73rem;
+            line-height: 1.55;
+            overflow-x: auto;
+        }
+
+        .feature-hero {
+            position: relative;
+            overflow: hidden;
+            background:
+                radial-gradient(circle at 20% 18%, rgba(139, 233, 253, 0.11), transparent 38%),
+                radial-gradient(circle at 85% 78%, rgba(204, 255, 0, 0.08), transparent 42%),
+                linear-gradient(130deg, rgba(14, 14, 14, 0.96), rgba(7, 7, 7, 0.95) 52%);
+        }
+
+        .feature-hero::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            opacity: 0.36;
+            background-image:
+                linear-gradient(to right, rgba(56, 56, 56, 0.34) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(56, 56, 56, 0.34) 1px, transparent 1px);
+            background-size: 30px 30px;
+        }
+
+        .feature-hero > * {
+            position: relative;
+            z-index: 1;
+        }
+
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.55rem;
+        }
+
+        .kpi-card {
+            border: 1px solid #303030;
+            background: rgba(11, 11, 11, 0.9);
+            padding: 0.62rem;
+        }
+
+        .kpi-card .n {
+            margin: 0 0 0.2rem;
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 1.35rem;
+            line-height: 1;
+            color: #ccff00;
+            letter-spacing: 0.04em;
+        }
+
+        .kpi-card .l {
+            margin: 0;
+            color: #989898;
+            font-size: 0.62rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .route {
+            animation: routePulse 3.8s linear infinite;
+        }
+
+        .route.alt {
+            animation-duration: 5.1s;
+            opacity: 0.56;
+        }
+
+        .board-strip {
+            border: 1px solid #2e2e2e;
+            background: #0f0f0f;
+            padding: 0.56rem 0.64rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.45rem;
+        }
+
+        .board-strip span {
+            border: 1px solid #333;
+            background: #101010;
+            color: #b2b2b2;
+            padding: 0.16rem 0.36rem;
+            font-size: 0.64rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .stack-board {
+            padding: 0.7rem;
+            display: grid;
+            gap: 0.46rem;
+            align-content: start;
+        }
+
+        .stack-layer {
+            border: 1px solid #303030;
+            background: rgba(12, 12, 12, 0.9);
+            padding: 0.5rem;
+        }
+
+        .stack-layer.core {
+            border-color: rgba(204, 255, 0, 0.5);
+            box-shadow: 0 0 18px rgba(204, 255, 0, 0.08);
+        }
+
+        .layer-label {
+            display: inline-block;
+            margin-bottom: 0.45rem;
+            color: #8f8f8f;
+            font-size: 0.59rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        .stack-row {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.4rem;
+        }
+
+        .stack-row.compact {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .stack-row.single {
+            grid-template-columns: minmax(0, 1fr);
+            justify-items: center;
+        }
+
+        .stack-node {
+            border: 1px solid #373737;
+            background: #0f0f0f;
+            color: #d3d3d3;
+            padding: 0.38rem 0.42rem;
+            font-size: 0.63rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            text-align: center;
+        }
+
+        .stack-node.core {
+            border-color: rgba(204, 255, 0, 0.7);
+            color: #ccff00;
+            min-width: 62%;
+            box-shadow: 0 0 20px rgba(204, 255, 0, 0.14);
+        }
+
+        .stack-rail {
+            height: 0.85rem;
+            display: grid;
+            place-items: center;
+            position: relative;
+        }
+
+        .stack-rail::before {
+            content: "";
+            width: 1px;
+            height: 100%;
+            background: linear-gradient(to bottom, rgba(139, 233, 253, 0.2), rgba(204, 255, 0, 0.7), rgba(139, 233, 253, 0.2));
+            animation: stackPulse 2.4s ease-in-out infinite;
+        }
+
+        .matrix-card.highlight {
+            border-color: rgba(204, 255, 0, 0.58);
+            box-shadow: 0 0 24px rgba(204, 255, 0, 0.11);
+        }
+
+        .ops-card h3 {
+            margin: 0 0 0.48rem;
+            color: #fff;
+            font-size: 0.76rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .ops-card p {
+            margin: 0;
+            color: #a6a6a6;
+            font-size: 0.72rem;
+            line-height: 1.58;
+        }
+
+        .ops-card ul {
+            margin: 0.5rem 0 0;
+            padding-left: 1rem;
+            color: #9c9c9c;
+            font-size: 0.69rem;
+            line-height: 1.6;
+        }
+
+        @keyframes routePulse {
+            0% {
+                filter: brightness(0.7);
+                transform: scaleX(0.92);
+                transform-origin: left center;
+            }
+            50% {
+                filter: brightness(1.25);
+                transform: scaleX(1);
+            }
+            100% {
+                filter: brightness(0.7);
+                transform: scaleX(0.92);
+                transform-origin: left center;
+            }
+        }
+
+        @keyframes stackPulse {
+            0%, 100% { opacity: 0.5; }
+            50% { opacity: 1; }
+        }
+
+        @media (max-width: 980px) {
+            .kpi-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .stack-row {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .stack-row.single {
+                grid-template-columns: 1fr;
+            }
+
+            .sequence-grid,
+            .matrix,
+            .ops-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @media (max-width: 640px) {
+            .kpi-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .stack-row,
+            .stack-row.compact {
+                grid-template-columns: 1fr;
+            }
+
+            .sequence-grid,
+            .matrix,
+            .ops-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            * {
+                animation: none !important;
+                transition: none !important;
+            }
+        }
+
+        ::selection {
+            background: #ccff00;
+            color: #000;
+        }
+    </style>
+    <link rel="stylesheet" href="assets/grunge-revamp.css">
+</head>
+<body class="grunge-site bg-off-black min-h-screen relative selection:bg-acid-green selection:text-black">
+    <div class="scanlines"></div>
+    <div class="noise"></div>
+    <div class="fixed inset-0 bg-grid-pattern bg-[length:36px_36px] pointer-events-none opacity-22 z-0"></div>
+
+    <div class="site-shell relative z-10 max-w-7xl mx-auto px-4 sm:px-6 py-6 border-x border-[#1a1a1a] min-h-screen bg-[#050505]/92">
+        <header class="panel masthead px-4 sm:px-6 py-4 mb-6">
+            <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                <div>
+                    <a href="index.html" class="text-3xl font-bold font-display tracking-tight text-white brand-link"><span class="brand-fallback">dogwatch<span class="text-acid-green">_</span></span><picture class="brand-picture"><source srcset="assets/dogwatch-logo.webp" type="image/webp"><img src="assets/dogwatch-logo.png" alt="dogwatch" class="brand-logo" width="780" height="260" fetchpriority="high" loading="eager" decoding="async" onerror="this.parentElement.style.display='none';this.parentElement.previousElementSibling.style.display='inline-block'"></picture></a>
+                    <p class="text-xs text-gray-500">Seven killer capabilities, mapped as operator workflows.</p>
+                </div>
+                <nav class="flex flex-wrap gap-2 text-[11px] sm:text-xs font-bold uppercase tracking-wider">
+                    <a href="index.html" class="chip hover:text-acid-green">Home</a>
+                    <a href="features.html" class="chip text-acid-green">Features</a>
+                    <a href="docs.html" class="chip hover:text-acid-green">Docs</a>
+                    <a href="downloads.html" class="chip hover:text-acid-green">Downloads</a>
+                    <a href="pricing.html" class="chip hover:text-acid-green">Pricing</a>
+                </nav>
+            </div>
+        </header>
+
+        <main class="space-y-6 pb-6">
+            <section class="grid lg:grid-cols-12 gap-6">
+                <article class="feature-hero lg:col-span-7 panel p-6 sm:p-7">
+                    <div class="flex flex-wrap gap-2 mb-4">
+                        <span class="chip">Feature Theater</span>
+                        <span class="chip">Kernel-native signal map</span>
+                        <span class="chip">Operator-first workflows</span>
+                    </div>
+                    <h1 class="section-head text-4xl sm:text-5xl text-white mb-4">Seven Modules, One Operational Surface</h1>
+                    <p class="text-sm sm:text-base text-gray-300 leading-relaxed max-w-3xl mb-5">This page is intentionally visual: how raw kernel signal turns into traces, root-cause direction, cost intelligence, change context, security detection, and migration leverage.</p>
+                    <div class="kpi-grid text-xs mb-5">
+                        <div class="kpi-card">
+                            <p class="n">~60s</p>
+                            <p class="l">first actionable signal</p>
+                        </div>
+                        <div class="kpi-card">
+                            <p class="n">84%</p>
+                            <p class="l">control-plane shaping delta</p>
+                        </div>
+                        <div class="kpi-card">
+                            <p class="n">$299</p>
+                            <p class="l">supported plan baseline</p>
+                        </div>
+                    </div>
+                    <div class="grid sm:grid-cols-3 gap-3 text-xs">
+                        <div class="panel p-3">
+                            <p class="text-acid-green uppercase tracking-widest text-[10px] mb-2">Pain</p>
+                            <p class="text-white">SDK rollouts drag tracing projects for weeks.</p>
+                        </div>
+                        <div class="panel p-3">
+                            <p class="text-acid-green uppercase tracking-widest text-[10px] mb-2">Pain</p>
+                            <p class="text-white">Cardinality and ingest spikes create budget volatility.</p>
+                        </div>
+                        <div class="panel p-3">
+                            <p class="text-acid-green uppercase tracking-widest text-[10px] mb-2">Pain</p>
+                            <p class="text-white">Migration fear keeps teams locked to incumbents.</p>
+                        </div>
+                    </div>
+                </article>
+
+                <article class="lg:col-span-5 panel p-5 sm:p-6">
+                    <div class="flex items-end justify-between gap-3 mb-3">
+                        <h2 class="section-head text-2xl sm:text-3xl text-white">Live Signal Topology</h2>
+                        <span class="chip">auto-correlated</span>
+                    </div>
+                    <div class="map-board stack-board">
+                        <section class="stack-layer">
+                            <span class="layer-label">Ingestion Layer</span>
+                            <div class="stack-row compact">
+                                <div class="stack-node">otlp ingest</div>
+                                <div class="stack-node">ebpf probes</div>
+                            </div>
+                        </section>
+                        <div class="stack-rail"></div>
+                        <section class="stack-layer core">
+                            <span class="layer-label">Correlation Layer</span>
+                            <div class="stack-row single">
+                                <div class="stack-node core">dogwatch core</div>
+                            </div>
+                        </section>
+                        <div class="stack-rail"></div>
+                        <section class="stack-layer">
+                            <span class="layer-label">Intelligence Layer</span>
+                            <div class="stack-row">
+                                <div class="stack-node">bubbleup engine</div>
+                                <div class="stack-node">change timeline</div>
+                                <div class="stack-node">cost model</div>
+                            </div>
+                        </section>
+                        <div class="stack-rail"></div>
+                        <section class="stack-layer">
+                            <span class="layer-label">Action Layer</span>
+                            <div class="stack-row">
+                                <div class="stack-node">security detections</div>
+                                <div class="stack-node">shape before store</div>
+                                <div class="stack-node">incident context</div>
+                            </div>
+                        </section>
+                    </div>
+                    <div class="board-strip mt-3">
+                        <span>otlp ingest</span>
+                        <span>ebpf probes</span>
+                        <span>change timeline</span>
+                        <span>security detections</span>
+                        <span>shape before store</span>
+                    </div>
+                </article>
+            </section>
+
+            <section class="panel p-5 sm:p-6">
+                <div class="flex items-end justify-between gap-3 mb-4">
+                    <h2 class="section-head text-2xl sm:text-3xl text-white">01 // Zero-Config Tracing Scene</h2>
+                    <span class="chip">from packet to trace tree</span>
+                </div>
+                <div class="grid lg:grid-cols-3 gap-4 text-sm mb-4">
+                    <article class="panel p-4">
+                        <p class="text-acid-green uppercase tracking-widest text-[10px] mb-2">Problem</p>
+                        <p class="text-white">Per-service SDK integration blocks visibility until every team participates.</p>
+                    </article>
+                    <article class="panel p-4">
+                        <p class="text-acid-green uppercase tracking-widest text-[10px] mb-2">dogwatch does</p>
+                        <p class="text-white">Observe kernel traffic + parse wire protocols + correlate cross-service spans automatically.</p>
+                    </article>
+                    <article class="panel p-4">
+                        <p class="text-acid-green uppercase tracking-widest text-[10px] mb-2">Why you care</p>
+                        <p class="text-white">You get dependency and latency truth now, before a quarter-long instrumentation plan.</p>
+                    </article>
+                </div>
+                <article class="sequence">
+                    <div class="sequence-grid">
+                        <div class="lane">
+                            <p class="lane-title">edge</p>
+                            <div class="event">GET /checkout</div>
+                            <div class="event">trace_id seeded</div>
+                            <div class="event hot">latency +220ms</div>
+                        </div>
+                        <div class="lane">
+                            <p class="lane-title">api</p>
+                            <div class="event">auth service call</div>
+                            <div class="event">cache miss</div>
+                            <div class="event hot">db fanout begins</div>
+                        </div>
+                        <div class="lane">
+                            <p class="lane-title">data tier</p>
+                            <div class="event">postgres query 1.8s</div>
+                            <div class="event">redis backfill</div>
+                            <div class="event">response assembled</div>
+                        </div>
+                        <div class="lane">
+                            <p class="lane-title">dogwatch</p>
+                            <div class="event hot">trace graph linked</div>
+                            <div class="event">exemplar attached</div>
+                            <div class="event">timeline published</div>
+                        </div>
+                    </div>
+                </article>
+            </section>
+
+            <section class="grid lg:grid-cols-2 gap-6">
+                <article class="panel p-5 sm:p-6">
+                    <div class="flex items-end justify-between gap-3 mb-4">
+                        <h2 class="section-head text-2xl sm:text-3xl text-white">02 // BubbleUp RCA</h2>
+                        <span class="chip">divergence lens</span>
+                    </div>
+                    <p class="text-sm text-gray-400 mb-4">BubbleUp compares anomalous versus baseline traffic and ranks the dimensions that explain the gap.</p>
+                    <div class="bars text-xs">
+                        <div class="bar-row">
+                            <p class="text-white">dimension: <span class="text-acid-green">db_shard=7</span></p>
+                            <p class="text-gray-400">bad cohort 98% vs baseline 8%</p>
+                            <div class="bar-track"><div class="bar-a" style="--a: 20%; width: 20%;"></div><div class="bar-b" style="--b: 96%; width: 96%;"></div></div>
+                        </div>
+                        <div class="bar-row">
+                            <p class="text-white">dimension: <span class="text-acid-green">region=eu-west-1</span></p>
+                            <p class="text-gray-400">bad cohort 94% vs baseline 12%</p>
+                            <div class="bar-track"><div class="bar-a" style="width: 24%;"></div><div class="bar-b" style="width: 88%;"></div></div>
+                        </div>
+                        <div class="bar-row">
+                            <p class="text-white">dimension: <span class="text-acid-green">api_version=v2.4.2</span></p>
+                            <p class="text-gray-400">bad cohort 77% vs baseline 18%</p>
+                            <div class="bar-track"><div class="bar-a" style="width: 28%;"></div><div class="bar-b" style="width: 74%;"></div></div>
+                        </div>
+                    </div>
+                </article>
+
+                <article class="panel p-5 sm:p-6">
+                    <div class="flex items-end justify-between gap-3 mb-4">
+                        <h2 class="section-head text-2xl sm:text-3xl text-white">03 // Control Plane</h2>
+                        <span class="chip">shape low-utility telemetry</span>
+                    </div>
+                    <p class="text-sm text-gray-400 mb-4">Usage analytics plus cardinality intelligence decide what can be dropped, aggregated, or downsampled safely.</p>
+                    <div class="overflow-x-auto">
+                        <table class="mini-table min-w-[520px]">
+                            <thead>
+                                <tr>
+                                    <th>Decision</th>
+                                    <th>Why It Is Safe</th>
+                                    <th>Operator Outcome</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="text-white">Drop never-queried metric</td>
+                                    <td>No dashboard, alert, or recent ad-hoc query reference</td>
+                                    <td class="text-acid-green">Lower ingest and faster query windows</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white">Aggregate cardinal labels</td>
+                                    <td>Impact preview shows no critical workflow breakage</td>
+                                    <td class="text-acid-green">Series explosion contained</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white">Downsample low-value streams</td>
+                                    <td>SLO and alert fidelity preserved with coarse granularity</td>
+                                    <td class="text-acid-green">Longer retention at stable cost</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+            </section>
+
+            <section class="grid lg:grid-cols-2 gap-6">
+                <article class="panel p-5 sm:p-6">
+                    <div class="flex items-end justify-between gap-3 mb-4">
+                        <h2 class="section-head text-2xl sm:text-3xl text-white">04 // Change Correlation</h2>
+                        <span class="chip">incident timeline intelligence</span>
+                    </div>
+                    <div class="timeline text-xs">
+                        <div class="tick">
+                            <p class="text-gray-400 uppercase tracking-widest text-[10px] mb-1">14:12 deploy</p>
+                            <p class="text-white">api-service v2.4.2 rolled out to eu-west-1.</p>
+                        </div>
+                        <div class="tick low">
+                            <p class="text-gray-400 uppercase tracking-widest text-[10px] mb-1">14:19 config change</p>
+                            <p class="text-white">rate limit update on unrelated worker queue.</p>
+                        </div>
+                        <div class="tick high">
+                            <p class="text-gray-400 uppercase tracking-widest text-[10px] mb-1">14:23 incident start</p>
+                            <p class="text-white">p99 latency spikes on checkout and auth paths.</p>
+                        </div>
+                        <div class="tick high">
+                            <p class="text-gray-400 uppercase tracking-widest text-[10px] mb-1">14:24 correlation result</p>
+                            <p class="text-white">deploy v2.4.2 scored highest confidence root cause.</p>
+                        </div>
+                    </div>
+                </article>
+
+                <article class="panel p-5 sm:p-6">
+                    <div class="flex items-end justify-between gap-3 mb-4">
+                        <h2 class="section-head text-2xl sm:text-3xl text-white">05 // Security Observability</h2>
+                        <span class="chip">same kernel plane, dual use</span>
+                    </div>
+                    <div class="coverage-board">
+                        <div class="matrix">
+                            <article class="matrix-card highlight">
+                                <p class="h">shell in container</p>
+                                <p class="d">Detect interactive shell exec events and compare against baseline image behavior.</p>
+                            </article>
+                            <article class="matrix-card">
+                                <p class="h">unusual outbound</p>
+                                <p class="d">Flag first-seen external destinations or suspicious connection patterns.</p>
+                            </article>
+                            <article class="matrix-card">
+                                <p class="h">sensitive file access</p>
+                                <p class="d">Track access to secret and credential paths with process context.</p>
+                            </article>
+                        </div>
+                    </div>
+                </article>
+            </section>
+
+            <section class="grid lg:grid-cols-2 gap-6">
+                <article class="panel p-5 sm:p-6">
+                    <div class="flex items-end justify-between gap-3 mb-4">
+                        <h2 class="section-head text-2xl sm:text-3xl text-white">06 // Cost Intelligence</h2>
+                        <span class="chip">vendor-equivalent calculator</span>
+                    </div>
+                    <p class="text-sm text-gray-400 mb-4">Cost model continuously maps your ingest profile to major vendor pricing units.</p>
+                    <pre class="query-pre">estimated_monthly_cost =
+  hosts * host_rate +
+  logs_gb * log_rate +
+  trace_spans_m * span_rate +
+  synthetics * check_rate</pre>
+                    <div class="bars mt-4 text-xs">
+                        <div class="bar-row">
+                            <p class="text-white">Datadog equivalent</p>
+                            <div class="bar-track"><div class="bar-b" style="width: 94%;"></div></div>
+                        </div>
+                        <div class="bar-row">
+                            <p class="text-white">New Relic equivalent</p>
+                            <div class="bar-track"><div class="bar-b" style="width: 77%;"></div></div>
+                        </div>
+                        <div class="bar-row">
+                            <p class="text-white">dogwatch supported</p>
+                            <div class="bar-track"><div class="bar-b" style="width: 8%;"></div></div>
+                        </div>
+                    </div>
+                </article>
+
+                <article class="panel p-5 sm:p-6">
+                    <div class="flex items-end justify-between gap-3 mb-4">
+                        <h2 class="section-head text-2xl sm:text-3xl text-white">07 // Migration Assistant</h2>
+                        <span class="chip">switching friction reducer</span>
+                    </div>
+                    <p class="text-sm text-gray-400 mb-4">Scan incumbent observability assets, classify compatibility, and import highest-confidence items first.</p>
+                    <div class="overflow-x-auto">
+                        <table class="mini-table min-w-[520px]">
+                            <thead>
+                                <tr>
+                                    <th>Imported Artifact</th>
+                                    <th>Status</th>
+                                    <th>Operator Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="text-white">Dashboards</td>
+                                    <td><span class="status-chip ok">compatible</span></td>
+                                    <td>Import directly and validate data source mapping</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white">Alert rules</td>
+                                    <td><span class="status-chip wip">needs review</span></td>
+                                    <td>Apply suggested query translation then test alert parity</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white">Vendor-only widgets</td>
+                                    <td><span class="status-chip planned">incompatible</span></td>
+                                    <td>Use generated fallback templates and rebuild selectively</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+            </section>
+
+            <section class="panel p-5 sm:p-6">
+                <div class="flex items-end justify-between gap-3 mb-4">
+                    <h2 class="section-head text-2xl sm:text-3xl text-white">Outcome Matrix Across Teams</h2>
+                    <span class="chip">sre + platform + security + finance</span>
+                </div>
+                <div class="ops-grid">
+                    <article class="ops-card">
+                        <h3>SRE</h3>
+                        <p>Trace assembly + BubbleUp + change correlation shorten investigation loops.</p>
+                        <ul>
+                            <li>less MTTR thrash</li>
+                            <li>faster rollback confidence</li>
+                        </ul>
+                    </article>
+                    <article class="ops-card">
+                        <h3>Platform</h3>
+                        <p>Control Plane keeps telemetry volume intentional and sustainable.</p>
+                        <ul>
+                            <li>cardinality pressure reduced</li>
+                            <li>query performance stabilizes</li>
+                        </ul>
+                    </article>
+                    <article class="ops-card">
+                        <h3>Security</h3>
+                        <p>Runtime detection context shares the same service and process telemetry.</p>
+                        <ul>
+                            <li>fewer blind spots</li>
+                            <li>less tool fragmentation</li>
+                        </ul>
+                    </article>
+                </div>
+            </section>
+
+            <section class="panel grunge-cta p-6 sm:p-7 bg-[linear-gradient(135deg,rgba(173,77,46,0.12),rgba(8,8,8,0.96)_44%)]">
+                <div class="grid md:grid-cols-[1fr_auto] gap-4 items-end">
+                    <div>
+                        <h2 class="section-head text-3xl sm:text-4xl text-white mb-2">Immersive Feature Story, Backed by Real Signals</h2>
+                        <p class="text-sm sm:text-base text-gray-300">Start with tracing and map visibility, then layer BubbleUp, change timeline, control-plane shaping, and migration assistance in the same operational canvas.</p>
+                    </div>
+                    <div class="flex flex-col sm:flex-row md:flex-col gap-3">
+                        <a href="downloads.html" class="text-center bg-acid-green text-black font-bold uppercase text-sm px-6 py-3 border border-acid-green hover:bg-black hover:text-acid-green transition">Open Downloads</a>
+                        <a href="docs.html" class="text-center border border-white text-white font-bold uppercase text-sm px-6 py-3 hover:bg-white hover:text-black transition">Open Docs</a>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+    <script defer src="assets/grunge-revamp.js"></script>
+</body>
+</html>

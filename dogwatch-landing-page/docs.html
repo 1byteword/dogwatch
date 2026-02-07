@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DOGWATCH // DOCS</title>
+    <meta name="color-scheme" content="dark">
+    <link rel="dns-prefetch" href="//fonts.googleapis.com">
+    <link rel="dns-prefetch" href="//fonts.gstatic.com">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preload" href="assets/tailwind.generated.css" as="style">
+    <link rel="preload" as="image" href="assets/dogwatch-logo.webp" type="image/webp">
+    <link rel="stylesheet" href="assets/tailwind.generated.css">
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            background: radial-gradient(circle at 18% 12%, #101010 0%, #050505 45%, #030303 100%);
+            color: #d4d4d4;
+            font-family: 'Space Mono', monospace;
+        }
+
+        .scanlines {
+            background: linear-gradient(to bottom, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0) 48%, rgba(0, 0, 0, 0.2) 49%, rgba(0, 0, 0, 0.2));
+            background-size: 100% 4px;
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 40;
+            opacity: 0.22;
+        }
+
+        .noise {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 2;
+            opacity: 0.12;
+            background-image:
+                radial-gradient(circle at 12% 18%, rgba(173, 77, 46, 0.18), transparent 25%),
+                radial-gradient(circle at 82% 75%, rgba(255, 255, 255, 0.07), transparent 24%),
+                repeating-linear-gradient(96deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.03) 1px, transparent 1px, transparent 3px);
+            mix-blend-mode: screen;
+        }
+
+        .panel {
+            background: rgba(10, 10, 10, 0.88);
+            border: 1px solid #2a2a2a;
+        }
+
+        .panel:hover {
+            border-color: #535353;
+        }
+
+        .sidebar-link {
+            display: block;
+            padding: 0.42rem 0.1rem;
+            color: #7d7d7d;
+            font-size: 0.76rem;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            border-bottom: 1px solid #1c1c1c;
+            transition: all 120ms ease;
+        }
+
+        .sidebar-link:hover,
+        .sidebar-link.active {
+            color: #ccff00;
+            border-bottom-color: #3d3d3d;
+        }
+
+        .section-head {
+            font-family: 'Rajdhani', sans-serif;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+        }
+
+        code {
+            background: #151515;
+            color: #ccff00;
+            padding: 0.1rem 0.32rem;
+            border: 1px solid #2d2d2d;
+            font-size: 0.84em;
+        }
+
+        pre {
+            background: #0d0d0d;
+            border: 1px solid #2b2b2b;
+            padding: 1rem;
+            overflow-x: auto;
+            margin: 0.8rem 0;
+            color: #b4b4b4;
+            font-size: 0.8rem;
+            line-height: 1.55;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+        }
+
+        th, td {
+            padding: 0.62rem 0.5rem;
+            border-bottom: 1px solid #242424;
+            vertical-align: top;
+            text-align: left;
+        }
+
+        th {
+            color: #909090;
+            font-size: 0.69rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        ::selection {
+            background: #ccff00;
+            color: #000;
+        }
+    </style>
+    <link rel="stylesheet" href="assets/grunge-revamp.css">
+</head>
+<body class="grunge-site bg-off-black min-h-screen relative">
+    <div class="scanlines"></div>
+    <div class="noise"></div>
+    <div class="fixed inset-0 bg-grid-pattern bg-[length:36px_36px] pointer-events-none opacity-20 z-0"></div>
+
+    <div class="site-shell relative z-10 max-w-7xl mx-auto border-x border-[#1a1a1a] min-h-screen bg-[#050505]/90 backdrop-blur-sm">
+        <header class="panel masthead px-4 sm:px-6 py-4 border-x-0 border-t-0 border-b">
+            <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                <div>
+                    <a href="index.html" class="font-display text-3xl text-white font-bold brand-link"><span class="brand-fallback">dogwatch<span class="text-acid-green">_</span></span><picture class="brand-picture"><source srcset="assets/dogwatch-logo.webp" type="image/webp"><img src="assets/dogwatch-logo.png" alt="dogwatch" class="brand-logo" width="780" height="260" fetchpriority="high" loading="eager" decoding="async" onerror="this.parentElement.style.display='none';this.parentElement.previousElementSibling.style.display='inline-block'"></picture></a>
+                    <p class="text-xs text-gray-500">Operator docs for install, capture, shaping, and incident workflows.</p>
+                </div>
+                <nav class="flex flex-wrap gap-2 text-[11px] font-bold uppercase tracking-wider">
+                    <a href="index.html" class="px-2 py-1 border border-[#2f2f2f] hover:text-acid-green">Home</a>
+                    <a href="features.html" class="px-2 py-1 border border-[#2f2f2f] hover:text-acid-green">Features</a>
+                    <a href="downloads.html" class="px-2 py-1 border border-[#2f2f2f] hover:text-acid-green">Downloads</a>
+                    <a href="pricing.html" class="px-2 py-1 border border-[#2f2f2f] hover:text-acid-green">Pricing</a>
+                </nav>
+            </div>
+        </header>
+
+        <div class="grid lg:grid-cols-[260px_minmax(0,1fr)]">
+            <aside class="panel border-l-0 border-b-0 border-t-0 p-5 lg:sticky lg:top-0 lg:h-screen lg:overflow-auto">
+                <div class="mb-6">
+                    <h3 class="text-xs text-gray-500 uppercase tracking-widest mb-3">Getting Started</h3>
+                    <a href="#quickstart" class="sidebar-link active">Quickstart</a>
+                    <a href="#requirements" class="sidebar-link">Requirements</a>
+                    <a href="#install" class="sidebar-link">Install Methods</a>
+                </div>
+                <div class="mb-6">
+                    <h3 class="text-xs text-gray-500 uppercase tracking-widest mb-3">Configuration</h3>
+                    <a href="#config" class="sidebar-link">Agent Config</a>
+                    <a href="#pipeline" class="sidebar-link">Data Pipeline</a>
+                    <a href="#ports" class="sidebar-link">Ports and Protocols</a>
+                </div>
+                <div class="mb-6">
+                    <h3 class="text-xs text-gray-500 uppercase tracking-widest mb-3">Operations</h3>
+                    <a href="#security" class="sidebar-link">Security Signals</a>
+                    <a href="#troubleshooting" class="sidebar-link">Troubleshooting</a>
+                    <a href="#next" class="sidebar-link">Next Steps</a>
+                </div>
+                <div class="panel p-3 text-xs text-gray-400">
+                    <p class="uppercase text-[10px] text-gray-500 mb-1">Current Stable</p>
+                    <p class="text-acid-green font-bold">v1.1.0</p>
+                    <p class="mt-2">Need binaries or checksums? <a href="downloads.html" class="text-acid-green underline">Open downloads page</a>.</p>
+                </div>
+            </aside>
+
+            <main class="p-6 sm:p-8 lg:p-10 space-y-10">
+                <section id="quickstart" class="panel p-5 sm:p-6">
+                    <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+                        <h1 class="section-head text-3xl sm:text-4xl text-white">Quickstart</h1>
+                        <span class="text-[11px] uppercase tracking-widest text-gray-500">Target time: 60 seconds</span>
+                    </div>
+                    <p class="text-sm text-gray-400 mb-4">The agent auto-discovers entities, begins trace assembly, and streams Golden Signals immediately after startup.</p>
+                    <pre><span class="text-acid-green">$</span> curl -sfL https://get.dogwatch.io/install | sudo sh -s -- --token $DOGWATCH_TOKEN
+<span class="text-acid-green">$</span> sudo systemctl enable --now dogwatch-agent
+<span class="text-acid-green">$</span> dogwatch status
+
+[OK] control_plane_connected=true
+[OK] ebpf_probes_attached=24
+[OK] spans_per_second=14203</pre>
+                </section>
+
+                <section id="requirements" class="panel p-5 sm:p-6">
+                    <h2 class="section-head text-2xl sm:text-3xl text-white mb-4">Requirements</h2>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-[640px]">
+                            <thead>
+                                <tr>
+                                    <th>Category</th>
+                                    <th>Minimum</th>
+                                    <th>Recommended</th>
+                                    <th>Notes</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="text-white">Linux kernel</td>
+                                    <td>4.14+</td>
+                                    <td class="text-acid-green">5.8+</td>
+                                    <td class="text-gray-400">Needed for full eBPF and richer uprobes support.</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white">Privileges</td>
+                                    <td>root / CAP_BPF</td>
+                                    <td class="text-acid-green">root</td>
+                                    <td class="text-gray-400">Agent must attach kprobes and read process/network metadata.</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white">Network egress</td>
+                                    <td>443 TCP</td>
+                                    <td class="text-acid-green">443 + NTP</td>
+                                    <td class="text-gray-400">TLS to control plane plus stable time sync for incident correlation.</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white">OTLP compatibility</td>
+                                    <td>4317 gRPC</td>
+                                    <td class="text-acid-green">4317 + 4318</td>
+                                    <td class="text-gray-400">Accepts OpenTelemetry protocol traffic from existing instrumentation.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <section id="install" class="panel p-5 sm:p-6">
+                    <h2 class="section-head text-2xl sm:text-3xl text-white mb-4">Install Methods</h2>
+                    <div class="grid lg:grid-cols-2 gap-5">
+                        <article>
+                            <h3 class="text-white font-bold mb-2 uppercase text-sm tracking-widest">Systemd Host Install</h3>
+                            <pre><span class="text-acid-green">$</span> curl -LO https://dl.dogwatch.io/stable/linux/amd64/dogwatch-agent
+<span class="text-acid-green">$</span> sudo install -m 0755 dogwatch-agent /usr/local/bin/dogwatch
+<span class="text-acid-green">$</span> sudo dogwatch install --token $DOGWATCH_TOKEN
+<span class="text-acid-green">$</span> sudo systemctl restart dogwatch-agent</pre>
+                        </article>
+                        <article>
+                            <h3 class="text-white font-bold mb-2 uppercase text-sm tracking-widest">Kubernetes DaemonSet</h3>
+                            <pre>apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: dogwatch-agent
+spec:
+  template:
+    spec:
+      hostPID: true
+      containers:
+      - name: agent
+        image: ghcr.io/dogwatch/agent:v1.1.0
+        securityContext:
+          privileged: true
+        env:
+        - name: DOGWATCH_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: dogwatch-secrets
+              key: token</pre>
+                        </article>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-3">For release channels, packages, and checksums use <a href="downloads.html" class="text-acid-green underline">downloads</a>.</p>
+                </section>
+
+                <section id="config" class="panel p-5 sm:p-6">
+                    <h2 class="section-head text-2xl sm:text-3xl text-white mb-4">Agent Config</h2>
+                    <p class="text-sm text-gray-400 mb-3">This baseline keeps high-value traces, enables cost intelligence, and activates core security detections.</p>
+                    <pre>agent:
+  service_name: "prod-edge"
+  env: "production"
+
+capture:
+  protocols: [http, https, mysql, postgres, redis]
+  parse_wire_format: true
+  enable_ssl_uprobes: true
+
+sampling:
+  mode: tail
+  keep_errors: true
+  latency_threshold_ms: 450
+  baseline_rate: 0.05
+
+control_plane:
+  utility_scoring: true
+  suggest_aggregation: true
+  team_quota_series: 1200000
+
+security:
+  ruleset: default
+  baseline_learning_window: 72h
+  alert_on_shell_spawn: true
+  alert_on_unusual_outbound: true</pre>
+                </section>
+
+                <section id="pipeline" class="panel p-5 sm:p-6">
+                    <h2 class="section-head text-2xl sm:text-3xl text-white mb-4">Data Pipeline</h2>
+                    <pre>TCP/syscall events -> eBPF ring buffer -> protocol parser -> entity synthesis
+                -> trace assembly + golden signals -> control plane shaping
+                -> storage/query layer -> dashboards + BubbleUp + change correlation</pre>
+                    <p class="text-sm text-gray-400">The control plane sits before storage to aggregate low-utility labels, enforce quotas, and surface impact previews before rules are applied.</p>
+                </section>
+
+                <section id="ports" class="panel p-5 sm:p-6">
+                    <h2 class="section-head text-2xl sm:text-3xl text-white mb-4">Ports and Protocols</h2>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-[640px]">
+                            <thead>
+                                <tr>
+                                    <th>Port</th>
+                                    <th>Protocol</th>
+                                    <th>Direction</th>
+                                    <th>Purpose</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="text-white">4317</td>
+                                    <td>OTLP gRPC</td>
+                                    <td class="text-gray-400">Inbound</td>
+                                    <td class="text-gray-400">OpenTelemetry spans/metrics ingest from existing apps.</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white">4318</td>
+                                    <td>OTLP HTTP</td>
+                                    <td class="text-gray-400">Inbound</td>
+                                    <td class="text-gray-400">Optional HTTP ingest endpoint.</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white">443</td>
+                                    <td>HTTPS</td>
+                                    <td class="text-gray-400">Outbound</td>
+                                    <td class="text-gray-400">Control plane sync, release metadata, rules, and policy updates.</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white">53</td>
+                                    <td>DNS</td>
+                                    <td class="text-gray-400">Outbound</td>
+                                    <td class="text-gray-400">Agent endpoint and package host lookup.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <section id="security" class="panel p-5 sm:p-6">
+                    <h2 class="section-head text-2xl sm:text-3xl text-white mb-4">Security Signals</h2>
+                    <div class="grid lg:grid-cols-2 gap-5 text-sm">
+                        <article class="panel p-4">
+                            <h3 class="text-white font-bold mb-2 uppercase text-xs tracking-widest">Runtime Detections</h3>
+                            <ul class="space-y-2 text-gray-400">
+                                <li><span class="text-acid-green">[rule]</span> shell_in_container -> <code>sys_execve</code></li>
+                                <li><span class="text-acid-green">[rule]</span> unusual_outbound -> <code>tcp_connect</code></li>
+                                <li><span class="text-acid-green">[rule]</span> sensitive_file_access -> <code>sys_open</code></li>
+                                <li><span class="text-acid-green">[rule]</span> privilege_escalation -> <code>sys_setuid</code></li>
+                            </ul>
+                        </article>
+                        <article class="panel p-4">
+                            <h3 class="text-white font-bold mb-2 uppercase text-xs tracking-widest">Baseline Learning</h3>
+                            <p class="text-gray-400 mb-2">Each image learns normal processes, outbound destinations, and file access patterns.</p>
+                            <p class="text-gray-400">Alerts are elevated only when behavior deviates from baseline and incident context supports risk.</p>
+                        </article>
+                    </div>
+                </section>
+
+                <section id="troubleshooting" class="panel p-5 sm:p-6">
+                    <h2 class="section-head text-2xl sm:text-3xl text-white mb-4">Troubleshooting</h2>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-[640px]">
+                            <thead>
+                                <tr>
+                                    <th>Symptom</th>
+                                    <th>Likely Cause</th>
+                                    <th>Command</th>
+                                    <th>Remediation</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="text-white">No traces visible</td>
+                                    <td class="text-gray-400">Probes failed to attach</td>
+                                    <td><code>dogwatch doctor --probes</code></td>
+                                    <td class="text-gray-400">Check kernel compatibility and root privileges.</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white">High CPU on agent</td>
+                                    <td class="text-gray-400">Overly broad protocol parsing</td>
+                                    <td><code>dogwatch config get capture</code></td>
+                                    <td class="text-gray-400">Limit capture scope and enable sampling thresholds.</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white">Control plane disconnected</td>
+                                    <td class="text-gray-400">Firewall / token issue</td>
+                                    <td><code>dogwatch status --verbose</code></td>
+                                    <td class="text-gray-400">Verify token validity and outbound 443 access.</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white">Missing HTTPS metadata</td>
+                                    <td class="text-gray-400">SSL uprobes unavailable</td>
+                                    <td><code>dogwatch debug ssl</code></td>
+                                    <td class="text-gray-400">Upgrade kernel/tooling and ensure OpenSSL symbols are readable.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <section id="next" class="panel p-5 sm:p-6">
+                    <h2 class="section-head text-2xl sm:text-3xl text-white mb-4">Next Steps</h2>
+                    <div class="grid sm:grid-cols-3 gap-4 text-sm">
+                        <a href="downloads.html" class="panel p-4 hover:border-acid-green transition">
+                            <p class="text-acid-green text-xs uppercase mb-1">Step 1</p>
+                            <h3 class="text-white font-bold mb-2">Grab Artifacts</h3>
+                            <p class="text-gray-400">Use stable/canary binaries, package repos, or container tags.</p>
+                        </a>
+                        <a href="features.html" class="panel p-4 hover:border-acid-green transition">
+                            <p class="text-acid-green text-xs uppercase mb-1">Step 2</p>
+                            <h3 class="text-white font-bold mb-2">Map Features</h3>
+                            <p class="text-gray-400">Connect team goals to BubbleUp, control plane, and cost visibility.</p>
+                        </a>
+                        <a href="pricing.html" class="panel p-4 hover:border-acid-green transition">
+                            <p class="text-acid-green text-xs uppercase mb-1">Step 3</p>
+                            <h3 class="text-white font-bold mb-2">Choose Plan</h3>
+                            <p class="text-gray-400">Start local for free, move to supported production as needed.</p>
+                        </a>
+                    </div>
+                </section>
+            </main>
+        </div>
+    </div>
+    <script defer src="assets/grunge-revamp.js"></script>
+</body>
+</html>

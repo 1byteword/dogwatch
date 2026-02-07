@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>dogwatch | Observability Solved.</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        brand: {
+                            500: '#6366f1', // Indigo
+                            600: '#4f46e5',
+                            glow: '#818cf8',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .code-glow {
+            box-shadow: 0 0 50px -10px rgba(99, 102, 241, 0.3);
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-200 antialiased selection:bg-brand-500 selection:text-white">
+
+    <nav class="fixed w-full z-50 glass-panel border-b border-white/5">
+        <div class="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <div class="w-8 h-8 bg-brand-500 rounded flex items-center justify-center font-bold text-white">d</div>
+                <span class="font-bold text-xl tracking-tight text-white">dogwatch</span>
+            </div>
+            <div class="hidden md:flex items-center gap-8 text-sm font-medium text-slate-400">
+                <a href="#features" class="hover:text-white transition">Features</a>
+                <a href="#technology" class="hover:text-white transition">How it Works</a>
+                <a href="#pricing" class="hover:text-white transition">Pricing</a>
+                <a href="https://github.com" class="hover:text-white transition">GitHub</a>
+            </div>
+            <div class="flex items-center gap-4">
+                <a href="#" class="text-sm font-medium hover:text-white transition">Login</a>
+                <a href="#" class="bg-brand-600 hover:bg-brand-500 text-white px-4 py-2 rounded-md text-sm font-semibold transition shadow-[0_0_15px_rgba(79,70,229,0.4)]">
+                    Get Started
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <section class="relative pt-32 pb-20 lg:pt-48 overflow-hidden">
+        <div class="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[500px] bg-brand-500/20 rounded-full blur-[120px] -z-10"></div>
+
+        <div class="max-w-7xl mx-auto px-6 grid lg:grid-cols-2 gap-12 items-center">
+            
+            <div>
+                <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand-500/10 border border-brand-500/20 text-brand-glow text-xs font-mono mb-6">
+                    <span class="w-2 h-2 rounded-full bg-brand-500 animate-pulse"></span>
+                    v1.0 Public Beta Live
+                </div>
+                <h1 class="text-5xl lg:text-6xl font-bold text-white leading-tight mb-6">
+                    Observability. <br/>
+                    <span class="text-transparent bg-clip-text bg-gradient-to-r from-brand-glow to-purple-400">Solved in 60s.</span>
+                </h1>
+                <p class="text-lg text-slate-400 mb-8 max-w-lg leading-relaxed">
+                    Drop a single binary. Instantly map services, trace requests, and debug production. 
+                    <span class="text-slate-200 font-medium">No code changes. No SDKs. No config.</span>
+                </p>
+                <div class="flex flex-col sm:flex-row gap-4">
+                    <a href="#" class="h-12 px-8 rounded-lg bg-white text-slate-900 font-bold flex items-center justify-center hover:bg-slate-200 transition">
+                        Start for Free
+                    </a>
+                    <a href="#" class="h-12 px-8 rounded-lg border border-slate-700 hover:border-slate-500 text-white font-medium flex items-center justify-center transition">
+                        Book a Demo
+                    </a>
+                </div>
+                
+                <div class="mt-8 pt-8 border-t border-white/5">
+                    <p class="text-slate-500 italic text-sm">
+                        "This would cost us $47,000/month on Datadog. dogwatch worked out of the box."
+                    </p>
+                    <div class="flex items-center gap-2 mt-2">
+                        <div class="w-6 h-6 bg-slate-700 rounded-full"></div>
+                        <span class="text-xs font-semibold text-slate-300">VP of Engineering, Series B Startup</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="relative group">
+                <div class="absolute -inset-1 bg-gradient-to-r from-brand-600 to-purple-600 rounded-lg blur opacity-25 group-hover:opacity-50 transition duration-1000"></div>
+                <div class="relative bg-[#0d1117] rounded-lg border border-slate-800 shadow-2xl overflow-hidden code-glow">
+                    <div class="flex items-center gap-2 px-4 py-3 bg-slate-900/50 border-b border-slate-800">
+                        <div class="w-3 h-3 rounded-full bg-red-500/50"></div>
+                        <div class="w-3 h-3 rounded-full bg-yellow-500/50"></div>
+                        <div class="w-3 h-3 rounded-full bg-green-500/50"></div>
+                        <div class="ml-2 text-xs text-slate-500 font-mono">root@prod-server:~</div>
+                    </div>
+                    <div class="p-6 font-mono text-sm">
+                        <div class="flex gap-2 text-slate-300">
+                            <span class="text-green-400">$</span>
+                            <span class="typing-effect">curl -sfL https://get.dogwatch.io/install | sudo sh</span>
+                        </div>
+                        <div class="mt-4 text-slate-400">
+                            <p class="text-brand-glow">>> dogwatch agent starting...</p>
+                            <p>[INFO] Detected Kernel 5.15 (eBPF supported)</p>
+                            <p>[INFO] Discovered 14 services</p>
+                            <p>[INFO] Attaching uprobes to OpenSSL...</p>
+                            <p>[SUCCESS] Streaming Golden Signals to control plane.</p>
+                            <p class="mt-2 text-white">>> <span class="animate-pulse">_</span></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <div class="border-y border-white/5 bg-slate-900/30">
+        <div class="max-w-7xl mx-auto px-6 py-8 flex flex-wrap justify-center gap-12 opacity-50 grayscale hover:grayscale-0 transition duration-500">
+            <span class="text-xl font-bold text-white">ACME Corp</span>
+            <span class="text-xl font-bold text-white">Globex</span>
+            <span class="text-xl font-bold text-white">Soylent Corp</span>
+            <span class="text-xl font-bold text-white">Initech</span>
+            <span class="text-xl font-bold text-white">Umbrella</span>
+        </div>
+    </div>
+
+    <section id="features" class="py-24 bg-slate-950">
+        <div class="max-w-7xl mx-auto px-6">
+            <div class="text-center mb-16">
+                <h2 class="text-3xl font-bold text-white mb-4">Deep Insights. No Cardinality Tax.</h2>
+                <p class="text-slate-400 max-w-2xl mx-auto">Traditional monitoring crashes when you add too many tags. We built dogwatch for the messy, high-scale reality of the cloud.</p>
+            </div>
+
+            <div class="grid md:grid-cols-3 gap-8">
+                <div class="p-8 rounded-2xl bg-slate-900 border border-slate-800 hover:border-brand-500/50 transition group">
+                    <div class="w-12 h-12 bg-slate-800 rounded-lg flex items-center justify-center mb-6 text-brand-400 group-hover:bg-brand-500/20 transition">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    </div>
+                    <h3 class="text-xl font-bold text-white mb-3">BubbleUp Analysis</h3>
+                    <p class="text-slate-400 text-sm leading-relaxed">
+                        Don't guess why requests are slow. Select "bad" requests on a graph and we statistically compare them to "good" ones to find the exact outlier dimension.
+                    </p>
+                </div>
+
+                <div class="p-8 rounded-2xl bg-slate-900 border border-slate-800 hover:border-brand-500/50 transition group">
+                    <div class="w-12 h-12 bg-slate-800 rounded-lg flex items-center justify-center mb-6 text-brand-400 group-hover:bg-brand-500/20 transition">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
+                    </div>
+                    <h3 class="text-xl font-bold text-white mb-3">Control Plane</h3>
+                    <p class="text-slate-400 text-sm leading-relaxed">
+                        Tame cardinality explosion. We aggregate unused labels and enforce quotas <i>before</i> storage, so you never get a surprise bill for high-cardinality metrics.
+                    </p>
+                </div>
+
+                <div class="p-8 rounded-2xl bg-slate-900 border border-slate-800 hover:border-brand-500/50 transition group">
+                    <div class="w-12 h-12 bg-slate-800 rounded-lg flex items-center justify-center mb-6 text-brand-400 group-hover:bg-brand-500/20 transition">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
+                    </div>
+                    <h3 class="text-xl font-bold text-white mb-3">Exemplars & Traces</h3>
+                    <p class="text-slate-400 text-sm leading-relaxed">
+                        Bridge the gap between metrics and traces. Click any spike in your graph to see the exact trace IDs (Exemplars) that caused it.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="technology" class="py-24 border-t border-white/5 bg-slate-900/50">
+        <div class="max-w-7xl mx-auto px-6 grid lg:grid-cols-2 gap-16">
+            <div>
+                <h2 class="text-3xl font-bold text-white mb-6">No Magic. Just Physics.</h2>
+                <p class="text-slate-400 mb-8">
+                    We use eBPF to safely instrument the kernel. This allows us to observe all network traffic, syscalls, and function calls without modifying applications.
+                </p>
+                
+                <ul class="space-y-4">
+                    <li class="flex items-start gap-3">
+                        <div class="mt-1 w-5 h-5 rounded bg-green-500/20 text-green-400 flex items-center justify-center text-xs">✓</div>
+                        <div>
+                            <strong class="text-white block">Wire Format Analysis</strong>
+                            <span class="text-sm text-slate-500">We parse raw TCP packets to understand SQL, HTTP, and Redis.</span>
+                        </div>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <div class="mt-1 w-5 h-5 rounded bg-green-500/20 text-green-400 flex items-center justify-center text-xs">✓</div>
+                        <div>
+                            <strong class="text-white block">Zero-Overhead Uprobes</strong>
+                            <span class="text-sm text-slate-500">Hooks into SSL_write to see traffic before encryption.</span>
+                        </div>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <div class="mt-1 w-5 h-5 rounded bg-green-500/20 text-green-400 flex items-center justify-center text-xs">✓</div>
+                        <div>
+                            <strong class="text-white block">OTLP Native</strong>
+                            <span class="text-sm text-slate-500">Full support for OpenTelemetry gRPC (4317) and HTTP (4318).</span>
+                        </div>
+                    </li>
+                </ul>
+            </div>
+            
+            <div class="bg-[#1e1e1e] rounded-xl border border-white/10 p-6 font-mono text-xs overflow-hidden">
+                <div class="flex gap-4 mb-4 text-slate-500 border-b border-white/5 pb-2">
+                    <span class="text-white border-b border-brand-500">query.promql</span>
+                    <span>config.yaml</span>
+                </div>
+                <div class="space-y-2">
+                    <p class="text-slate-400"># PromQL Compatibility</p>
+                    <p class="text-purple-400">sum<span class="text-white">(</span>rate<span class="text-white">(</span>http_requests_total<span class="text-yellow-300">[5m]</span><span class="text-white">))</span> <span class="text-brand-400">by</span> <span class="text-white">(service)</span></p>
+                    <br>
+                    <p class="text-slate-400"># Automatic Entity Synthesis</p>
+                    <p><span class="text-brand-400">service:</span> <span class="text-green-400">"payment-gateway"</span></p>
+                    <p><span class="text-brand-400">  golden_signals:</span></p>
+                    <p><span class="text-brand-400">    latency_p99:</span> <span class="text-yellow-300">340ms</span></p>
+                    <p><span class="text-brand-400">    error_rate:</span> <span class="text-red-400">0.02%</span></p>
+                    <p><span class="text-brand-400">  relations:</span></p>
+                    <p><span class="text-brand-400">    - calls:</span> <span class="text-green-400">"user-db"</span> <span class="text-slate-500">(tcp/5432)</span></p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="pricing" class="py-24 max-w-4xl mx-auto px-6 text-center">
+        <h2 class="text-4xl font-bold text-white mb-6">Stop Paying for "Hosts"</h2>
+        <p class="text-xl text-slate-400 mb-10">
+            Legacy vendors punish you for microservices. We charge based on value.
+        </p>
+        
+        <div class="grid md:grid-cols-2 gap-6 text-left">
+            <div class="bg-slate-900 p-8 rounded-2xl border border-slate-800">
+                <h3 class="text-2xl font-bold text-white">Developer</h3>
+                <p class="text-3xl font-bold text-white mt-4">$0 <span class="text-sm font-normal text-slate-500">/ month</span></p>
+                <ul class="mt-6 space-y-3 text-slate-400 text-sm">
+                    <li>• Up to 5 Services</li>
+                    <li>• 3 Day Retention</li>
+                    <li>• Head Sampling Only</li>
+                </ul>
+            </div>
+            <div class="bg-gradient-to-b from-brand-900/20 to-slate-900 p-8 rounded-2xl border border-brand-500/30 relative overflow-hidden">
+                <div class="absolute top-0 right-0 bg-brand-500 text-white text-xs font-bold px-3 py-1 rounded-bl-lg">POPULAR</div>
+                <h3 class="text-2xl font-bold text-white">Pro</h3>
+                <p class="text-3xl font-bold text-white mt-4">$199 <span class="text-sm font-normal text-slate-500">/ month</span></p>
+                <ul class="mt-6 space-y-3 text-slate-300 text-sm">
+                    <li>• Unlimited Services</li>
+                    <li>• 30 Day Retention</li>
+                    <li>• <span class="text-brand-400 font-bold">BubbleUp</span> RCA</li>
+                    <li>• Tail Sampling</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="mt-16">
+            <h3 class="text-2xl font-bold text-white mb-6">Ready to see the unseen?</h3>
+            <div class="flex flex-col sm:flex-row justify-center gap-4">
+                <input type="email" placeholder="Enter your work email" class="bg-slate-800 border border-slate-700 text-white px-6 py-3 rounded-lg w-full sm:w-80 focus:outline-none focus:border-brand-500 transition">
+                <button class="bg-brand-600 hover:bg-brand-500 text-white px-8 py-3 rounded-lg font-bold transition">
+                    Get Started
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <footer class="border-t border-white/10 bg-slate-950 py-12">
+        <div class="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
+            <div class="flex items-center gap-2">
+                <div class="w-6 h-6 bg-slate-800 rounded flex items-center justify-center text-xs font-bold text-white">d</div>
+                <span class="text-slate-400 font-medium">dogwatch</span>
+            </div>
+            <div class="text-slate-600 text-sm">
+                &copy; 2026 dogwatch Inc. Observability that actually observes.
+            </div>
+        </div>
+    </footer>
+
+</body>
+</html>

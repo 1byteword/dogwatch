@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DOGWATCH // DOWNLOADS</title>
+    <meta name="color-scheme" content="dark">
+    <link rel="dns-prefetch" href="//fonts.googleapis.com">
+    <link rel="dns-prefetch" href="//fonts.gstatic.com">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preload" href="assets/tailwind.generated.css" as="style">
+    <link rel="preload" as="image" href="assets/dogwatch-logo.webp" type="image/webp">
+    <link rel="stylesheet" href="assets/tailwind.generated.css">
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            background: radial-gradient(circle at 22% 8%, #111 0%, #050505 46%, #030303 100%);
+            color: #d8d8d8;
+            font-family: 'Space Mono', monospace;
+        }
+
+        .scanlines {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 45;
+            opacity: 0.2;
+            background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 48%, rgba(0,0,0,0.2) 49%, rgba(0,0,0,0.2));
+            background-size: 100% 4px;
+        }
+
+        .noise {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 2;
+            opacity: 0.12;
+            background-image:
+                radial-gradient(circle at 16% 20%, rgba(173, 77, 46, 0.2), transparent 28%),
+                radial-gradient(circle at 78% 78%, rgba(255, 255, 255, 0.08), transparent 24%),
+                repeating-linear-gradient(106deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.03) 1px, transparent 1px, transparent 3px);
+            mix-blend-mode: screen;
+        }
+
+        .panel {
+            background: rgba(10, 10, 10, 0.9);
+            border: 1px solid #2a2a2a;
+        }
+
+        .panel:hover {
+            border-color: #535353;
+        }
+
+        .section-head {
+            font-family: 'Rajdhani', sans-serif;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+        }
+
+        pre {
+            background: #0d0d0d;
+            border: 1px solid #2b2b2b;
+            padding: 1rem;
+            overflow-x: auto;
+            margin: 0.8rem 0;
+            color: #b4b4b4;
+            font-size: 0.8rem;
+            line-height: 1.55;
+        }
+
+        code {
+            background: #151515;
+            color: #ccff00;
+            border: 1px solid #2d2d2d;
+            padding: 0.1rem 0.28rem;
+            font-size: 0.84em;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+        }
+
+        th, td {
+            padding: 0.64rem 0.52rem;
+            border-bottom: 1px solid #242424;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        th {
+            color: #9a9a9a;
+            font-size: 0.69rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .badge {
+            border: 1px solid #333;
+            background: #121212;
+            font-size: 0.67rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            padding: 0.2rem 0.42rem;
+        }
+
+        .quick-links {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.55rem;
+        }
+
+        .quick-link {
+            border: 1px solid #303030;
+            background: #0f0f0f;
+            padding: 0.55rem 0.6rem;
+            font-size: 0.69rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #b8b8b8;
+            transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
+        }
+
+        .quick-link:hover {
+            border-color: rgba(204, 255, 0, 0.55);
+            color: #ccff00;
+            background: #121212;
+        }
+
+        .repo-card {
+            border: 1px solid #2f2f2f;
+            background: #0f0f0f;
+            padding: 0.8rem;
+        }
+
+        .repo-card h3 {
+            margin: 0 0 0.4rem;
+            color: #fff;
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .step-line {
+            border: 1px solid #2e2e2e;
+            background: #0e0e0e;
+            padding: 0.65rem;
+            font-size: 0.76rem;
+        }
+
+        .step-line + .step-line {
+            margin-top: 0.45rem;
+        }
+
+        details {
+            border: 1px solid #2f2f2f;
+            background: rgba(10, 10, 10, 0.9);
+            transition: border-color 140ms ease;
+        }
+
+        details:hover {
+            border-color: #4a4a4a;
+        }
+
+        details summary {
+            list-style: none;
+            cursor: pointer;
+            padding: 0.76rem 0.85rem;
+            font-size: 0.79rem;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            color: #f1f1f1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        details summary::-webkit-details-marker { display: none; }
+
+        .faq-marker {
+            color: #8b8b8b;
+            transition: transform 140ms ease, color 140ms ease;
+        }
+
+        details[open] .faq-marker {
+            transform: rotate(45deg);
+            color: #ccff00;
+        }
+
+        details p {
+            margin: 0;
+            padding: 0 0.85rem 0.85rem;
+            color: #a5a5a5;
+            font-size: 0.78rem;
+            line-height: 1.6;
+        }
+
+        @media (max-width: 980px) {
+            .quick-links {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @media (max-width: 640px) {
+            .quick-links {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        ::selection {
+            background: #ccff00;
+            color: #000;
+        }
+    </style>
+    <link rel="stylesheet" href="assets/grunge-revamp.css">
+</head>
+<body class="grunge-site bg-off-black min-h-screen relative">
+    <div class="scanlines"></div>
+    <div class="noise"></div>
+    <div class="fixed inset-0 bg-grid-pattern bg-[length:36px_36px] pointer-events-none opacity-22 z-0"></div>
+
+    <div class="site-shell relative z-10 max-w-7xl mx-auto px-4 sm:px-6 py-6 border-x border-[#1a1a1a] min-h-screen bg-[#050505]/90 backdrop-blur-sm">
+        <header class="panel masthead px-4 sm:px-6 py-4 mb-8">
+            <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                <div>
+                    <a href="index.html" class="font-display text-3xl font-bold text-white brand-link"><span class="brand-fallback">dogwatch<span class="text-acid-green">_</span></span><picture class="brand-picture"><source srcset="assets/dogwatch-logo.webp" type="image/webp"><img src="assets/dogwatch-logo.png" alt="dogwatch" class="brand-logo" width="780" height="260" fetchpriority="high" loading="eager" decoding="async" onerror="this.parentElement.style.display='none';this.parentElement.previousElementSibling.style.display='inline-block'"></picture></a>
+                    <p class="text-xs text-gray-500">Signed binaries, containers, package repositories, and upgrade guidance.</p>
+                </div>
+                <nav class="flex flex-wrap gap-2 text-[11px] font-bold uppercase tracking-wider">
+                    <a href="index.html" class="px-2 py-1 border border-[#2f2f2f] hover:text-acid-green">Home</a>
+                    <a href="docs.html" class="px-2 py-1 border border-[#2f2f2f] hover:text-acid-green">Docs</a>
+                    <a href="features.html" class="px-2 py-1 border border-[#2f2f2f] hover:text-acid-green">Features</a>
+                    <a href="pricing.html" class="px-2 py-1 border border-[#2f2f2f] hover:text-acid-green">Pricing</a>
+                </nav>
+            </div>
+        </header>
+
+        <main class="space-y-8 pb-6">
+            <section id="channels" class="panel p-6 sm:p-7">
+                <div class="flex flex-wrap gap-2 mb-4 text-gray-400 text-[11px]">
+                    <span class="badge">stable v1.1.0</span>
+                    <span class="badge">canary v1.2.0-rc.3</span>
+                    <span class="badge">nightly 2026.02.06</span>
+                </div>
+                <h1 class="section-head text-4xl sm:text-5xl text-white mb-4">Downloads and Release Channels</h1>
+                <p class="text-sm sm:text-base text-gray-300 max-w-3xl">Pick the artifact path that fits your environment: direct binary, package manager, container image, or Helm chart. All public artifacts ship with SHA256 checksums and detached signatures.</p>
+            </section>
+
+            <section class="grid md:grid-cols-3 gap-4">
+                <article class="panel p-4">
+                    <h2 class="section-head text-xl text-white mb-2">Stable</h2>
+                    <p class="text-xs text-gray-400 mb-3">Production workloads and default install script target.</p>
+                    <p class="text-acid-green font-bold text-sm mb-2">v1.1.0</p>
+                    <ul class="text-xs text-gray-400 space-y-1">
+                        <li>Patch cadence: weekly</li>
+                        <li>Security fixes: immediate</li>
+                        <li>Support window: 90 days</li>
+                    </ul>
+                </article>
+                <article class="panel p-4">
+                    <h2 class="section-head text-xl text-white mb-2">Canary</h2>
+                    <p class="text-xs text-gray-400 mb-3">Feature validation for test clusters and pre-prod.</p>
+                    <p class="text-yellow-300 font-bold text-sm mb-2">v1.2.0-rc.3</p>
+                    <ul class="text-xs text-gray-400 space-y-1">
+                        <li>Patch cadence: daily</li>
+                        <li>Includes in-progress probes</li>
+                        <li>Support window: best effort</li>
+                    </ul>
+                </article>
+                <article class="panel p-4">
+                    <h2 class="section-head text-xl text-white mb-2">Nightly</h2>
+                    <p class="text-xs text-gray-400 mb-3">Internal validation and early compatibility checks.</p>
+                    <p class="text-gray-200 font-bold text-sm mb-2">build-2026.02.06</p>
+                    <ul class="text-xs text-gray-400 space-y-1">
+                        <li>Patch cadence: every push</li>
+                        <li>No compatibility guarantee</li>
+                        <li>Not recommended for prod</li>
+                    </ul>
+                </article>
+            </section>
+
+            <section class="panel p-4 sm:p-5">
+                <div class="quick-links">
+                    <a href="#install" class="quick-link">Install Paths</a>
+                    <a href="#artifacts" class="quick-link">Artifact Matrix</a>
+                    <a href="#repos" class="quick-link">Package Repos</a>
+                    <a href="#automation" class="quick-link">Automation API</a>
+                    <a href="#verify" class="quick-link">Verify Signatures</a>
+                    <a href="#provenance" class="quick-link">SBOM & Provenance</a>
+                    <a href="#compatibility" class="quick-link">Compatibility</a>
+                    <a href="#upgrade" class="quick-link">Upgrade & Rollback</a>
+                </div>
+            </section>
+
+            <section id="install" class="panel p-5 sm:p-6">
+                <h2 class="section-head text-2xl sm:text-3xl text-white mb-3">Install Paths</h2>
+                <div class="grid lg:grid-cols-2 gap-5">
+                    <article>
+                        <h3 class="text-white text-sm font-bold uppercase tracking-widest mb-2">Fast Path (Stable)</h3>
+                        <pre><span class="text-acid-green">$</span> curl -sfL https://get.dogwatch.io/install | sudo sh -s -- --channel stable --token $DOGWATCH_TOKEN
+<span class="text-acid-green">$</span> dogwatch status</pre>
+                    </article>
+                    <article>
+                        <h3 class="text-white text-sm font-bold uppercase tracking-widest mb-2">Pinned Binary</h3>
+                        <pre><span class="text-acid-green">$</span> VERSION=v1.1.0
+<span class="text-acid-green">$</span> ARCH=linux-amd64
+<span class="text-acid-green">$</span> curl -LO https://dl.dogwatch.io/$VERSION/dogwatch-agent-$ARCH.tar.gz
+<span class="text-acid-green">$</span> tar -xzf dogwatch-agent-$ARCH.tar.gz
+<span class="text-acid-green">$</span> sudo install -m 0755 dogwatch /usr/local/bin/dogwatch</pre>
+                    </article>
+                    <article>
+                        <h3 class="text-white text-sm font-bold uppercase tracking-widest mb-2">Container</h3>
+                        <pre><span class="text-acid-green">$</span> docker pull ghcr.io/dogwatch/agent:v1.1.0
+<span class="text-acid-green">$</span> docker run --privileged --pid=host --network=host \
+  -e DOGWATCH_TOKEN=$DOGWATCH_TOKEN \
+  ghcr.io/dogwatch/agent:v1.1.0</pre>
+                    </article>
+                    <article>
+                        <h3 class="text-white text-sm font-bold uppercase tracking-widest mb-2">Helm</h3>
+                        <pre><span class="text-acid-green">$</span> helm repo add dogwatch https://charts.dogwatch.io
+<span class="text-acid-green">$</span> helm upgrade --install dogwatch-agent dogwatch/agent \
+  --namespace observability --create-namespace \
+  --set image.tag=v1.1.0 \
+  --set token=$DOGWATCH_TOKEN</pre>
+                    </article>
+                </div>
+            </section>
+
+            <section id="artifacts" class="panel p-5 sm:p-6">
+                <h2 class="section-head text-2xl sm:text-3xl text-white mb-4">Artifact Matrix</h2>
+                <div class="overflow-x-auto">
+                    <table class="min-w-[800px]">
+                        <thead>
+                            <tr>
+                                <th>Target</th>
+                                <th>Filename</th>
+                                <th>Size</th>
+                                <th>Checksum (SHA256)</th>
+                                <th>Signature</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td class="text-white">linux/amd64</td>
+                                <td>dogwatch-agent-linux-amd64.tar.gz</td>
+                                <td class="text-gray-400">34 MB</td>
+                                <td><code>9e1a12f7...1c84</code></td>
+                                <td><code>.sig</code></td>
+                            </tr>
+                            <tr>
+                                <td class="text-white">linux/arm64</td>
+                                <td>dogwatch-agent-linux-arm64.tar.gz</td>
+                                <td class="text-gray-400">31 MB</td>
+                                <td><code>74cd9302...ad97</code></td>
+                                <td><code>.sig</code></td>
+                            </tr>
+                            <tr>
+                                <td class="text-white">darwin/arm64</td>
+                                <td>dogwatch-agent-darwin-arm64.tar.gz</td>
+                                <td class="text-gray-400">28 MB</td>
+                                <td><code>f131db60...90d1</code></td>
+                                <td><code>.sig</code></td>
+                            </tr>
+                            <tr>
+                                <td class="text-white">darwin/amd64</td>
+                                <td>dogwatch-agent-darwin-amd64.tar.gz</td>
+                                <td class="text-gray-400">30 MB</td>
+                                <td><code>0a7d2be5...8fc0</code></td>
+                                <td><code>.sig</code></td>
+                            </tr>
+                            <tr>
+                                <td class="text-white">k8s chart</td>
+                                <td>dogwatch-agent-1.1.0.tgz</td>
+                                <td class="text-gray-400">92 KB</td>
+                                <td><code>e2aeb67a...de42</code></td>
+                                <td><code>.prov</code></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="text-xs text-gray-500 mt-3">Full checksum manifests: <code>SHA256SUMS</code>, <code>SHA256SUMS.sig</code>, <code>cosign.pub</code>.</p>
+            </section>
+
+            <section id="verify" class="grid lg:grid-cols-2 gap-5">
+                <article class="panel p-5 sm:p-6">
+                    <h2 class="section-head text-2xl text-white mb-3">Verify Integrity</h2>
+                    <pre><span class="text-acid-green">$</span> curl -LO https://dl.dogwatch.io/v1.1.0/SHA256SUMS
+<span class="text-acid-green">$</span> curl -LO https://dl.dogwatch.io/v1.1.0/SHA256SUMS.sig
+<span class="text-acid-green">$</span> gpg --keyserver keys.openpgp.org --recv-keys 0xD06F9B18A9E4E10A
+<span class="text-acid-green">$</span> gpg --verify SHA256SUMS.sig SHA256SUMS
+<span class="text-acid-green">$</span> shasum -a 256 -c SHA256SUMS --ignore-missing</pre>
+                    <p class="text-xs text-gray-500">Cosign signatures are also available for container images and chart artifacts.</p>
+                </article>
+                <article class="panel p-5 sm:p-6">
+                    <h2 class="section-head text-2xl text-white mb-3">Air-Gapped Install</h2>
+                    <pre><span class="text-acid-green">$</span> mkdir dogwatch-bundle && cd dogwatch-bundle
+<span class="text-acid-green">$</span> curl -O https://dl.dogwatch.io/v1.1.0/dogwatch-agent-linux-amd64.tar.gz
+<span class="text-acid-green">$</span> curl -O https://dl.dogwatch.io/v1.1.0/SHA256SUMS
+<span class="text-acid-green">$</span> tar -czf dogwatch-offline-v1.1.0.tar.gz *
+
+# Move bundle to offline environment
+# install binary, then configure control plane endpoint via local gateway.</pre>
+                    <p class="text-xs text-gray-500">Offline mode requires local relay for policy updates and release metadata.</p>
+                </article>
+            </section>
+
+            <section id="compatibility" class="panel p-5 sm:p-6">
+                <h2 class="section-head text-2xl sm:text-3xl text-white mb-4">Compatibility Matrix</h2>
+                <div class="overflow-x-auto">
+                    <table class="min-w-[760px]">
+                        <thead>
+                            <tr>
+                                <th>Capability</th>
+                                <th>Kernel 4.14+</th>
+                                <th>Kernel 5.8+</th>
+                                <th>Notes</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td class="text-white">HTTP tracing</td>
+                                <td class="text-acid-green">Yes</td>
+                                <td class="text-acid-green">Yes</td>
+                                <td class="text-gray-400">Default enabled.</td>
+                            </tr>
+                            <tr>
+                                <td class="text-white">HTTPS via uprobes</td>
+                                <td class="text-yellow-300">Limited</td>
+                                <td class="text-acid-green">Yes</td>
+                                <td class="text-gray-400">Depends on library symbols and runtime.</td>
+                            </tr>
+                            <tr>
+                                <td class="text-white">Security detections</td>
+                                <td class="text-acid-green">Yes</td>
+                                <td class="text-acid-green">Yes</td>
+                                <td class="text-gray-400">Shell, outbound, file-access, privilege signals.</td>
+                            </tr>
+                            <tr>
+                                <td class="text-white">Advanced tail sampling</td>
+                                <td class="text-yellow-300">Baseline</td>
+                                <td class="text-acid-green">Full</td>
+                                <td class="text-gray-400">Higher buffering efficiency on newer kernels.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section id="repos" class="panel p-5 sm:p-6">
+                <h2 class="section-head text-2xl sm:text-3xl text-white mb-4">Package Repository Setup</h2>
+                <div class="grid lg:grid-cols-3 gap-4 text-xs">
+                    <article class="repo-card">
+                        <h3>Debian / Ubuntu (APT)</h3>
+                        <pre><span class="text-acid-green">$</span> curl -fsSL https://packages.dogwatch.io/gpg | gpg --dearmor | sudo tee /usr/share/keyrings/dogwatch.gpg > /dev/null
+<span class="text-acid-green">$</span> echo \"deb [signed-by=/usr/share/keyrings/dogwatch.gpg] https://packages.dogwatch.io/apt stable main\" | sudo tee /etc/apt/sources.list.d/dogwatch.list
+<span class="text-acid-green">$</span> sudo apt update && sudo apt install dogwatch-agent</pre>
+                    </article>
+                    <article class="repo-card">
+                        <h3>RHEL / CentOS (YUM)</h3>
+                        <pre><span class="text-acid-green">$</span> sudo tee /etc/yum.repos.d/dogwatch.repo <<EOF
+[dogwatch]
+name=Dogwatch
+baseurl=https://packages.dogwatch.io/rpm/stable/$basearch
+enabled=1
+gpgcheck=1
+gpgkey=https://packages.dogwatch.io/gpg
+EOF
+<span class="text-acid-green">$</span> sudo yum install dogwatch-agent</pre>
+                    </article>
+                    <article class="repo-card">
+                        <h3>macOS (Homebrew)</h3>
+                        <pre><span class="text-acid-green">$</span> brew tap dogwatch/tap
+<span class="text-acid-green">$</span> brew install dogwatch-agent
+<span class="text-acid-green">$</span> dogwatch --version</pre>
+                    </article>
+                </div>
+            </section>
+
+            <section id="automation" class="panel p-5 sm:p-6">
+                <div class="flex items-end justify-between gap-3 mb-4">
+                    <h2 class="section-head text-2xl sm:text-3xl text-white">Automation and Manifest APIs</h2>
+                    <span class="badge">CI/CD Friendly</span>
+                </div>
+                <div class="grid lg:grid-cols-2 gap-5 text-sm">
+                    <article>
+                        <p class="text-gray-400 mb-3">Pin deterministic artifacts in pipeline jobs by reading signed release manifests.</p>
+                        <pre><span class="text-acid-green">$</span> curl -s https://dl.dogwatch.io/v1.1.0/manifest.json | jq '.artifacts[] | {target, sha256}'
+<span class="text-acid-green">$</span> curl -s https://dl.dogwatch.io/stable/latest.json | jq '.version'
+<span class="text-acid-green">$</span> curl -s https://dl.dogwatch.io/canary/latest.json | jq '.version'</pre>
+                    </article>
+                    <article>
+                        <div class="step-line"><span class="text-acid-green">1.</span> Query channel metadata (<code>stable</code>, <code>canary</code>, <code>nightly</code>).</div>
+                        <div class="step-line"><span class="text-acid-green">2.</span> Resolve target artifact and expected SHA256 for architecture.</div>
+                        <div class="step-line"><span class="text-acid-green">3.</span> Download and verify signature before deployment step.</div>
+                        <div class="step-line"><span class="text-acid-green">4.</span> Record artifact digest in change-correlation timeline.</div>
+                    </article>
+                </div>
+            </section>
+
+            <section id="provenance" class="panel p-5 sm:p-6">
+                <h2 class="section-head text-2xl sm:text-3xl text-white mb-4">SBOM and Provenance</h2>
+                <div class="grid lg:grid-cols-2 gap-5">
+                    <article>
+                        <p class="text-sm text-gray-400 mb-3">Every release ships with build provenance and SBOM exports for compliance and internal security review.</p>
+                        <pre><span class="text-acid-green">$</span> curl -LO https://dl.dogwatch.io/v1.1.0/dogwatch-agent-linux-amd64.sbom.spdx.json
+<span class="text-acid-green">$</span> curl -LO https://dl.dogwatch.io/v1.1.0/provenance.intoto.jsonl
+<span class="text-acid-green">$</span> cosign verify-attestation --type slsaprovenance \
+  --key cosign.pub ghcr.io/dogwatch/agent:v1.1.0</pre>
+                    </article>
+                    <article class="repo-card">
+                        <h3>Included Metadata</h3>
+                        <ul class="text-xs text-gray-300 space-y-2">
+                            <li>Build timestamp, Git commit, builder identity.</li>
+                            <li>Compiler and dependency graph snapshot.</li>
+                            <li>SPDX SBOM with package and license metadata.</li>
+                            <li>Container image digest and signature bundle.</li>
+                        </ul>
+                    </article>
+                </div>
+            </section>
+
+            <section id="upgrade" class="grid lg:grid-cols-2 gap-5">
+                <article class="panel p-5 sm:p-6">
+                    <h2 class="section-head text-2xl text-white mb-3">Upgrade and Rollback</h2>
+                    <pre><span class="text-acid-green"># upgrade</span>
+<span class="text-acid-green">$</span> dogwatch self-update --channel stable --to v1.1.0
+
+<span class="text-acid-green"># inspect previous builds</span>
+<span class="text-acid-green">$</span> dogwatch versions
+
+<span class="text-acid-green"># rollback if required</span>
+<span class="text-acid-green">$</span> dogwatch rollback --to v1.0.9</pre>
+                </article>
+                <article class="panel p-5 sm:p-6">
+                    <h2 class="section-head text-2xl text-white mb-3">Release Notes Highlights</h2>
+                    <ul class="text-sm text-gray-300 space-y-2">
+                        <li><span class="text-acid-green">v1.1.0</span> BubbleUp scoring improvements for high-cardinality dimensions.</li>
+                        <li><span class="text-acid-green">v1.1.0</span> Control plane preview mode for aggregation rules.</li>
+                        <li><span class="text-acid-green">v1.1.0</span> New security rule: unusual outbound to first-seen external destinations.</li>
+                        <li><span class="text-acid-green">v1.0.9</span> Kernel compatibility fixes for Ubuntu 20.04 LTS hosts.</li>
+                    </ul>
+                </article>
+            </section>
+
+            <section class="grid lg:grid-cols-2 gap-5">
+                <article class="panel p-5 sm:p-6">
+                    <h2 class="section-head text-2xl text-white mb-3">Install Troubleshooting</h2>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-[620px]">
+                            <thead>
+                                <tr>
+                                    <th>Symptom</th>
+                                    <th>Likely Cause</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="text-white">Signature verify failed</td>
+                                    <td class="text-gray-400">stale key or proxy-modified artifact</td>
+                                    <td><code>curl -LO .../cosign.pub && verify</code></td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white">Install script exits early</td>
+                                    <td class="text-gray-400">missing sudo/root capabilities</td>
+                                    <td><code>sudo -v && retry installer</code></td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white">No eBPF probes attached</td>
+                                    <td class="text-gray-400">kernel capability mismatch</td>
+                                    <td><code>dogwatch doctor --probes</code></td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white">Upgrade blocked in CI</td>
+                                    <td class="text-gray-400">manifest version pin mismatch</td>
+                                    <td><code>jq '.version' latest.json</code></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+                <article class="panel p-5 sm:p-6">
+                    <h2 class="section-head text-2xl text-white mb-3">Downloads FAQ</h2>
+                    <div class="space-y-3">
+                        <details open>
+                            <summary>Can we mirror artifacts internally?<span class="faq-marker">+</span></summary>
+                            <p>Yes. Mirror both artifact binaries and metadata files (<code>manifest.json</code>, checksums, signatures) to preserve deterministic verification in private networks.</p>
+                        </details>
+                        <details>
+                            <summary>How often should we move channels?<span class="faq-marker">+</span></summary>
+                            <p>Most teams pin to stable weekly and test canary in staging daily. Nightly should stay isolated to integration tests.</p>
+                        </details>
+                        <details>
+                            <summary>Are release artifacts reproducible?<span class="faq-marker">+</span></summary>
+                            <p>Provenance attestations and SBOM outputs are published per release to support reproducibility and audit workflows.</p>
+                        </details>
+                    </div>
+                </article>
+            </section>
+
+            <section class="panel grunge-cta p-6 sm:p-7 bg-[linear-gradient(140deg,rgba(173,77,46,0.12),rgba(5,5,5,0.95)_48%)]">
+                <div class="grid md:grid-cols-[1fr_auto] gap-4 items-center">
+                    <div>
+                        <h2 class="section-head text-3xl sm:text-4xl text-white mb-2">Need Install Guidance?</h2>
+                        <p class="text-sm sm:text-base text-gray-300">Start with docs for rollout flow and troubleshooting, then come back here to pin channels and artifact versions.</p>
+                    </div>
+                    <a href="docs.html" class="inline-block text-center bg-acid-green text-black font-bold uppercase text-sm px-6 py-3 border border-acid-green hover:bg-black hover:text-acid-green transition">Open Docs</a>
+                </div>
+            </section>
+        </main>
+    </div>
+    <script defer src="assets/grunge-revamp.js"></script>
+</body>
+</html>

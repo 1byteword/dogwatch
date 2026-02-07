@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DOGWATCH // DOWNLOADS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        mono: ['"Space Mono"', 'monospace'],
+                        display: ['Rajdhani', 'sans-serif']
+                    },
+                    colors: {
+                        'acid-green': '#ccff00',
+                        'off-black': '#050505'
+                    },
+                    backgroundImage: {
+                        'grid-pattern': "linear-gradient(to right, #171717 1px, transparent 1px), linear-gradient(to bottom, #171717 1px, transparent 1px)"
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background: radial-gradient(circle at 22% 8%, #111 0%, #050505 46%, #030303 100%);
+            color: #d8d8d8;
+            font-family: 'Space Mono', monospace;
+        }
+
+        .scanlines {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 45;
+            opacity: 0.2;
+            background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 48%, rgba(0,0,0,0.2) 49%, rgba(0,0,0,0.2));
+            background-size: 100% 4px;
+        }
+
+        .noise {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 2;
+            opacity: 0.12;
+            background-image:
+                radial-gradient(circle at 16% 20%, rgba(173, 77, 46, 0.2), transparent 28%),
+                radial-gradient(circle at 78% 78%, rgba(255, 255, 255, 0.08), transparent 24%),
+                repeating-linear-gradient(106deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.03) 1px, transparent 1px, transparent 3px);
+            mix-blend-mode: screen;
+        }
+
+        .panel {
+            background: rgba(10, 10, 10, 0.9);
+            border: 1px solid #2a2a2a;
+        }
+
+        .panel:hover {
+            border-color: #535353;
+        }
+
+        .section-head {
+            font-family: 'Rajdhani', sans-serif;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+        }
+
+        pre {
+            background: #0d0d0d;
+            border: 1px solid #2b2b2b;
+            padding: 1rem;
+            overflow-x: auto;
+            margin: 0.8rem 0;
+            color: #b4b4b4;
+            font-size: 0.8rem;
+            line-height: 1.55;
+        }
+
+        code {
+            background: #151515;
+            color: #ccff00;
+            border: 1px solid #2d2d2d;
+            padding: 0.1rem 0.28rem;
+            font-size: 0.84em;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+        }
+
+        th, td {
+            padding: 0.64rem 0.52rem;
+            border-bottom: 1px solid #242424;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        th {
+            color: #9a9a9a;
+            font-size: 0.69rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .badge {
+            border: 1px solid #333;
+            background: #121212;
+            font-size: 0.67rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            padding: 0.2rem 0.42rem;
+        }
+
+        ::selection {
+            background: #ccff00;
+            color: #000;
+        }
+    </style>
+</head>
+<body class="bg-off-black min-h-screen relative">
+    <div class="scanlines"></div>
+    <div class="noise"></div>
+    <div class="fixed inset-0 bg-grid-pattern bg-[length:36px_36px] pointer-events-none opacity-22 z-0"></div>
+
+    <div class="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 py-6 border-x border-[#1a1a1a] min-h-screen bg-[#050505]/90 backdrop-blur-sm">
+        <header class="panel px-4 sm:px-6 py-4 mb-8">
+            <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                <div>
+                    <a href="index.html" class="font-display text-3xl font-bold text-white">dogwatch<span class="text-acid-green">_</span></a>
+                    <p class="text-xs text-gray-500">Signed binaries, containers, package repositories, and upgrade guidance.</p>
+                </div>
+                <nav class="flex flex-wrap gap-2 text-[11px] font-bold uppercase tracking-wider">
+                    <a href="index.html" class="px-2 py-1 border border-[#2f2f2f] hover:text-acid-green">Home</a>
+                    <a href="docs.html" class="px-2 py-1 border border-[#2f2f2f] hover:text-acid-green">Docs</a>
+                    <a href="features.html" class="px-2 py-1 border border-[#2f2f2f] hover:text-acid-green">Features</a>
+                    <a href="pricing.html" class="px-2 py-1 border border-[#2f2f2f] hover:text-acid-green">Pricing</a>
+                </nav>
+            </div>
+        </header>
+
+        <main class="space-y-8 pb-6">
+            <section class="panel p-6 sm:p-7">
+                <div class="flex flex-wrap gap-2 mb-4 text-gray-400 text-[11px]">
+                    <span class="badge">stable v1.1.0</span>
+                    <span class="badge">canary v1.2.0-rc.3</span>
+                    <span class="badge">nightly 2026.02.06</span>
+                </div>
+                <h1 class="section-head text-4xl sm:text-5xl text-white mb-4">Downloads and Release Channels</h1>
+                <p class="text-sm sm:text-base text-gray-300 max-w-3xl">Pick the artifact path that fits your environment: direct binary, package manager, container image, or Helm chart. All public artifacts ship with SHA256 checksums and detached signatures.</p>
+            </section>
+
+            <section class="grid md:grid-cols-3 gap-4">
+                <article class="panel p-4">
+                    <h2 class="section-head text-xl text-white mb-2">Stable</h2>
+                    <p class="text-xs text-gray-400 mb-3">Production workloads and default install script target.</p>
+                    <p class="text-acid-green font-bold text-sm mb-2">v1.1.0</p>
+                    <ul class="text-xs text-gray-400 space-y-1">
+                        <li>Patch cadence: weekly</li>
+                        <li>Security fixes: immediate</li>
+                        <li>Support window: 90 days</li>
+                    </ul>
+                </article>
+                <article class="panel p-4">
+                    <h2 class="section-head text-xl text-white mb-2">Canary</h2>
+                    <p class="text-xs text-gray-400 mb-3">Feature validation for test clusters and pre-prod.</p>
+                    <p class="text-yellow-300 font-bold text-sm mb-2">v1.2.0-rc.3</p>
+                    <ul class="text-xs text-gray-400 space-y-1">
+                        <li>Patch cadence: daily</li>
+                        <li>Includes in-progress probes</li>
+                        <li>Support window: best effort</li>
+                    </ul>
+                </article>
+                <article class="panel p-4">
+                    <h2 class="section-head text-xl text-white mb-2">Nightly</h2>
+                    <p class="text-xs text-gray-400 mb-3">Internal validation and early compatibility checks.</p>
+                    <p class="text-gray-200 font-bold text-sm mb-2">build-2026.02.06</p>
+                    <ul class="text-xs text-gray-400 space-y-1">
+                        <li>Patch cadence: every push</li>
+                        <li>No compatibility guarantee</li>
+                        <li>Not recommended for prod</li>
+                    </ul>
+                </article>
+            </section>
+
+            <section class="panel p-5 sm:p-6">
+                <h2 class="section-head text-2xl sm:text-3xl text-white mb-3">Install Paths</h2>
+                <div class="grid lg:grid-cols-2 gap-5">
+                    <article>
+                        <h3 class="text-white text-sm font-bold uppercase tracking-widest mb-2">Fast Path (Stable)</h3>
+                        <pre><span class="text-acid-green">$</span> curl -sfL https://get.dogwatch.io/install | sudo sh -s -- --channel stable --token $DOGWATCH_TOKEN
+<span class="text-acid-green">$</span> dogwatch status</pre>
+                    </article>
+                    <article>
+                        <h3 class="text-white text-sm font-bold uppercase tracking-widest mb-2">Pinned Binary</h3>
+                        <pre><span class="text-acid-green">$</span> VERSION=v1.1.0
+<span class="text-acid-green">$</span> ARCH=linux-amd64
+<span class="text-acid-green">$</span> curl -LO https://dl.dogwatch.io/$VERSION/dogwatch-agent-$ARCH.tar.gz
+<span class="text-acid-green">$</span> tar -xzf dogwatch-agent-$ARCH.tar.gz
+<span class="text-acid-green">$</span> sudo install -m 0755 dogwatch /usr/local/bin/dogwatch</pre>
+                    </article>
+                    <article>
+                        <h3 class="text-white text-sm font-bold uppercase tracking-widest mb-2">Container</h3>
+                        <pre><span class="text-acid-green">$</span> docker pull ghcr.io/dogwatch/agent:v1.1.0
+<span class="text-acid-green">$</span> docker run --privileged --pid=host --network=host \
+  -e DOGWATCH_TOKEN=$DOGWATCH_TOKEN \
+  ghcr.io/dogwatch/agent:v1.1.0</pre>
+                    </article>
+                    <article>
+                        <h3 class="text-white text-sm font-bold uppercase tracking-widest mb-2">Helm</h3>
+                        <pre><span class="text-acid-green">$</span> helm repo add dogwatch https://charts.dogwatch.io
+<span class="text-acid-green">$</span> helm upgrade --install dogwatch-agent dogwatch/agent \
+  --namespace observability --create-namespace \
+  --set image.tag=v1.1.0 \
+  --set token=$DOGWATCH_TOKEN</pre>
+                    </article>
+                </div>
+            </section>
+
+            <section class="panel p-5 sm:p-6">
+                <h2 class="section-head text-2xl sm:text-3xl text-white mb-4">Artifact Matrix</h2>
+                <div class="overflow-x-auto">
+                    <table class="min-w-[800px]">
+                        <thead>
+                            <tr>
+                                <th>Target</th>
+                                <th>Filename</th>
+                                <th>Size</th>
+                                <th>Checksum (SHA256)</th>
+                                <th>Signature</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td class="text-white">linux/amd64</td>
+                                <td>dogwatch-agent-linux-amd64.tar.gz</td>
+                                <td class="text-gray-400">34 MB</td>
+                                <td><code>9e1a12f7...1c84</code></td>
+                                <td><code>.sig</code></td>
+                            </tr>
+                            <tr>
+                                <td class="text-white">linux/arm64</td>
+                                <td>dogwatch-agent-linux-arm64.tar.gz</td>
+                                <td class="text-gray-400">31 MB</td>
+                                <td><code>74cd9302...ad97</code></td>
+                                <td><code>.sig</code></td>
+                            </tr>
+                            <tr>
+                                <td class="text-white">darwin/arm64</td>
+                                <td>dogwatch-agent-darwin-arm64.tar.gz</td>
+                                <td class="text-gray-400">28 MB</td>
+                                <td><code>f131db60...90d1</code></td>
+                                <td><code>.sig</code></td>
+                            </tr>
+                            <tr>
+                                <td class="text-white">darwin/amd64</td>
+                                <td>dogwatch-agent-darwin-amd64.tar.gz</td>
+                                <td class="text-gray-400">30 MB</td>
+                                <td><code>0a7d2be5...8fc0</code></td>
+                                <td><code>.sig</code></td>
+                            </tr>
+                            <tr>
+                                <td class="text-white">k8s chart</td>
+                                <td>dogwatch-agent-1.1.0.tgz</td>
+                                <td class="text-gray-400">92 KB</td>
+                                <td><code>e2aeb67a...de42</code></td>
+                                <td><code>.prov</code></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="text-xs text-gray-500 mt-3">Full checksum manifests: <code>SHA256SUMS</code>, <code>SHA256SUMS.sig</code>, <code>cosign.pub</code>.</p>
+            </section>
+
+            <section class="grid lg:grid-cols-2 gap-5">
+                <article class="panel p-5 sm:p-6">
+                    <h2 class="section-head text-2xl text-white mb-3">Verify Integrity</h2>
+                    <pre><span class="text-acid-green">$</span> curl -LO https://dl.dogwatch.io/v1.1.0/SHA256SUMS
+<span class="text-acid-green">$</span> curl -LO https://dl.dogwatch.io/v1.1.0/SHA256SUMS.sig
+<span class="text-acid-green">$</span> gpg --keyserver keys.openpgp.org --recv-keys 0xD06F9B18A9E4E10A
+<span class="text-acid-green">$</span> gpg --verify SHA256SUMS.sig SHA256SUMS
+<span class="text-acid-green">$</span> shasum -a 256 -c SHA256SUMS --ignore-missing</pre>
+                    <p class="text-xs text-gray-500">Cosign signatures are also available for container images and chart artifacts.</p>
+                </article>
+                <article class="panel p-5 sm:p-6">
+                    <h2 class="section-head text-2xl text-white mb-3">Air-Gapped Install</h2>
+                    <pre><span class="text-acid-green">$</span> mkdir dogwatch-bundle && cd dogwatch-bundle
+<span class="text-acid-green">$</span> curl -O https://dl.dogwatch.io/v1.1.0/dogwatch-agent-linux-amd64.tar.gz
+<span class="text-acid-green">$</span> curl -O https://dl.dogwatch.io/v1.1.0/SHA256SUMS
+<span class="text-acid-green">$</span> tar -czf dogwatch-offline-v1.1.0.tar.gz *
+
+# Move bundle to offline environment
+# install binary, then configure control plane endpoint via local gateway.</pre>
+                    <p class="text-xs text-gray-500">Offline mode requires local relay for policy updates and release metadata.</p>
+                </article>
+            </section>
+
+            <section class="panel p-5 sm:p-6">
+                <h2 class="section-head text-2xl sm:text-3xl text-white mb-4">Compatibility Matrix</h2>
+                <div class="overflow-x-auto">
+                    <table class="min-w-[760px]">
+                        <thead>
+                            <tr>
+                                <th>Capability</th>
+                                <th>Kernel 4.14+</th>
+                                <th>Kernel 5.8+</th>
+                                <th>Notes</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td class="text-white">HTTP tracing</td>
+                                <td class="text-acid-green">Yes</td>
+                                <td class="text-acid-green">Yes</td>
+                                <td class="text-gray-400">Default enabled.</td>
+                            </tr>
+                            <tr>
+                                <td class="text-white">HTTPS via uprobes</td>
+                                <td class="text-yellow-300">Limited</td>
+                                <td class="text-acid-green">Yes</td>
+                                <td class="text-gray-400">Depends on library symbols and runtime.</td>
+                            </tr>
+                            <tr>
+                                <td class="text-white">Security detections</td>
+                                <td class="text-acid-green">Yes</td>
+                                <td class="text-acid-green">Yes</td>
+                                <td class="text-gray-400">Shell, outbound, file-access, privilege signals.</td>
+                            </tr>
+                            <tr>
+                                <td class="text-white">Advanced tail sampling</td>
+                                <td class="text-yellow-300">Baseline</td>
+                                <td class="text-acid-green">Full</td>
+                                <td class="text-gray-400">Higher buffering efficiency on newer kernels.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="grid lg:grid-cols-2 gap-5">
+                <article class="panel p-5 sm:p-6">
+                    <h2 class="section-head text-2xl text-white mb-3">Upgrade and Rollback</h2>
+                    <pre><span class="text-acid-green"># upgrade</span>
+<span class="text-acid-green">$</span> dogwatch self-update --channel stable --to v1.1.0
+
+<span class="text-acid-green"># inspect previous builds</span>
+<span class="text-acid-green">$</span> dogwatch versions
+
+<span class="text-acid-green"># rollback if required</span>
+<span class="text-acid-green">$</span> dogwatch rollback --to v1.0.9</pre>
+                </article>
+                <article class="panel p-5 sm:p-6">
+                    <h2 class="section-head text-2xl text-white mb-3">Release Notes Highlights</h2>
+                    <ul class="text-sm text-gray-300 space-y-2">
+                        <li><span class="text-acid-green">v1.1.0</span> BubbleUp scoring improvements for high-cardinality dimensions.</li>
+                        <li><span class="text-acid-green">v1.1.0</span> Control plane preview mode for aggregation rules.</li>
+                        <li><span class="text-acid-green">v1.1.0</span> New security rule: unusual outbound to first-seen external destinations.</li>
+                        <li><span class="text-acid-green">v1.0.9</span> Kernel compatibility fixes for Ubuntu 20.04 LTS hosts.</li>
+                    </ul>
+                </article>
+            </section>
+
+            <section class="panel p-6 sm:p-7 bg-[linear-gradient(140deg,rgba(173,77,46,0.12),rgba(5,5,5,0.95)_48%)]">
+                <div class="grid md:grid-cols-[1fr_auto] gap-4 items-center">
+                    <div>
+                        <h2 class="section-head text-3xl sm:text-4xl text-white mb-2">Need Install Guidance?</h2>
+                        <p class="text-sm sm:text-base text-gray-300">Start with docs for rollout flow and troubleshooting, then come back here to pin channels and artifact versions.</p>
+                    </div>
+                    <a href="docs.html" class="inline-block text-center bg-acid-green text-black font-bold uppercase text-sm px-6 py-3 border border-acid-green hover:bg-black hover:text-acid-green transition">Open Docs</a>
+                </div>
+            </section>
+        </main>
+    </div>
+</body>
+</html>

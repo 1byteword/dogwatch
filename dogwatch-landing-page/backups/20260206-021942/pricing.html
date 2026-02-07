@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DOGWATCH // PRICING</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { mono: ['"Space Mono"', 'monospace'] },
+                    colors: { 'acid-green': '#ccff00', 'off-black': '#050505' }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background-color: #050505; color: #d4d4d4; font-family: 'Space Mono', monospace; }
+        .grid-bg { background-image: radial-gradient(#333 1px, transparent 0); background-size: 20px 20px; }
+        .pricing-card:hover { transform: translateY(-4px); box-shadow: 8px 8px 0px #ccff00; border-color: #ccff00; }
+        .check-icon { color: #ccff00; margin-right: 0.5rem; font-weight: bold; }
+    </style>
+</head>
+<body class="bg-off-black min-h-screen relative">
+
+    <div class="fixed inset-0 grid-bg opacity-10 pointer-events-none z-0"></div>
+
+    <div class="relative z-10 max-w-6xl mx-auto px-6 py-8 min-h-screen">
+        
+        <header class="flex justify-between items-end border-b-2 border-white pb-6 mb-16">
+            <a href="index.html" class="text-2xl font-bold tracking-tighter hover:text-acid-green">dogwatch<span class="text-acid-green">_</span></a>
+            <nav class="hidden md:flex gap-8 text-sm font-bold uppercase">
+                <a href="features.html" class="hover:text-acid-green">Features</a>
+                <a href="docs.html" class="hover:text-acid-green">Docs</a>
+                <a href="downloads.html" class="hover:text-acid-green">Downloads</a>
+                <a href="pricing.html" class="text-acid-green underline decoration-2 underline-offset-4">Pricing</a>
+            </nav>
+        </header>
+
+        <div class="text-center max-w-2xl mx-auto mb-20">
+            <h1 class="text-5xl font-bold uppercase mb-6 text-white">Stop Paying for <span class="text-decoration-line-through decoration-red-500">Hosts</span>.</h1>
+            <p class="text-xl text-gray-400">
+                Legacy vendors punish you for microservices. We charge based on the value you get: <span class="text-white">Events Analyzed.</span>
+            </p>
+        </div>
+
+        <div class="grid md:grid-cols-3 gap-8 mb-24">
+            
+            <div class="border border-gray-700 bg-[#111] p-8 flex flex-col transition duration-300 pricing-card">
+                <div class="mb-4 text-xs font-bold uppercase tracking-widest text-gray-500">Local / Dev</div>
+                <div class="text-4xl font-bold text-white mb-2">$0</div>
+                <div class="text-sm text-gray-500 mb-8">Forever free for hobbyists.</div>
+                
+                <ul class="text-sm space-y-4 mb-8 flex-1">
+                    <li class="flex"><span class="check-icon">✓</span> 5 Services Max</li>
+                    <li class="flex"><span class="check-icon">✓</span> 3 Day Retention</li>
+                    <li class="flex"><span class="check-icon">✓</span> Head Sampling Only</li>
+                    <li class="flex"><span class="check-icon">✓</span> Community Support</li>
+                </ul>
+
+                <button class="w-full py-3 border border-white text-white font-bold uppercase hover:bg-white hover:text-black transition">
+                    Install Agent
+                </button>
+            </div>
+
+            <div class="border-2 border-white bg-black p-8 flex flex-col relative transition duration-300 pricing-card">
+                <div class="absolute top-0 right-0 bg-acid-green text-black text-xs font-bold px-3 py-1 uppercase">Recommended</div>
+                <div class="mb-4 text-xs font-bold uppercase tracking-widest text-acid-green">Startup</div>
+                <div class="text-4xl font-bold text-white mb-2">$199<span class="text-lg text-gray-500 font-normal">/mo</span></div>
+                <div class="text-sm text-gray-500 mb-8">Full visibility for production.</div>
+                
+                <ul class="text-sm space-y-4 mb-8 flex-1 text-gray-300">
+                    <li class="flex"><span class="check-icon">✓</span> <span class="text-white font-bold">Unlimited Services</span></li>
+                    <li class="flex"><span class="check-icon">✓</span> 30 Day Retention</li>
+                    <li class="flex"><span class="check-icon">✓</span> <span class="text-white">BubbleUp™ RCA</span></li>
+                    <li class="flex"><span class="check-icon">✓</span> Tail Sampling</li>
+                    <li class="flex"><span class="check-icon">✓</span> 20 Uptime Probes</li>
+                </ul>
+
+                <button class="w-full py-3 bg-acid-green text-black font-bold uppercase hover:bg-white transition">
+                    Start Trial
+                </button>
+            </div>
+
+            <div class="border border-gray-700 bg-[#111] p-8 flex flex-col transition duration-300 pricing-card">
+                <div class="mb-4 text-xs font-bold uppercase tracking-widest text-gray-500">Scale</div>
+                <div class="text-4xl font-bold text-white mb-2">Custom</div>
+                <div class="text-sm text-gray-500 mb-8">For high-cardinality scale.</div>
+                
+                <ul class="text-sm space-y-4 mb-8 flex-1">
+                    <li class="flex"><span class="check-icon">✓</span> Unlimited Retention</li>
+                    <li class="flex"><span class="check-icon">✓</span> Dedicated Control Plane</li>
+                    <li class="flex"><span class="check-icon">✓</span> SSO / SAML</li>
+                    <li class="flex"><span class="check-icon">✓</span> Custom SLO Budgets</li>
+                    <li class="flex"><span class="check-icon">✓</span> 24/7 SRE Support</li>
+                </ul>
+
+                <button class="w-full py-3 border border-white text-white font-bold uppercase hover:bg-white hover:text-black transition">
+                    Contact Sales
+                </button>
+            </div>
+        </div>
+
+        <section class="max-w-3xl mx-auto border-t border-gray-800 pt-16">
+            <h2 class="text-2xl font-bold text-white uppercase mb-8 text-center">Protocol FAQ</h2>
+            
+            <div class="space-y-6">
+                <div>
+                    <h3 class="font-bold text-acid-green mb-2">What counts as an Entity?</h3>
+                    <p class="text-sm text-gray-400">An Entity is any logical unit: a Service, Database, or Queue. We do not charge by "Host" or "Container." Run 100 pods of the same service? That's 1 Entity.</p>
+                </div>
+                
+                <div>
+                    <h3 class="font-bold text-acid-green mb-2">What happens if I hit my quota?</h3>
+                    <p class="text-sm text-gray-400">The Control Plane will begin aggressive Head Sampling to keep you within budget. We never block traffic or crash your app. You will see a warning in the dashboard.</p>
+                </div>
+
+                <div>
+                    <h3 class="font-bold text-acid-green mb-2">Do you support legacy kernels?</h3>
+                    <p class="text-sm text-gray-400">eBPF requires Linux 4.14+. If you are on an older kernel, our binary falls back to standard OTLP ingestion (port 4317), but you lose the "Zero Config" magic.</p>
+                </div>
+            </div>
+        </section>
+
+        <footer class="text-center text-xs text-gray-600 mt-24">
+            &copy; 2026 DOGWATCH SYSTEMS. ALL RIGHTS RESERVED.
+        </footer>
+
+    </div>
+</body>
+</html>

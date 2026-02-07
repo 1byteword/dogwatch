@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DOGWATCH // SYSTEM ACTIVE</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        mono: ['"Space Mono"', 'monospace'],
+                        display: ['Rajdhani', 'sans-serif']
+                    },
+                    colors: {
+                        'acid-green': '#ccff00',
+                        'off-black': '#050505',
+                        'dim-grid': '#1a1a1a',
+                        'rust': '#ad4d2e',
+                        'steel': '#8b8b8b'
+                    },
+                    backgroundImage: {
+                        'grid-pattern': "linear-gradient(to right, #171717 1px, transparent 1px), linear-gradient(to bottom, #171717 1px, transparent 1px)"
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        :root {
+            --panel: rgba(10, 10, 10, 0.9);
+            --panel-soft: rgba(16, 16, 16, 0.8);
+            --edge: #2a2a2a;
+            --edge-bright: #565656;
+            --text-dim: #949494;
+            --grime: rgba(173, 77, 46, 0.12);
+        }
+
+        body {
+            background: radial-gradient(circle at 15% 12%, #101010 0%, #050505 42%, #030303 100%);
+            color: #dddddd;
+            font-family: 'Space Mono', monospace;
+            overflow-x: hidden;
+        }
+
+        .scanlines {
+            background: linear-gradient(
+                to bottom,
+                rgba(255, 255, 255, 0),
+                rgba(255, 255, 255, 0) 48%,
+                rgba(0, 0, 0, 0.18) 49%,
+                rgba(0, 0, 0, 0.18)
+            );
+            background-size: 100% 4px;
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 60;
+            opacity: 0.26;
+        }
+
+        .noise {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 2;
+            opacity: 0.2;
+            background-image:
+                radial-gradient(circle at 20% 25%, var(--grime) 0, transparent 32%),
+                radial-gradient(circle at 82% 70%, rgba(120, 120, 120, 0.08) 0, transparent 28%),
+                repeating-linear-gradient(110deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.03) 1px, transparent 1px, transparent 3px);
+            mix-blend-mode: screen;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--edge);
+            box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.7) inset;
+        }
+
+        .panel:hover {
+            border-color: var(--edge-bright);
+        }
+
+        .acid-focus {
+            border-color: #ccff00;
+            box-shadow: 4px 4px 0 #ccff00;
+        }
+
+        .chip {
+            border: 1px solid #333;
+            background: rgba(15, 15, 15, 0.85);
+            padding: 0.2rem 0.45rem;
+            font-size: 0.68rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .status-dot {
+            width: 0.45rem;
+            height: 0.45rem;
+            border-radius: 999px;
+            display: inline-block;
+            margin-right: 0.35rem;
+        }
+
+        .status-ok { background: #ccff00; }
+        .status-wip { background: #fbbf24; }
+        .status-plan { background: #6b7280; }
+
+        .glitch {
+            position: relative;
+        }
+
+        .glitch:hover {
+            text-shadow: 1px 0 #ccff00, -1px 0 #ad4d2e;
+        }
+
+        .section-head {
+            font-family: 'Rajdhani', sans-serif;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+        }
+
+        .data-table th,
+        .data-table td {
+            padding: 0.7rem 0.55rem;
+            border-bottom: 1px solid #232323;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        .data-table th {
+            color: #9ca3af;
+            font-size: 0.7rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            font-weight: 700;
+        }
+
+        ::selection {
+            background: #ccff00;
+            color: #000;
+        }
+    </style>
+</head>
+<body class="bg-off-black min-h-screen relative">
+    <div class="scanlines"></div>
+    <div class="noise"></div>
+    <div class="fixed inset-0 bg-grid-pattern bg-[length:36px_36px] pointer-events-none z-0 opacity-35"></div>
+
+    <div class="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 py-6 border-x border-[#1a1a1a] min-h-screen bg-[#050505]/88 backdrop-blur-sm">
+        <header class="panel px-4 sm:px-6 py-4 mb-8">
+            <div class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+                <div>
+                    <a href="index.html" class="inline-block font-display text-2xl sm:text-3xl font-bold tracking-tight text-white">dogwatch<span class="text-acid-green">_</span></a>
+                    <p class="text-xs sm:text-sm text-steel mt-1">Observability and runtime security from one kernel-native binary.</p>
+                </div>
+                <nav class="flex flex-wrap gap-3 text-[11px] sm:text-xs font-bold uppercase tracking-wider">
+                    <a href="features.html" class="chip hover:text-acid-green">Features</a>
+                    <a href="docs.html" class="chip hover:text-acid-green">Docs</a>
+                    <a href="downloads.html" class="chip hover:text-acid-green">Downloads</a>
+                    <a href="pricing.html" class="chip hover:text-acid-green">Pricing</a>
+                    <a href="#" class="chip text-acid-green">Login</a>
+                </nav>
+            </div>
+        </header>
+
+        <main>
+            <section class="grid lg:grid-cols-12 gap-6 mb-8">
+                <div class="lg:col-span-7 panel p-6 sm:p-8">
+                    <div class="flex flex-wrap items-center gap-2 mb-5 text-[11px] text-gray-400">
+                        <span class="chip">Kernel Telemetry</span>
+                        <span class="chip">Build 1.1.0</span>
+                        <span class="chip">Control Plane Online</span>
+                    </div>
+                    <h1 class="font-display text-4xl sm:text-6xl leading-[0.9] text-white uppercase mb-6">
+                        Observability
+                        <span class="text-acid-green glitch">without setup debt.</span>
+                    </h1>
+                    <p class="text-sm sm:text-base text-gray-300 border-l-2 border-acid-green pl-4 max-w-2xl mb-7 leading-relaxed">
+                        Drop one binary. In about 60 seconds dogwatch maps service traffic, traces request paths, and surfaces root cause drivers. No SDK rollout. No sidecars. No week-long integration parade.
+                    </p>
+                    <div class="flex flex-col sm:flex-row gap-3 mb-7">
+                        <a href="downloads.html" class="acid-focus bg-acid-green text-black px-6 py-3 font-bold uppercase text-sm text-center transition hover:bg-black hover:text-acid-green border border-acid-green">Download Agent</a>
+                        <a href="docs.html" class="px-6 py-3 font-bold uppercase text-sm text-center border border-[#3a3a3a] hover:border-white hover:text-white transition">Read Quickstart</a>
+                    </div>
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                        <div class="panel p-3"><div class="text-acid-green text-xl font-bold">60s</div><div class="text-gray-400 uppercase tracking-wide">Time to value</div></div>
+                        <div class="panel p-3"><div class="text-acid-green text-xl font-bold">0</div><div class="text-gray-400 uppercase tracking-wide">Code changes</div></div>
+                        <div class="panel p-3"><div class="text-acid-green text-xl font-bold">4317</div><div class="text-gray-400 uppercase tracking-wide">OTLP gRPC</div></div>
+                        <div class="panel p-3"><div class="text-acid-green text-xl font-bold">eBPF</div><div class="text-gray-400 uppercase tracking-wide">Kernel source</div></div>
+                    </div>
+                </div>
+
+                <div class="lg:col-span-5 panel overflow-hidden">
+                    <div class="px-4 py-3 border-b border-[#242424] bg-[#0b0b0b] flex items-center justify-between">
+                        <span class="text-[11px] text-gray-500">root@prod-core:~</span>
+                        <span class="text-[11px] text-acid-green">LIVE STREAM</span>
+                    </div>
+                    <div class="p-5 text-xs sm:text-sm leading-6 text-gray-300 h-full">
+                        <p><span class="text-acid-green">$</span> <span class="text-white">curl -sfL https://get.dogwatch.io/install | sudo sh -s -- --token ***</span></p>
+                        <p class="text-gray-500">[INFO] kernel=5.15 eBPF probes=24</p>
+                        <p class="text-gray-500">[INFO] entity_synthesis: 34 services, 7 data stores</p>
+                        <p class="text-gray-500">[INFO] otlp receiver: 0.0.0.0:4317</p>
+                        <p class="text-acid-green">[OK] traces streaming: 14,203 spans/sec</p>
+                        <p class="text-red-400">[ANOMALY] p99 latency spike on auth-service</p>
+                        <p class="text-yellow-300">[BUBBLEUP] top factor: db_shard=7 lift=12.25x</p>
+                        <p class="text-gray-500 mt-4">cost_intelligence.datadog_estimate = $47,234/mo</p>
+                        <p class="text-gray-500">dogwatch.supported_plan_estimate = $299/mo</p>
+                        <p class="text-acid-green">savings_delta = $46,935/mo</p>
+                        <p class="mt-4"><span class="text-acid-green animate-pulse">_</span></p>
+                    </div>
+                </div>
+            </section>
+
+            <section class="grid lg:grid-cols-12 gap-6 mb-8">
+                <div class="lg:col-span-7 panel p-5 sm:p-6">
+                    <div class="flex items-end justify-between mb-4">
+                        <h2 class="section-head text-2xl sm:text-3xl text-white">Protocol Capture Matrix</h2>
+                        <span class="text-[11px] text-gray-500 uppercase">Auto Tracing Coverage</span>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="data-table min-w-[560px]">
+                            <thead>
+                                <tr>
+                                    <th>Protocol</th>
+                                    <th>Captured Data</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="text-white">HTTP/1.1</td>
+                                    <td class="text-gray-400">Method, path, status, latency, headers</td>
+                                    <td><span class="status-dot status-ok"></span><span class="text-acid-green">Working</span></td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white">HTTPS</td>
+                                    <td class="text-gray-400">HTTP fields via SSL_read / SSL_write uprobes</td>
+                                    <td><span class="status-dot status-wip"></span><span class="text-yellow-300">In Progress</span></td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white">MySQL / PostgreSQL</td>
+                                    <td class="text-gray-400">Query text, rows, errors, latency</td>
+                                    <td><span class="status-dot status-wip"></span><span class="text-yellow-300">Priority</span></td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white">Redis</td>
+                                    <td class="text-gray-400">Command, key, response time</td>
+                                    <td><span class="status-dot status-wip"></span><span class="text-yellow-300">Priority</span></td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white">gRPC / HTTP2</td>
+                                    <td class="text-gray-400">Method, status, latency envelopes</td>
+                                    <td><span class="status-dot status-plan"></span><span class="text-gray-400">Planned</span></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="lg:col-span-5 panel p-5 sm:p-6">
+                    <h2 class="section-head text-2xl text-white mb-3">60-Second Execution Path</h2>
+                    <ol class="space-y-3 text-xs sm:text-sm">
+                        <li class="panel p-3"><span class="text-acid-green font-bold">01</span> Install binary and attach probes to kernel hooks.</li>
+                        <li class="panel p-3"><span class="text-acid-green font-bold">02</span> Discover entities from traffic: services, queues, databases, hosts.</li>
+                        <li class="panel p-3"><span class="text-acid-green font-bold">03</span> Generate traces and golden signals from raw event stream.</li>
+                        <li class="panel p-3"><span class="text-acid-green font-bold">04</span> Surface anomaly factors with BubbleUp and change correlation.</li>
+                    </ol>
+                </div>
+            </section>
+
+            <section class="grid md:grid-cols-2 gap-6 mb-8">
+                <div class="panel p-5 sm:p-6">
+                    <h3 class="section-head text-2xl text-white mb-4">Cost Intelligence</h3>
+                    <p class="text-sm text-gray-400 mb-4">The dashboard translates real usage into competitor pricing in real time so the value is explicit to engineering leadership and finance.</p>
+                    <div class="space-y-2 text-sm">
+                        <div class="flex justify-between border-b border-[#262626] pb-2"><span class="text-gray-400">Datadog estimate</span><span class="text-red-400 font-bold">$47,234/mo</span></div>
+                        <div class="flex justify-between border-b border-[#262626] pb-2"><span class="text-gray-400">New Relic estimate</span><span class="text-yellow-300 font-bold">$38,920/mo</span></div>
+                        <div class="flex justify-between border-b border-[#262626] pb-2"><span class="text-gray-400">Splunk estimate</span><span class="text-orange-300 font-bold">$52,100/mo</span></div>
+                        <div class="flex justify-between border-b border-[#262626] pb-2"><span class="text-gray-400">dogwatch supported plan</span><span class="text-acid-green font-bold">$299/mo</span></div>
+                        <div class="flex justify-between pt-1"><span class="text-white uppercase text-xs tracking-widest">Projected monthly delta</span><span class="text-acid-green text-lg font-bold">$46,935</span></div>
+                    </div>
+                </div>
+
+                <div class="panel p-5 sm:p-6">
+                    <h3 class="section-head text-2xl text-white mb-4">Control Plane Recommendation</h3>
+                    <p class="text-sm text-gray-400 mb-4">Cardinality explorer flags unused dimensions before storage growth becomes operational drag.</p>
+                    <div class="panel p-4 text-sm mb-4">
+                        <p class="text-white">Metric: <span class="text-acid-green">http_requests_total</span></p>
+                        <p class="text-gray-500">labels = method, path, status, pod, node, region, az</p>
+                        <p class="text-gray-500">current cardinality = 2.4M series</p>
+                    </div>
+                    <div class="space-y-2 text-sm">
+                        <div class="flex justify-between"><span class="text-gray-400">Drop labels</span><span class="text-white">pod, node</span></div>
+                        <div class="flex justify-between"><span class="text-gray-400">New cardinality</span><span class="text-acid-green">12K series</span></div>
+                        <div class="flex justify-between"><span class="text-gray-400">Volume reduction</span><span class="text-acid-green">99.5%</span></div>
+                        <div class="flex justify-between"><span class="text-gray-400">Safe to apply</span><span class="text-white">yes (no dashboards depend)</span></div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="panel p-5 sm:p-6 mb-8">
+                <div class="flex items-end justify-between mb-5">
+                    <h2 class="section-head text-2xl sm:text-3xl text-white">Seven Killer Modules</h2>
+                    <a href="features.html" class="text-xs uppercase tracking-widest text-gray-500 hover:text-acid-green">Full feature page</a>
+                </div>
+                <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+                    <article class="panel p-4"><p class="text-acid-green text-xs uppercase mb-2">01</p><h3 class="font-bold text-white mb-2">Zero-Config Tracing</h3><p class="text-gray-400 text-xs">Kernel traffic analysis creates cross-service traces with no SDK rollout.</p></article>
+                    <article class="panel p-4"><p class="text-acid-green text-xs uppercase mb-2">02</p><h3 class="font-bold text-white mb-2">Cost Intelligence</h3><p class="text-gray-400 text-xs">Live competitor pricing estimates tied directly to your current telemetry volume.</p></article>
+                    <article class="panel p-4"><p class="text-acid-green text-xs uppercase mb-2">03</p><h3 class="font-bold text-white mb-2">Control Plane</h3><p class="text-gray-400 text-xs">Shape, aggregate, and downsample low-utility data before permanent storage.</p></article>
+                    <article class="panel p-4"><p class="text-acid-green text-xs uppercase mb-2">04</p><h3 class="font-bold text-white mb-2">BubbleUp RCA</h3><p class="text-gray-400 text-xs">Statistical comparison between anomalous and baseline traffic finds cause fast.</p></article>
+                    <article class="panel p-4"><p class="text-acid-green text-xs uppercase mb-2">05</p><h3 class="font-bold text-white mb-2">Change Correlation</h3><p class="text-gray-400 text-xs">Deploy, config, and flag changes get scored against incident timelines automatically.</p></article>
+                    <article class="panel p-4"><p class="text-acid-green text-xs uppercase mb-2">06</p><h3 class="font-bold text-white mb-2">Security Observability</h3><p class="text-gray-400 text-xs">Detect shell spawns, unusual outbound calls, and privilege spikes from eBPF events.</p></article>
+                    <article class="panel p-4"><p class="text-acid-green text-xs uppercase mb-2">07</p><h3 class="font-bold text-white mb-2">Migration Assistant</h3><p class="text-gray-400 text-xs">Import dashboards and alerting assets from Datadog, Grafana, and Prometheus.</p></article>
+                    <article class="panel p-4 flex flex-col justify-between">
+                        <div>
+                            <p class="text-acid-green text-xs uppercase mb-2">Action</p>
+                            <h3 class="font-bold text-white mb-2">Start with the binary</h3>
+                            <p class="text-gray-400 text-xs mb-4">No custom stack needed. Works with OTLP and existing telemetry emitters.</p>
+                        </div>
+                        <a href="downloads.html" class="inline-block text-xs uppercase font-bold border border-acid-green text-acid-green px-3 py-2 text-center hover:bg-acid-green hover:text-black transition">Open Downloads</a>
+                    </article>
+                </div>
+            </section>
+
+            <section class="panel p-6 sm:p-7 mb-8 bg-[linear-gradient(135deg,rgba(173,77,46,0.1),rgba(5,5,5,0.95)_45%)]">
+                <div class="grid lg:grid-cols-3 gap-5 items-end">
+                    <div class="lg:col-span-2">
+                        <h2 class="section-head text-3xl sm:text-4xl text-white mb-3">Ship This Week, Not Next Quarter</h2>
+                        <p class="text-gray-300 text-sm sm:text-base max-w-2xl">dogwatch is built for teams with production pressure: immediate signal, transparent costs, and less operational drift. Start local, expand to cluster rollout, keep one coherent control surface.</p>
+                    </div>
+                    <div class="flex flex-col sm:flex-row lg:flex-col gap-3">
+                        <a href="downloads.html" class="text-center bg-acid-green text-black font-bold uppercase text-sm px-5 py-3 border border-acid-green hover:bg-black hover:text-acid-green transition">Download Now</a>
+                        <a href="docs.html" class="text-center border border-white text-white font-bold uppercase text-sm px-5 py-3 hover:bg-white hover:text-black transition">Open Docs</a>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer class="panel px-4 sm:px-6 py-4 text-xs text-gray-500 flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between mb-4">
+            <p>DOGWATCH SYSTEM // VERSION 1.1.0</p>
+            <p><a href="docs.html" class="hover:text-acid-green">Docs</a> // <a href="downloads.html" class="hover:text-acid-green">Downloads</a> // <a href="pricing.html" class="hover:text-acid-green">Pricing</a></p>
+        </footer>
+    </div>
+</body>
+</html>

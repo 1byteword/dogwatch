@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DOGWATCH // PRICING</title>
+    <meta name="color-scheme" content="dark">
+    <link rel="dns-prefetch" href="//fonts.googleapis.com">
+    <link rel="dns-prefetch" href="//fonts.gstatic.com">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preload" href="assets/tailwind.generated.css" as="style">
+    <link rel="preload" as="image" href="assets/dogwatch-logo.webp" type="image/webp">
+    <link rel="stylesheet" href="assets/tailwind.generated.css">
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --panel: rgba(10, 10, 10, 0.9);
+            --edge: #2b2b2b;
+            --edge-strong: #565656;
+            --acid: #ccff00;
+            --cyan: #8be9fd;
+        }
+
+        body {
+            margin: 0;
+            background: radial-gradient(circle at 18% 8%, #111 0%, #060606 42%, #030303 100%);
+            color: #d7d7d7;
+            font-family: 'Space Mono', monospace;
+            overflow-x: hidden;
+        }
+
+        .scanlines {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 45;
+            opacity: 0.22;
+            background: linear-gradient(to bottom, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0) 48%, rgba(0, 0, 0, 0.2) 49%, rgba(0, 0, 0, 0.2));
+            background-size: 100% 4px;
+        }
+
+        .noise {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 2;
+            opacity: 0.11;
+            background-image:
+                radial-gradient(circle at 14% 22%, rgba(173, 77, 46, 0.18), transparent 27%),
+                radial-gradient(circle at 80% 74%, rgba(255, 255, 255, 0.07), transparent 24%),
+                repeating-linear-gradient(108deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.03) 1px, transparent 1px, transparent 3px);
+            mix-blend-mode: screen;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--edge);
+            box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.65);
+        }
+
+        .panel:hover {
+            border-color: var(--edge-strong);
+        }
+
+        .chip {
+            border: 1px solid #343434;
+            background: rgba(15, 15, 15, 0.82);
+            padding: 0.2rem 0.48rem;
+            font-size: 0.66rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .section-head {
+            font-family: 'Rajdhani', sans-serif;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+        }
+
+        .plan {
+            position: relative;
+            border: 1px solid #2f2f2f;
+            background: linear-gradient(140deg, rgba(15, 15, 15, 0.95), rgba(8, 8, 8, 0.95));
+            transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+        }
+
+        .plan::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            background: linear-gradient(160deg, rgba(139, 233, 253, 0.05), rgba(204, 255, 0, 0));
+            opacity: 0;
+            transition: opacity 180ms ease;
+        }
+
+        .plan:hover {
+            transform: translateY(-2px);
+            border-color: #5b5b5b;
+            box-shadow: 0 12px 28px rgba(0, 0, 0, 0.4);
+        }
+
+        .plan:hover::before {
+            opacity: 1;
+        }
+
+        .plan.featured {
+            border-color: rgba(204, 255, 0, 0.75);
+            box-shadow: 0 0 0 1px rgba(204, 255, 0, 0.25), inset 0 0 0 1px rgba(0, 0, 0, 0.6);
+        }
+
+        .plan-headline {
+            font-family: 'Rajdhani', sans-serif;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+
+        .price {
+            font-family: 'Rajdhani', sans-serif;
+            line-height: 1;
+            letter-spacing: 0.04em;
+        }
+
+        .btn {
+            display: inline-block;
+            width: 100%;
+            border: 1px solid #3a3a3a;
+            padding: 0.72rem 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-size: 0.74rem;
+            font-weight: 700;
+            text-align: center;
+            transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
+        }
+
+        .btn:focus-visible,
+        details summary:focus-visible {
+            outline: 2px solid var(--acid);
+            outline-offset: 2px;
+        }
+
+        .btn-primary {
+            background: var(--acid);
+            color: #0a0a0a;
+            border-color: var(--acid);
+        }
+
+        .btn-primary:hover {
+            background: #b9eb00;
+        }
+
+        .btn-ghost:hover {
+            border-color: #fff;
+            color: #fff;
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .meter {
+            border: 1px solid #2e2e2e;
+            background: #0e0e0e;
+            padding: 0.62rem;
+        }
+
+        .meter-track {
+            margin-top: 0.33rem;
+            height: 0.56rem;
+            border: 1px solid #2a2a2a;
+            background: #151515;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .meter-fill {
+            height: 100%;
+            width: var(--w);
+            background: linear-gradient(to right, rgba(204, 255, 0, 0.25), rgba(204, 255, 0, 0.8));
+            transition: width 200ms ease;
+        }
+
+        .meter:hover .meter-fill {
+            filter: brightness(1.08);
+        }
+
+        .pricing-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.78rem;
+        }
+
+        .pricing-table th,
+        .pricing-table td {
+            text-align: left;
+            vertical-align: top;
+            border-bottom: 1px solid #252525;
+            padding: 0.6rem 0.5rem;
+        }
+
+        .pricing-table th {
+            font-size: 0.66rem;
+            color: #949494;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        details {
+            border: 1px solid #2f2f2f;
+            background: rgba(10, 10, 10, 0.9);
+            transition: border-color 140ms ease;
+        }
+
+        details:hover {
+            border-color: #4b4b4b;
+        }
+
+        details summary {
+            list-style: none;
+            cursor: pointer;
+            padding: 0.82rem 0.88rem;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            color: #f2f2f2;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        details summary::-webkit-details-marker { display: none; }
+
+        .marker {
+            color: #8f8f8f;
+            transition: transform 140ms ease, color 140ms ease;
+        }
+
+        details[open] .marker {
+            transform: rotate(45deg);
+            color: var(--acid);
+        }
+
+        details p {
+            margin: 0;
+            padding: 0 0.88rem 0.88rem;
+            color: #a9a9a9;
+            font-size: 0.78rem;
+            line-height: 1.6;
+        }
+
+        .cta-band {
+            border: 1px solid #333;
+            background: linear-gradient(130deg, rgba(173, 77, 46, 0.12), rgba(8, 8, 8, 0.95) 44%);
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            * {
+                transition: none !important;
+                animation: none !important;
+            }
+        }
+
+        ::selection {
+            background: #ccff00;
+            color: #000;
+        }
+    </style>
+    <link rel="stylesheet" href="assets/grunge-revamp.css">
+</head>
+<body class="grunge-site bg-off-black min-h-screen relative">
+    <div class="scanlines"></div>
+    <div class="noise"></div>
+    <div class="fixed inset-0 bg-grid-pattern bg-[length:36px_36px] pointer-events-none opacity-20 z-0"></div>
+
+    <div class="site-shell relative z-10 max-w-7xl mx-auto px-4 sm:px-6 py-6 border-x border-[#1a1a1a] min-h-screen bg-[#050505]/90 backdrop-blur-sm">
+        <header class="panel masthead px-4 sm:px-6 py-4 mb-6">
+            <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                <div>
+                    <a href="index.html" class="text-3xl font-bold font-display tracking-tight text-white brand-link"><span class="brand-fallback">dogwatch<span class="text-acid-green">_</span></span><picture class="brand-picture"><source srcset="assets/dogwatch-logo.webp" type="image/webp"><img src="assets/dogwatch-logo.png" alt="dogwatch" class="brand-logo" width="780" height="260" fetchpriority="high" loading="eager" decoding="async" onerror="this.parentElement.style.display='none';this.parentElement.previousElementSibling.style.display='inline-block'"></picture></a>
+                    <p class="text-xs text-gray-500">Pricing built around value signals, not host-count penalties.</p>
+                </div>
+                <nav class="flex flex-wrap gap-2 text-[11px] sm:text-xs font-bold uppercase tracking-wider">
+                    <a href="index.html" class="chip hover:text-acid-green">Home</a>
+                    <a href="features.html" class="chip hover:text-acid-green">Features</a>
+                    <a href="docs.html" class="chip hover:text-acid-green">Docs</a>
+                    <a href="downloads.html" class="chip hover:text-acid-green">Downloads</a>
+                    <a href="pricing.html" class="chip text-acid-green">Pricing</a>
+                </nav>
+            </div>
+        </header>
+
+        <main class="space-y-6 pb-6">
+            <section class="grid lg:grid-cols-12 gap-6">
+                <article class="lg:col-span-7 panel p-6 sm:p-7">
+                    <div class="flex flex-wrap gap-2 mb-4 text-[11px] text-gray-400">
+                        <span class="chip">Entity-Based Billing</span>
+                        <span class="chip">No Host Tax</span>
+                        <span class="chip">Cost Intelligence Included</span>
+                    </div>
+                    <h1 class="section-head text-4xl sm:text-5xl text-white mb-4">Stop Paying for Host-Centric Pricing</h1>
+                    <p class="text-sm sm:text-base text-gray-300 leading-relaxed max-w-2xl">Legacy vendors monetize architecture complexity. dogwatch prices on operational value with transparent limits and control-plane tooling that keeps your data volume intentional.</p>
+                    <div class="grid sm:grid-cols-3 gap-3 mt-5 text-xs">
+                        <div class="panel p-3">
+                            <p class="text-acid-green text-2xl font-display leading-none">$47K</p>
+                            <p class="text-gray-400 uppercase tracking-widest text-[10px]">Typical incumbent estimate</p>
+                        </div>
+                        <div class="panel p-3">
+                            <p class="text-acid-green text-2xl font-display leading-none">$299</p>
+                            <p class="text-gray-400 uppercase tracking-widest text-[10px]">Supported dogwatch plan</p>
+                        </div>
+                        <div class="panel p-3">
+                            <p class="text-acid-green text-2xl font-display leading-none">84%</p>
+                            <p class="text-gray-400 uppercase tracking-widest text-[10px]">Avg shaping reduction</p>
+                        </div>
+                    </div>
+                </article>
+
+                <article class="lg:col-span-5 panel p-5 sm:p-6">
+                    <div class="flex items-end justify-between mb-3">
+                        <h2 class="section-head text-2xl text-white">Cost Signal Board</h2>
+                        <span class="chip">Live Estimate</span>
+                    </div>
+                    <p class="text-xs text-gray-400 mb-4">Representative month using a multi-service production fleet.</p>
+                    <div class="space-y-3 text-xs">
+                        <div class="meter">
+                            <div class="flex justify-between"><span class="text-gray-400">Datadog estimate</span><span class="text-red-400">$47,234/mo</span></div>
+                            <div class="meter-track"><div class="meter-fill" style="--w: 96%;"></div></div>
+                        </div>
+                        <div class="meter">
+                            <div class="flex justify-between"><span class="text-gray-400">New Relic estimate</span><span class="text-yellow-300">$38,920/mo</span></div>
+                            <div class="meter-track"><div class="meter-fill" style="--w: 79%;"></div></div>
+                        </div>
+                        <div class="meter">
+                            <div class="flex justify-between"><span class="text-gray-400">Splunk estimate</span><span class="text-orange-300">$52,100/mo</span></div>
+                            <div class="meter-track"><div class="meter-fill" style="--w: 100%;"></div></div>
+                        </div>
+                        <div class="meter">
+                            <div class="flex justify-between"><span class="text-gray-400">dogwatch supported</span><span class="text-acid-green">$299/mo</span></div>
+                            <div class="meter-track"><div class="meter-fill" style="--w: 8%;"></div></div>
+                        </div>
+                    </div>
+                    <p class="mt-4 text-acid-green text-sm font-bold uppercase tracking-wider">Projected delta: $46,935/mo</p>
+                </article>
+            </section>
+
+            <section class="grid md:grid-cols-3 gap-4">
+                <article class="plan p-5 sm:p-6 flex flex-col">
+                    <div class="mb-4">
+                        <p class="plan-headline text-xs text-gray-500 mb-2">Local / Dev</p>
+                        <p class="price text-5xl text-white">$0</p>
+                        <p class="text-xs text-gray-500 mt-1">for hobby and evaluation</p>
+                    </div>
+                    <ul class="space-y-2 text-xs text-gray-300 flex-1">
+                        <li><span class="text-acid-green">[+]</span> 5 services max</li>
+                        <li><span class="text-acid-green">[+]</span> 3 day retention</li>
+                        <li><span class="text-acid-green">[+]</span> head sampling</li>
+                        <li><span class="text-acid-green">[+]</span> community support</li>
+                    </ul>
+                    <a href="downloads.html" class="btn btn-ghost mt-5">Install Agent</a>
+                </article>
+
+                <article class="plan featured p-5 sm:p-6 flex flex-col">
+                    <div class="flex justify-between items-start mb-4">
+                        <div>
+                            <p class="plan-headline text-xs text-acid-green mb-2">Startup</p>
+                            <p class="price text-5xl text-white">$299<span class="text-lg text-gray-500">/mo</span></p>
+                            <p class="text-xs text-gray-500 mt-1">full production visibility</p>
+                        </div>
+                        <span class="chip bg-acid-green text-black border-acid-green">Recommended</span>
+                    </div>
+                    <ul class="space-y-2 text-xs text-gray-300 flex-1">
+                        <li><span class="text-acid-green">[+]</span> unlimited services</li>
+                        <li><span class="text-acid-green">[+]</span> 30 day retention</li>
+                        <li><span class="text-acid-green">[+]</span> BubbleUp RCA + exemplars</li>
+                        <li><span class="text-acid-green">[+]</span> tail sampling + control-plane shaping</li>
+                        <li><span class="text-acid-green">[+]</span> 20 uptime probes</li>
+                    </ul>
+                    <a href="downloads.html" class="btn btn-primary mt-5">Start Trial</a>
+                </article>
+
+                <article class="plan p-5 sm:p-6 flex flex-col">
+                    <div class="mb-4">
+                        <p class="plan-headline text-xs text-gray-500 mb-2">Scale</p>
+                        <p class="price text-5xl text-white">Custom</p>
+                        <p class="text-xs text-gray-500 mt-1">for high-cardinality and org controls</p>
+                    </div>
+                    <ul class="space-y-2 text-xs text-gray-300 flex-1">
+                        <li><span class="text-acid-green">[+]</span> unlimited retention tiers</li>
+                        <li><span class="text-acid-green">[+]</span> dedicated control-plane capacity</li>
+                        <li><span class="text-acid-green">[+]</span> SSO / SAML / SCIM</li>
+                        <li><span class="text-acid-green">[+]</span> custom SLO budgets + policy packs</li>
+                        <li><span class="text-acid-green">[+]</span> 24/7 SRE response</li>
+                    </ul>
+                    <a href="downloads.html" class="btn btn-ghost mt-5">Contact Sales</a>
+                </article>
+            </section>
+
+            <section class="panel p-5 sm:p-6">
+                <div class="flex items-end justify-between mb-4 gap-3">
+                    <h2 class="section-head text-2xl sm:text-3xl text-white">Plan Comparison</h2>
+                    <span class="chip">Feature Matrix</span>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="pricing-table min-w-[760px]">
+                        <thead>
+                            <tr>
+                                <th>Capability</th>
+                                <th>Local / Dev</th>
+                                <th>Startup</th>
+                                <th>Scale</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td class="text-white">Entity limit</td>
+                                <td>5</td>
+                                <td class="text-acid-green">Unlimited</td>
+                                <td class="text-acid-green">Unlimited</td>
+                            </tr>
+                            <tr>
+                                <td class="text-white">Retention</td>
+                                <td>3 days</td>
+                                <td>30 days</td>
+                                <td>Custom</td>
+                            </tr>
+                            <tr>
+                                <td class="text-white">BubbleUp RCA</td>
+                                <td>Basic</td>
+                                <td class="text-acid-green">Full</td>
+                                <td class="text-acid-green">Full</td>
+                            </tr>
+                            <tr>
+                                <td class="text-white">Control-plane shaping rules</td>
+                                <td>Read-only insights</td>
+                                <td class="text-acid-green">Apply rules</td>
+                                <td class="text-acid-green">Org-wide policy packs</td>
+                            </tr>
+                            <tr>
+                                <td class="text-white">Security detections</td>
+                                <td>Core set</td>
+                                <td class="text-acid-green">Extended set</td>
+                                <td class="text-acid-green">Custom rule bundles</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="panel p-5 sm:p-6">
+                <div class="flex items-end justify-between mb-4 gap-3">
+                    <h2 class="section-head text-2xl sm:text-3xl text-white">Pricing FAQ</h2>
+                    <span class="chip">Subtle Interactive</span>
+                </div>
+                <div class="space-y-3">
+                    <details open>
+                        <summary>What counts as an entity?<span class="marker">+</span></summary>
+                        <p>An entity is a logical component: service, database, queue, host, or container role. Running 100 pods of the same service still counts as one service entity.</p>
+                    </details>
+                    <details>
+                        <summary>What happens when quota is exceeded?<span class="marker">+</span></summary>
+                        <p>The control plane applies increasingly aggressive head sampling and shaping recommendations to keep spend bounded. Traffic is never blocked.</p>
+                    </details>
+                    <details>
+                        <summary>Do you support older kernels?<span class="marker">+</span></summary>
+                        <p>Linux 4.14+ is the minimum. 5.8+ is recommended for deeper eBPF and uprobes coverage. Older environments can still ingest OTLP with reduced kernel-native visibility.</p>
+                    </details>
+                    <details>
+                        <summary>Can we migrate from Datadog without rebuilding everything?<span class="marker">+</span></summary>
+                        <p>Yes. Migration Assistant imports dashboards, alerts, and SLOs with compatibility reports so teams can move incrementally and verify parity.</p>
+                    </details>
+                </div>
+            </section>
+
+            <section class="cta-band grunge-cta p-6 sm:p-7">
+                <div class="grid md:grid-cols-[1fr_auto] gap-4 items-end">
+                    <div>
+                        <h2 class="section-head text-3xl sm:text-4xl text-white mb-2">Price for Outcomes, Not Topology</h2>
+                        <p class="text-sm sm:text-base text-gray-300 max-w-2xl">Start free in local/dev, move to Startup for production, and scale with policy controls when your telemetry footprint grows.</p>
+                    </div>
+                    <div class="flex flex-col sm:flex-row md:flex-col gap-3">
+                        <a href="downloads.html" class="btn btn-primary">Start with Downloads</a>
+                        <a href="docs.html" class="btn btn-ghost">Read Deployment Docs</a>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer class="panel px-4 sm:px-6 py-4 text-xs text-gray-500 flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between mb-4">
+            <p>DOGWATCH SYSTEM // PRICING PROTOCOL V2</p>
+            <p><a href="index.html" class="hover:text-acid-green">Home</a> // <a href="features.html" class="hover:text-acid-green">Features</a> // <a href="docs.html" class="hover:text-acid-green">Docs</a> // <a href="downloads.html" class="hover:text-acid-green">Downloads</a></p>
+        </footer>
+    </div>
+    <script defer src="assets/grunge-revamp.js"></script>
+</body>
+</html>

@@ -1,0 +1,1357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DOGWATCH // SYSTEM ACTIVE</title>
+    <meta name="color-scheme" content="dark">
+    <link rel="dns-prefetch" href="//fonts.googleapis.com">
+    <link rel="dns-prefetch" href="//fonts.gstatic.com">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preload" href="assets/tailwind.generated.css" as="style">
+    <link rel="preload" as="image" href="assets/dogwatch-logo.webp" type="image/webp">
+    <link rel="stylesheet" href="assets/tailwind.generated.css">
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --panel: rgba(11, 11, 11, 0.88);
+            --edge: #2a2a2a;
+            --edge-strong: #4e4e4e;
+            --acid: #ccff00;
+            --cyan: #8be9fd;
+            --grime: rgba(173, 77, 46, 0.16);
+            --ink: #050505;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background:
+                radial-gradient(circle at 15% 12%, #141414 0%, #070707 36%, #030303 100%);
+            color: #dbdbdb;
+            font-family: 'Space Mono', monospace;
+            overflow-x: hidden;
+        }
+
+        a {
+            color: inherit;
+            text-decoration: none;
+        }
+
+        a:focus-visible,
+        button:focus-visible {
+            outline: 2px solid var(--acid);
+            outline-offset: 2px;
+        }
+
+        .skip-link {
+            position: absolute;
+            left: 0.6rem;
+            top: -3rem;
+            z-index: 200;
+            padding: 0.45rem 0.66rem;
+            background: #0f0f0f;
+            border: 1px solid #3a3a3a;
+            color: var(--acid);
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            transition: top 140ms ease;
+        }
+
+        .skip-link:focus {
+            top: 0.7rem;
+        }
+
+        .scanlines {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 60;
+            opacity: 0.24;
+            background: linear-gradient(
+                to bottom,
+                rgba(255, 255, 255, 0),
+                rgba(255, 255, 255, 0) 48%,
+                rgba(0, 0, 0, 0.2) 49%,
+                rgba(0, 0, 0, 0.2)
+            );
+            background-size: 100% 4px;
+        }
+
+        .noise {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 2;
+            opacity: 0.16;
+            background-image:
+                radial-gradient(circle at 16% 24%, var(--grime) 0, transparent 30%),
+                radial-gradient(circle at 80% 70%, rgba(130, 130, 130, 0.1) 0, transparent 26%),
+                repeating-linear-gradient(108deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.03) 1px, transparent 1px, transparent 3px);
+            mix-blend-mode: screen;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--edge);
+            box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.65);
+        }
+
+        .panel:hover {
+            border-color: var(--edge-strong);
+        }
+
+        .chip {
+            border: 1px solid #343434;
+            background: rgba(15, 15, 15, 0.82);
+            padding: 0.2rem 0.48rem;
+            font-size: 0.66rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
+        }
+
+        .chip:hover {
+            border-color: rgba(204, 255, 0, 0.48);
+            color: var(--acid);
+            background: rgba(18, 18, 18, 0.92);
+        }
+
+        .section-head {
+            font-family: 'Rajdhani', sans-serif;
+            letter-spacing: 0.07em;
+            text-transform: uppercase;
+        }
+
+        .hero-section {
+            position: relative;
+        }
+
+        .hero-copy {
+            position: relative;
+            overflow: hidden;
+            background:
+                linear-gradient(160deg, rgba(139, 233, 253, 0.06), rgba(11, 11, 11, 0.92) 32%),
+                linear-gradient(140deg, rgba(173, 77, 46, 0.07), rgba(7, 7, 7, 0.92) 46%);
+        }
+
+        .hero-copy::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            background: linear-gradient(124deg, rgba(204, 255, 0, 0.08), transparent 34%);
+            opacity: 0.6;
+        }
+
+        .hero-copy > * {
+            position: relative;
+            z-index: 1;
+        }
+
+        .hero-overline {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.42rem;
+            color: #9ea1a9;
+            font-size: 0.64rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            margin-bottom: 0.8rem;
+        }
+
+        .hero-overline::before {
+            content: "";
+            width: 1.7rem;
+            height: 1px;
+            background: #4a4a4a;
+        }
+
+        .hero-headline {
+            font-family: 'Rajdhani', sans-serif;
+            font-size: clamp(2.25rem, 6.2vw, 4.85rem);
+            line-height: 0.86;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+            color: #fff;
+            margin: 0 0 1rem;
+        }
+
+        .hero-headline .accent {
+            color: var(--acid);
+            display: inline-block;
+        }
+
+        .hero-utils {
+            margin-top: 0.55rem;
+            border: 1px solid #2e2e2e;
+            background: #0f0f0f;
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 0.6rem;
+            align-items: center;
+            padding: 0.58rem 0.62rem;
+        }
+
+        .install-line {
+            margin: 0;
+            color: #c5c5c5;
+            font-size: 0.73rem;
+            overflow-x: auto;
+            white-space: nowrap;
+        }
+
+        .copy-btn {
+            border: 1px solid #3a3a3a;
+            background: #121212;
+            color: #d1d1d1;
+            font-size: 0.66rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            padding: 0.36rem 0.56rem;
+            cursor: pointer;
+            transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
+        }
+
+        .copy-btn:hover {
+            border-color: rgba(204, 255, 0, 0.48);
+            color: var(--acid);
+        }
+
+        .copy-btn.done {
+            border-color: rgba(204, 255, 0, 0.8);
+            color: var(--acid);
+            background: rgba(204, 255, 0, 0.07);
+        }
+
+        .masthead-shell {
+            position: relative;
+            overflow: hidden;
+            background:
+                radial-gradient(circle at 12% -40%, rgba(139, 233, 253, 0.22), transparent 45%),
+                radial-gradient(circle at 87% 132%, rgba(173, 77, 46, 0.24), transparent 46%),
+                linear-gradient(120deg, rgba(12, 12, 12, 0.96), rgba(7, 7, 7, 0.94) 45%);
+        }
+
+        .masthead-shell::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            opacity: 0.3;
+            background-image:
+                linear-gradient(to right, rgba(48, 48, 48, 0.32) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(48, 48, 48, 0.32) 1px, transparent 1px);
+            background-size: 34px 34px;
+        }
+
+        .masthead-shell > * {
+            position: relative;
+            z-index: 1;
+        }
+
+        .masthead-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .brand-sub {
+            margin: 0.08rem 0 0;
+            color: #999;
+            font-size: 0.72rem;
+            letter-spacing: 0.04em;
+            max-width: 40rem;
+        }
+
+        .nav-stack {
+            display: grid;
+            gap: 0.32rem;
+        }
+
+        .nav-primary {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: 0.45rem;
+        }
+
+        .nav-primary a {
+            border: 1px solid #3a3a3a;
+            background: #111;
+            padding: 0.32rem 0.56rem;
+            text-transform: uppercase;
+            font-size: 0.67rem;
+            letter-spacing: 0.08em;
+            color: #c4c4c4;
+        }
+
+        .nav-secondary {
+            display: none;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: 0.35rem;
+        }
+
+        .nav-secondary span {
+            border: 1px solid #313131;
+            background: rgba(16, 16, 16, 0.9);
+            color: #9b9b9b;
+            padding: 0.14rem 0.35rem;
+            text-transform: uppercase;
+            font-size: 0.61rem;
+            letter-spacing: 0.08em;
+        }
+
+        .value-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.62rem;
+            margin-bottom: 1rem;
+        }
+
+        .value-card {
+            border: 1px solid #2f2f2f;
+            background: rgba(9, 9, 9, 0.9);
+            padding: 0.72rem;
+        }
+
+        .value-card .h {
+            margin: 0 0 0.32rem;
+            color: #fff;
+            font-size: 0.77rem;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+        }
+
+        .value-card .d {
+            margin: 0;
+            color: #a8a8a8;
+            font-size: 0.73rem;
+            line-height: 1.58;
+        }
+
+        .proof-card {
+            min-height: 100%;
+        }
+
+        .proof-card .title {
+            margin: 0 0 0.45rem;
+            color: #fff;
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 1.45rem;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+
+        .proof-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.5rem;
+            margin: 0.7rem 0 0.95rem;
+        }
+
+        .proof-tile {
+            border: 1px solid #323232;
+            background: #101010;
+            padding: 0.58rem;
+        }
+
+        .proof-tile .k {
+            margin: 0 0 0.22rem;
+            color: #808080;
+            font-size: 0.6rem;
+            text-transform: uppercase;
+            letter-spacing: 0.09em;
+        }
+
+        .proof-tile .v {
+            margin: 0;
+            color: var(--acid);
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 1.3rem;
+            letter-spacing: 0.04em;
+            line-height: 1;
+        }
+
+        .proof-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.72rem;
+            margin-top: 0.35rem;
+        }
+
+        .proof-table td,
+        .proof-table th {
+            border-bottom: 1px solid #262626;
+            padding: 0.42rem 0.28rem;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        .proof-table th {
+            color: #8b8b8b;
+            font-size: 0.6rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .signal-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.76rem;
+        }
+
+        .signal-table th,
+        .signal-table td {
+            border-bottom: 1px solid #2a2a2a;
+            text-align: left;
+            vertical-align: top;
+            padding: 0.58rem 0.44rem;
+        }
+
+        .signal-table th {
+            color: #909090;
+            font-size: 0.63rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .status-pill {
+            display: inline-block;
+            border: 1px solid #3a3a3a;
+            background: #111;
+            padding: 0.14rem 0.36rem;
+            font-size: 0.61rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .status-pill.ok {
+            color: #ccff00;
+            border-color: rgba(204, 255, 0, 0.45);
+        }
+
+        .status-pill.wip {
+            color: #fbbf24;
+            border-color: rgba(251, 191, 36, 0.4);
+        }
+
+        .question-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.72rem;
+        }
+
+        .question-card {
+            border: 1px solid #2f2f2f;
+            background: rgba(10, 10, 10, 0.9);
+            padding: 0.9rem;
+        }
+
+        .question-card h3 {
+            margin: 0 0 0.55rem;
+            color: #fff;
+            font-size: 0.86rem;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+        }
+
+        .q-line {
+            margin: 0;
+            font-size: 0.74rem;
+            color: #a6a6a6;
+            line-height: 1.6;
+        }
+
+        .q-line + .q-line {
+            margin-top: 0.38rem;
+            padding-top: 0.35rem;
+            border-top: 1px solid #262626;
+        }
+
+        .q-line .label {
+            color: #8d8d8d;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-size: 0.6rem;
+            display: block;
+            margin-bottom: 0.16rem;
+        }
+
+        .theater-grid {
+            display: grid;
+            grid-template-columns: 1.2fr 1fr;
+            gap: 0.72rem;
+        }
+
+        .theater-card {
+            border: 1px solid #2f2f2f;
+            background: #101010;
+            padding: 0.9rem;
+            min-height: 100%;
+        }
+
+        .theater-card h3 {
+            margin: 0 0 0.55rem;
+            color: #fff;
+            font-size: 0.88rem;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+        }
+
+        .trace-rail {
+            display: grid;
+            gap: 0.5rem;
+        }
+
+        .trace-step {
+            border: 1px solid #303030;
+            background: #0e0e0e;
+            padding: 0.55rem 0.6rem;
+            position: relative;
+        }
+
+        .trace-step::before {
+            content: "";
+            position: absolute;
+            left: -0.48rem;
+            top: 50%;
+            width: 0.44rem;
+            height: 1px;
+            background: #3a3a3a;
+        }
+
+        .trace-step .t {
+            margin: 0 0 0.16rem;
+            color: #ccff00;
+            font-size: 0.62rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .trace-step .d {
+            margin: 0;
+            color: #d5d5d5;
+            font-size: 0.74rem;
+            line-height: 1.56;
+        }
+
+        .decision-board {
+            display: grid;
+            gap: 0.46rem;
+        }
+
+        .decision-item {
+            border: 1px solid #313131;
+            background: #0e0e0e;
+            padding: 0.55rem 0.58rem;
+        }
+
+        .decision-item .k {
+            margin: 0 0 0.2rem;
+            color: #8f8f8f;
+            font-size: 0.6rem;
+            text-transform: uppercase;
+            letter-spacing: 0.09em;
+        }
+
+        .decision-item .v {
+            margin: 0;
+            color: #fff;
+            font-size: 0.73rem;
+            line-height: 1.56;
+        }
+
+        .atlas-grid {
+            display: grid;
+            grid-template-columns: repeat(7, minmax(0, 1fr));
+            gap: 0.55rem;
+        }
+
+        .atlas-card {
+            border: 1px solid #2f2f2f;
+            background: linear-gradient(142deg, rgba(17, 17, 17, 0.95), rgba(8, 8, 8, 0.95));
+            padding: 0.7rem 0.62rem;
+            min-height: 176px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            transition: transform 160ms ease, border-color 160ms ease;
+        }
+
+        .atlas-card:hover {
+            transform: translateY(-2px);
+            border-color: #5a5a5a;
+        }
+
+        .atlas-card .n {
+            margin: 0 0 0.35rem;
+            color: #ccff00;
+            font-size: 0.66rem;
+            text-transform: uppercase;
+            letter-spacing: 0.09em;
+        }
+
+        .atlas-card h3 {
+            margin: 0 0 0.45rem;
+            color: #fff;
+            font-size: 0.79rem;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            line-height: 1.35;
+        }
+
+        .atlas-card p {
+            margin: 0;
+            color: #a8a8a8;
+            font-size: 0.7rem;
+            line-height: 1.58;
+        }
+
+        .atlas-card .tag {
+            display: inline-block;
+            margin-top: 0.52rem;
+            border: 1px solid #343434;
+            background: #111;
+            padding: 0.12rem 0.34rem;
+            color: #9f9f9f;
+            font-size: 0.58rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .sales-hero {
+            position: relative;
+            overflow: hidden;
+            background:
+                radial-gradient(circle at 12% -10%, rgba(139, 233, 253, 0.18), transparent 45%),
+                radial-gradient(circle at 90% 106%, rgba(173, 77, 46, 0.22), transparent 42%),
+                linear-gradient(130deg, rgba(12, 12, 12, 0.95), rgba(6, 6, 6, 0.95) 48%);
+        }
+
+        .sales-hero::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            opacity: 0.3;
+            background-image:
+                linear-gradient(to right, rgba(48, 48, 48, 0.35) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(48, 48, 48, 0.35) 1px, transparent 1px);
+            background-size: 34px 34px;
+        }
+
+        .sales-hero > * {
+            position: relative;
+            z-index: 1;
+        }
+
+        .hero-grid {
+            display: grid;
+            grid-template-columns: 1.15fr 0.85fr;
+            gap: 0.9rem;
+        }
+
+        .hero-title {
+            margin: 0 0 0.75rem;
+            font-family: 'Rajdhani', sans-serif;
+            font-size: clamp(2.2rem, 6.6vw, 4.8rem);
+            line-height: 0.9;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            color: #fff;
+            text-wrap: balance;
+        }
+
+        .hero-title .accent {
+            color: #ccff00;
+            text-shadow: 0 0 26px rgba(204, 255, 0, 0.16);
+        }
+
+        .hero-sub {
+            margin: 0 0 0.9rem;
+            color: #b4b4b4;
+            font-size: 0.9rem;
+            line-height: 1.6;
+            max-width: 44rem;
+        }
+
+        .hero-cta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.58rem;
+            margin: 0.92rem 0;
+        }
+
+        .btn-solid,
+        .btn-ghost {
+            display: inline-block;
+            border: 1px solid #3a3a3a;
+            padding: 0.72rem 0.92rem;
+            font-size: 0.72rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            transition: all 160ms ease;
+        }
+
+        .btn-solid {
+            background: #ccff00;
+            border-color: #ccff00;
+            color: #0a0a0a;
+            box-shadow: 0 0 20px rgba(204, 255, 0, 0.2);
+        }
+
+        .btn-solid:hover {
+            background: #bce600;
+            transform: translateY(-1px);
+        }
+
+        .btn-ghost {
+            background: #101010;
+            color: #d4d4d4;
+        }
+
+        .btn-ghost:hover {
+            border-color: #fff;
+            color: #fff;
+            transform: translateY(-1px);
+        }
+
+        .kicker-pills {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+            margin-top: 0.7rem;
+        }
+
+        .kicker-pills span {
+            border: 1px solid #353535;
+            background: #101010;
+            color: #a8a8a8;
+            font-size: 0.62rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            padding: 0.14rem 0.34rem;
+        }
+
+        .console {
+            border: 1px solid #353535;
+            background: rgba(10, 10, 10, 0.92);
+            padding: 0.78rem;
+            display: grid;
+            gap: 0.52rem;
+        }
+
+        .console-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: #8f8f8f;
+            font-size: 0.62rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .console-row {
+            border: 1px solid #2f2f2f;
+            background: #0f0f0f;
+            padding: 0.52rem;
+        }
+
+        .console-row .k {
+            margin: 0 0 0.18rem;
+            color: #8f8f8f;
+            font-size: 0.6rem;
+            text-transform: uppercase;
+            letter-spacing: 0.09em;
+        }
+
+        .console-row .v {
+            margin: 0;
+            color: #efefef;
+            font-size: 0.75rem;
+            line-height: 1.56;
+        }
+
+        .console-row .v strong {
+            color: #ccff00;
+        }
+
+        .cred-band {
+            border: 1px solid #313131;
+            background: linear-gradient(90deg, rgba(14, 14, 14, 0.94), rgba(8, 8, 8, 0.94));
+            padding: 0.58rem 0.68rem;
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 0.72rem;
+            align-items: center;
+        }
+
+        .cred-band .l {
+            color: #8f8f8f;
+            font-size: 0.62rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        .cred-band .r {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.38rem;
+        }
+
+        .cred-band .r span {
+            border: 1px solid #333;
+            background: #101010;
+            color: #b5b5b5;
+            padding: 0.16rem 0.34rem;
+            font-size: 0.63rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .benefit-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.7rem;
+        }
+
+        .benefit-card {
+            border: 1px solid #2f2f2f;
+            background: linear-gradient(145deg, rgba(16, 16, 16, 0.95), rgba(8, 8, 8, 0.95));
+            padding: 0.88rem;
+            min-height: 194px;
+            display: grid;
+            align-content: start;
+            gap: 0.45rem;
+        }
+
+        .benefit-card .n {
+            margin: 0;
+            color: #ccff00;
+            font-size: 0.66rem;
+            text-transform: uppercase;
+            letter-spacing: 0.09em;
+        }
+
+        .benefit-card h3 {
+            margin: 0;
+            color: #fff;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+        }
+
+        .benefit-card p {
+            margin: 0;
+            color: #a8a8a8;
+            font-size: 0.75rem;
+            line-height: 1.6;
+        }
+
+        .switch-path {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.65rem;
+        }
+
+        .path-step {
+            border: 1px solid #2f2f2f;
+            background: #101010;
+            padding: 0.82rem;
+            position: relative;
+        }
+
+        .path-step .k {
+            margin: 0 0 0.25rem;
+            color: #ccff00;
+            font-size: 0.63rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .path-step h3 {
+            margin: 0 0 0.3rem;
+            color: #fff;
+            font-size: 0.82rem;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+        }
+
+        .path-step p {
+            margin: 0;
+            color: #a8a8a8;
+            font-size: 0.73rem;
+            line-height: 1.6;
+        }
+
+        .proof-grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.7rem;
+        }
+
+        .cost-stack,
+        .quote-card {
+            border: 1px solid #2f2f2f;
+            background: #101010;
+            padding: 0.88rem;
+            min-height: 100%;
+        }
+
+        .cost-stack h3,
+        .quote-card h3 {
+            margin: 0 0 0.52rem;
+            color: #fff;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+        }
+
+        .cost-row {
+            border: 1px solid #323232;
+            background: #0d0d0d;
+            padding: 0.44rem 0.5rem;
+        }
+
+        .cost-row + .cost-row {
+            margin-top: 0.45rem;
+        }
+
+        .cost-row .h {
+            display: flex;
+            justify-content: space-between;
+            color: #9c9c9c;
+            font-size: 0.67rem;
+        }
+
+        .cost-row .h strong {
+            color: #fff;
+            font-weight: 700;
+        }
+
+        .cost-bar {
+            margin-top: 0.28rem;
+            height: 0.5rem;
+            border: 1px solid #2a2a2a;
+            background: #151515;
+            overflow: hidden;
+        }
+
+        .cost-bar span {
+            display: block;
+            height: 100%;
+            width: var(--w);
+            background: linear-gradient(90deg, rgba(204, 255, 0, 0.25), rgba(204, 255, 0, 0.85));
+        }
+
+        .quote-card blockquote {
+            margin: 0;
+            color: #d4d4d4;
+            font-size: 0.82rem;
+            line-height: 1.75;
+        }
+
+        .quote-card .byline {
+            margin-top: 0.62rem;
+            color: #8f8f8f;
+            font-size: 0.67rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .module-ribbon {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.42rem;
+        }
+
+        .module-ribbon span {
+            border: 1px solid #343434;
+            background: #111;
+            padding: 0.2rem 0.38rem;
+            color: #b4b4b4;
+            font-size: 0.64rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .dense-list {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+            display: grid;
+            gap: 0.42rem;
+            font-size: 0.74rem;
+            color: #a7a7a7;
+            line-height: 1.55;
+        }
+
+        .dense-list strong {
+            color: #fff;
+            font-weight: 700;
+        }
+
+        .cta-field {
+            background: linear-gradient(130deg, rgba(173, 77, 46, 0.12), rgba(8, 8, 8, 0.95) 42%);
+            border: 1px solid #333;
+            box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.55);
+        }
+
+        .fade-up {
+            opacity: 0;
+            transform: translateY(16px);
+            animation: rise 560ms ease forwards;
+        }
+
+        .to-top {
+            position: fixed;
+            right: 0.95rem;
+            bottom: 0.95rem;
+            z-index: 120;
+            border: 1px solid #3a3a3a;
+            background: rgba(9, 9, 9, 0.88);
+            color: #a8a8a8;
+            font-size: 0.62rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            padding: 0.42rem 0.5rem;
+            opacity: 0;
+            transform: translateY(6px);
+            pointer-events: none;
+            transition: opacity 150ms ease, transform 150ms ease, border-color 140ms ease, color 140ms ease;
+        }
+
+        .to-top.visible {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+
+        .to-top:hover {
+            border-color: rgba(204, 255, 0, 0.45);
+            color: var(--acid);
+        }
+
+        .d1 { animation-delay: 100ms; }
+        .d2 { animation-delay: 200ms; }
+        .d3 { animation-delay: 290ms; }
+
+        @keyframes rise {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @media (max-width: 980px) {
+            .masthead-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .nav-primary,
+            .nav-secondary {
+                justify-content: flex-start;
+            }
+
+            .value-grid,
+            .proof-grid,
+            .question-grid,
+            .theater-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .hero-grid,
+            .benefit-grid,
+            .switch-path,
+            .proof-grid-2 {
+                grid-template-columns: 1fr;
+            }
+
+            .atlas-grid {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
+
+            .hero-utils {
+                grid-template-columns: 1fr;
+            }
+
+            .cred-band {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 720px) {
+            .atlas-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            * {
+                animation: none !important;
+                transition: none !important;
+            }
+        }
+
+        ::selection {
+            background: #ccff00;
+            color: #000;
+        }
+    </style>
+    <link rel="stylesheet" href="assets/grunge-revamp.css">
+</head>
+<body class="grunge-site bg-off-black min-h-screen relative">
+    <a href="#main-content" class="skip-link">Skip to content</a>
+    <div class="scanlines"></div>
+    <div class="noise"></div>
+    <div class="fixed inset-0 bg-grid-pattern bg-[length:36px_36px] pointer-events-none z-0 opacity-32"></div>
+
+    <div class="site-shell relative z-10 max-w-7xl mx-auto px-4 sm:px-6 py-6 border-x border-[#1a1a1a] min-h-screen bg-[#050505]/88 backdrop-blur-sm">
+        <header class="panel masthead masthead-shell px-4 sm:px-6 py-3 mb-4 fade-up d1">
+            <div class="masthead-grid">
+                <div>
+                    <a href="index.html" class="inline-block font-display text-5xl sm:text-6xl font-bold tracking-tight text-white leading-none brand-link"><span class="brand-fallback">dogwatch<span class="text-acid-green">_</span></span><picture class="brand-picture"><source srcset="assets/dogwatch-logo.webp" type="image/webp"><img src="assets/dogwatch-logo.png" alt="dogwatch" class="brand-logo" width="780" height="260" fetchpriority="high" loading="eager" decoding="async" onerror="this.parentElement.style.display='none';this.parentElement.previousElementSibling.style.display='inline-block'"></picture></a>
+                    <p class="brand-sub">Kernel-native observability for faster incident response and lower spend.</p>
+                </div>
+                <div class="nav-stack">
+                    <nav class="nav-primary">
+                        <a href="index.html">Home</a>
+                        <a href="features.html">Features</a>
+                        <a href="docs.html">Docs</a>
+                        <a href="downloads.html">Downloads</a>
+                        <a href="pricing.html">Pricing</a>
+                        <a href="#">Login</a>
+                    </nav>
+                    <div class="nav-secondary">
+                        <span>build 1.2.0-rc.3</span>
+                        <span>otlp + ebpf</span>
+                        <span>linux 4.14+</span>
+                        <span>cost model live</span>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <main id="main-content">
+            <section class="sales-hero panel p-6 sm:p-8 mb-6 fade-up d2">
+                <div class="hero-grid">
+                    <article>
+                        <div class="hero-overline">Observability for teams replacing expensive stacks</div>
+                        <h1 class="hero-title">
+                            Cut Incident Time
+                            <span class="accent">and Observability Spend</span>
+                            in the Same Deploy.
+                        </h1>
+                        <p class="hero-sub">dogwatch is one kernel-native binary that gives you service maps, trace context, runtime detections, and live vendor-equivalent cost intelligence without SDK rollout drag.</p>
+
+                        <div class="hero-utils">
+                            <p id="install-command" class="install-line"><span class="text-acid-green">$</span> curl -sfL https://get.dogwatch.io/install | sudo sh -s -- --token $DOGWATCH_TOKEN</p>
+                            <button type="button" class="copy-btn" data-copy-install>Copy install</button>
+                        </div>
+
+                        <div class="hero-cta">
+                            <a href="downloads.html" class="btn-solid">Install In 60s</a>
+                            <a href="pricing.html" class="btn-ghost">See Pricing</a>
+                            <a href="features.html" class="btn-ghost">Explore Feature Tour</a>
+                        </div>
+
+                        <div class="kicker-pills">
+                            <span>No SDK rollout</span>
+                            <span>OTLP + eBPF</span>
+                            <span>Control-plane shaping</span>
+                            <span>Migration assistant</span>
+                        </div>
+                    </article>
+                    <article class="console">
+                        <div class="console-head">
+                            <span>Live operator console</span>
+                            <span>01:07 since start</span>
+                        </div>
+                        <div class="console-row">
+                            <p class="k">Incident state</p>
+                            <p class="v">BubbleUp highlights <strong>db_shard=7</strong> and <strong>eu-west-1</strong> as top divergence factors.</p>
+                        </div>
+                        <div class="console-row">
+                            <p class="k">Change correlation</p>
+                            <p class="v">Deploy <strong>v2.4.2</strong> scored highest confidence within incident window.</p>
+                        </div>
+                        <div class="console-row">
+                            <p class="k">Cost intelligence</p>
+                            <p class="v">Projected delta this month: <strong>$46,935</strong> vs incumbent pricing models.</p>
+                        </div>
+                        <div class="console-row">
+                            <p class="k">Control plane</p>
+                            <p class="v">Safe shaping recommendations indicate <strong>84% low-utility telemetry reduction</strong>.</p>
+                        </div>
+                    </article>
+                </div>
+            </section>
+
+            <section class="cred-band mb-6">
+                <p class="l">Built for teams leaving</p>
+                <div class="r">
+                    <span>Datadog host tax</span>
+                    <span>New Relic ingest sprawl</span>
+                    <span>Splunk index cost pressure</span>
+                    <span>Grafana + collector complexity</span>
+                    <span>Instrumentation rollout drag</span>
+                </div>
+            </section>
+
+            <section class="benefit-grid mb-6">
+                <article class="benefit-card">
+                    <p class="n">01 / Speed</p>
+                    <h3>Diagnose in Minutes, Not Quarters</h3>
+                    <p>Kernel-native tracing plus BubbleUp and change correlation gives immediate direction during incidents, before long SDK coordination cycles.</p>
+                </article>
+                <article class="benefit-card">
+                    <p class="n">02 / Spend</p>
+                    <h3>Turn Cost Into a Live Narrative</h3>
+                    <p>Show leadership what your real telemetry profile would cost on major vendors, then apply shaping policies before spend volatility hits.</p>
+                </article>
+                <article class="benefit-card">
+                    <p class="n">03 / Leverage</p>
+                    <h3>Switch Without Rebuilding Everything</h3>
+                    <p>Migration Assistant scans dashboards and alerts, classifies compatibility, and lets teams move incrementally with confidence.</p>
+                </article>
+            </section>
+
+            <section class="panel p-5 sm:p-6 mb-6">
+                <div class="flex items-end justify-between gap-3 mb-4">
+                    <h2 class="section-head text-2xl sm:text-3xl text-white">How Teams Switch</h2>
+                    <a href="docs.html" class="text-xs uppercase tracking-widest text-gray-500 hover:text-acid-green">Open rollout docs</a>
+                </div>
+                <div class="switch-path">
+                    <article class="path-step">
+                        <p class="k">Step 1</p>
+                        <h3>Deploy Side-by-Side</h3>
+                        <p>Start dogwatch next to your current stack and compare incident visibility and cost narrative using the same production traffic.</p>
+                    </article>
+                    <article class="path-step">
+                        <p class="k">Step 2</p>
+                        <h3>Import Critical Workflows</h3>
+                        <p>Use migration scans to move dashboards and alert logic with highest compatibility first, while keeping rollback safety.</p>
+                    </article>
+                    <article class="path-step">
+                        <p class="k">Step 3</p>
+                        <h3>Cut Over With Proof</h3>
+                        <p>Shift ownership once MTTR and cost improvements are proven on live incidents, not sales deck assumptions.</p>
+                    </article>
+                </div>
+            </section>
+
+            <section class="proof-grid-2 mb-6">
+                <article class="cost-stack">
+                    <h3>Representative Cost Picture</h3>
+                    <div class="cost-row">
+                        <p class="h"><span>Datadog estimate</span><strong>$47,234/mo</strong></p>
+                        <div class="cost-bar"><span style="--w: 96%;"></span></div>
+                    </div>
+                    <div class="cost-row">
+                        <p class="h"><span>New Relic estimate</span><strong>$38,920/mo</strong></p>
+                        <div class="cost-bar"><span style="--w: 79%;"></span></div>
+                    </div>
+                    <div class="cost-row">
+                        <p class="h"><span>Splunk estimate</span><strong>$52,100/mo</strong></p>
+                        <div class="cost-bar"><span style="--w: 100%;"></span></div>
+                    </div>
+                    <div class="cost-row">
+                        <p class="h"><span>dogwatch supported</span><strong>$299/mo</strong></p>
+                        <div class="cost-bar"><span style="--w: 8%;"></span></div>
+                    </div>
+                </article>
+                <article class="quote-card">
+                    <h3>Why Buyers Say Yes</h3>
+                    <blockquote>
+                        “The decision changed from ‘should we add more tooling?’ to ‘why are we paying this much for less incident context?’
+                        dogwatch gave engineering and finance a shared operating picture.”
+                    </blockquote>
+                    <p class="byline">VP Engineering, multi-service SaaS platform</p>
+                    <div class="module-ribbon mt-4">
+                        <span>Zero-config tracing</span>
+                        <span>BubbleUp RCA</span>
+                        <span>Control plane</span>
+                        <span>Change correlation</span>
+                        <span>Security observability</span>
+                        <span>Cost intelligence</span>
+                        <span>Migration assistant</span>
+                    </div>
+                </article>
+            </section>
+
+            <section class="cta-field grunge-cta p-6 sm:p-7 mb-8">
+                <div class="grid md:grid-cols-[1fr_auto] gap-5 items-end">
+                    <div>
+                        <h2 class="section-head text-3xl sm:text-4xl text-white mb-2">Run It in Your Environment and Let the Numbers Sell It</h2>
+                        <p class="text-sm sm:text-base text-gray-300 max-w-2xl">Install in minutes, validate incident speed and cost impact with live traffic, and decide from evidence instead of vendor lock-in fear.</p>
+                    </div>
+                    <div class="flex flex-col gap-3 sm:min-w-[210px]">
+                        <a href="downloads.html" class="text-center bg-acid-green text-black font-bold uppercase text-sm px-5 py-3 border border-acid-green hover:bg-black hover:text-acid-green transition">Download Now</a>
+                        <a href="pricing.html" class="text-center border border-white text-white font-bold uppercase text-sm px-5 py-3 hover:bg-white hover:text-black transition">View Pricing</a>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer class="panel px-4 sm:px-6 py-4 text-xs text-gray-500 flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between mb-4">
+            <p>DOGWATCH SYSTEM // VERSION 1.2.0-RC.3</p>
+            <p><a href="docs.html" class="hover:text-acid-green">Docs</a> // <a href="downloads.html" class="hover:text-acid-green">Downloads</a> // <a href="features.html" class="hover:text-acid-green">Features</a> // <a href="pricing.html" class="hover:text-acid-green">Pricing</a></p>
+        </footer>
+    </div>
+    <button type="button" id="to-top" class="to-top" aria-label="Back to top">Top</button>
+    <script>
+        (function() {
+            const copyButton = document.querySelector('[data-copy-install]');
+            const installCommand = document.getElementById('install-command');
+            const toTopButton = document.getElementById('to-top');
+
+            if (copyButton && installCommand) {
+                copyButton.addEventListener('click', async function() {
+                    const text = installCommand.textContent.replace(/^\$\s*/, '').trim();
+                    try {
+                        await navigator.clipboard.writeText(text);
+                        copyButton.classList.add('done');
+                        copyButton.textContent = 'Copied';
+                        setTimeout(function() {
+                            copyButton.classList.remove('done');
+                            copyButton.textContent = 'Copy install';
+                        }, 1200);
+                    } catch (err) {
+                        copyButton.textContent = 'Copy failed';
+                        setTimeout(function() {
+                            copyButton.textContent = 'Copy install';
+                        }, 1400);
+                    }
+                });
+            }
+
+            if (toTopButton) {
+                const toggleToTop = function() {
+                    if (window.scrollY > 420) {
+                        toTopButton.classList.add('visible');
+                    } else {
+                        toTopButton.classList.remove('visible');
+                    }
+                };
+
+                window.addEventListener('scroll', toggleToTop, { passive: true });
+                toggleToTop();
+
+                toTopButton.addEventListener('click', function() {
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                });
+            }
+        })();
+    </script>
+    <script defer src="assets/grunge-revamp.js"></script>
+</body>
+</html>

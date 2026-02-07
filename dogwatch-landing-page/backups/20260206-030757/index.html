@@ -1,0 +1,986 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DOGWATCH // SYSTEM ACTIVE</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        mono: ['"Space Mono"', 'monospace'],
+                        display: ['Rajdhani', 'sans-serif']
+                    },
+                    colors: {
+                        'acid-green': '#ccff00',
+                        'off-black': '#050505',
+                        'signal-cyan': '#8be9fd',
+                        'rust': '#ad4d2e',
+                        'steel': '#8f8f8f'
+                    },
+                    backgroundImage: {
+                        'grid-pattern': "linear-gradient(to right, #171717 1px, transparent 1px), linear-gradient(to bottom, #171717 1px, transparent 1px)"
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        :root {
+            --panel: rgba(11, 11, 11, 0.88);
+            --edge: #2a2a2a;
+            --edge-strong: #4e4e4e;
+            --acid: #ccff00;
+            --cyan: #8be9fd;
+            --grime: rgba(173, 77, 46, 0.16);
+            --ink: #050505;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background:
+                radial-gradient(circle at 15% 12%, #141414 0%, #070707 36%, #030303 100%);
+            color: #dbdbdb;
+            font-family: 'Space Mono', monospace;
+            overflow-x: hidden;
+        }
+
+        a {
+            color: inherit;
+            text-decoration: none;
+        }
+
+        a:focus-visible,
+        button:focus-visible {
+            outline: 2px solid var(--acid);
+            outline-offset: 2px;
+        }
+
+        .skip-link {
+            position: absolute;
+            left: 0.6rem;
+            top: -3rem;
+            z-index: 200;
+            padding: 0.45rem 0.66rem;
+            background: #0f0f0f;
+            border: 1px solid #3a3a3a;
+            color: var(--acid);
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            transition: top 140ms ease;
+        }
+
+        .skip-link:focus {
+            top: 0.7rem;
+        }
+
+        .scanlines {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 60;
+            opacity: 0.24;
+            background: linear-gradient(
+                to bottom,
+                rgba(255, 255, 255, 0),
+                rgba(255, 255, 255, 0) 48%,
+                rgba(0, 0, 0, 0.2) 49%,
+                rgba(0, 0, 0, 0.2)
+            );
+            background-size: 100% 4px;
+        }
+
+        .noise {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 2;
+            opacity: 0.16;
+            background-image:
+                radial-gradient(circle at 16% 24%, var(--grime) 0, transparent 30%),
+                radial-gradient(circle at 80% 70%, rgba(130, 130, 130, 0.1) 0, transparent 26%),
+                repeating-linear-gradient(108deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.03) 1px, transparent 1px, transparent 3px);
+            mix-blend-mode: screen;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--edge);
+            box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.65);
+        }
+
+        .panel:hover {
+            border-color: var(--edge-strong);
+        }
+
+        .chip {
+            border: 1px solid #343434;
+            background: rgba(15, 15, 15, 0.82);
+            padding: 0.28rem 0.58rem;
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
+        }
+
+        .chip:hover {
+            border-color: rgba(204, 255, 0, 0.48);
+            color: var(--acid);
+            background: rgba(18, 18, 18, 0.92);
+        }
+
+        .section-head {
+            font-family: 'Rajdhani', sans-serif;
+            letter-spacing: 0.07em;
+            text-transform: uppercase;
+        }
+
+        .headline {
+            font-family: 'Rajdhani', sans-serif;
+            text-transform: uppercase;
+            line-height: 0.88;
+            letter-spacing: 0.04em;
+        }
+
+        .hero-section {
+            position: relative;
+        }
+
+        .hero-copy {
+            position: relative;
+            overflow: hidden;
+            background:
+                linear-gradient(160deg, rgba(139, 233, 253, 0.08), rgba(11, 11, 11, 0.94) 32%),
+                linear-gradient(140deg, rgba(173, 77, 46, 0.08), rgba(7, 7, 7, 0.93) 46%);
+            box-shadow: 0 26px 50px rgba(0, 0, 0, 0.35);
+        }
+
+        .hero-copy::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            background: linear-gradient(124deg, rgba(204, 255, 0, 0.08), transparent 34%);
+            opacity: 0.6;
+        }
+
+        .hero-copy > * {
+            position: relative;
+            z-index: 1;
+        }
+
+        .hero-overline {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.42rem;
+            color: #9ea1a9;
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+            margin-bottom: 1.05rem;
+        }
+
+        .hero-overline::before {
+            content: "";
+            width: 1.7rem;
+            height: 1px;
+            background: #4a4a4a;
+        }
+
+        .hero-headline {
+            font-family: 'Rajdhani', sans-serif;
+            font-size: clamp(3rem, 7.2vw, 6.3rem);
+            line-height: 0.84;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+            color: #fff;
+            margin: 0 0 1.2rem;
+        }
+
+        .hero-headline .accent {
+            color: var(--acid);
+            display: inline-block;
+        }
+
+        .hero-manifest {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.8rem;
+        }
+
+        .hero-manifest li {
+            border: 1px solid #2f2f2f;
+            background: rgba(9, 9, 9, 0.86);
+            padding: 0.78rem 0.82rem;
+            font-size: 0.78rem;
+            line-height: 1.55;
+            color: #bdbdbd;
+        }
+
+        .hero-manifest .n {
+            color: var(--acid);
+            margin-right: 0.34rem;
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 1rem;
+            letter-spacing: 0.08em;
+        }
+
+        .proof-ribbon {
+            margin-top: 1rem;
+            border: 1px solid #2f2f2f;
+            background: rgba(7, 7, 7, 0.9);
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 0.7rem;
+            align-items: center;
+            padding: 0.74rem 0.84rem;
+        }
+
+        .proof-ribbon .k {
+            font-size: 0.62rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: #7b7b7b;
+        }
+
+        .proof-ribbon .v {
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 1.85rem;
+            color: #fff;
+            line-height: 1;
+        }
+
+        .proof-ribbon .v span {
+            color: var(--acid);
+        }
+
+        .proof-ribbon .s {
+            text-align: right;
+            font-size: 0.76rem;
+            color: #a1a1a1;
+            max-width: 250px;
+        }
+
+        .signal-canvas {
+            position: relative;
+            min-height: 420px;
+            background:
+                radial-gradient(circle at 22% 16%, rgba(139, 233, 253, 0.08), transparent 40%),
+                radial-gradient(circle at 76% 78%, rgba(204, 255, 0, 0.08), transparent 46%),
+                linear-gradient(130deg, rgba(14, 14, 14, 0.98), rgba(6, 6, 6, 0.96));
+            padding: 0.9rem;
+            overflow: hidden;
+        }
+
+        .signal-canvas::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background-image:
+                linear-gradient(to right, rgba(49, 49, 49, 0.33) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(49, 49, 49, 0.33) 1px, transparent 1px);
+            background-size: 26px 26px;
+            opacity: 0.34;
+            pointer-events: none;
+        }
+
+        .signal-canvas::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at center, transparent 56%, rgba(0, 0, 0, 0.52) 100%);
+            pointer-events: none;
+        }
+
+        .trace-note {
+            position: absolute;
+            right: 1.05rem;
+            top: 0.95rem;
+            z-index: 5;
+            border: 1px solid #3a3a3a;
+            background: rgba(10, 10, 10, 0.9);
+            color: #98d8e8;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.09em;
+            padding: 0.34rem 0.48rem;
+        }
+
+        .fabric-frame {
+            position: relative;
+            border: 1px solid #2f2f2f;
+            background: linear-gradient(145deg, rgba(14, 14, 14, 0.95), rgba(7, 7, 7, 0.95));
+            min-height: 300px;
+            overflow: hidden;
+        }
+
+        .fabric-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #292929;
+            background: rgba(12, 12, 12, 0.92);
+            padding: 0.54rem 0.7rem;
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #919191;
+        }
+
+        .trace-stage {
+            padding: 0.35rem;
+        }
+
+        .trace-map {
+            display: block;
+            width: 100%;
+            height: auto;
+            min-height: 245px;
+        }
+
+        .trace-map text {
+            font-family: 'Space Mono', monospace;
+        }
+
+        .trace-map .orbit {
+            fill: none;
+            stroke: rgba(88, 139, 218, 0.42);
+            stroke-width: 2;
+        }
+
+        .trace-map .route {
+            fill: none;
+            stroke: rgba(139, 233, 253, 0.45);
+            stroke-width: 1.5;
+        }
+
+        .trace-map .route.hot {
+            stroke: rgba(204, 255, 0, 0.8);
+            stroke-dasharray: 7 6;
+            animation: dashShift 12s linear infinite;
+        }
+
+        .trace-map .node-label rect {
+            fill: rgba(10, 10, 10, 0.92);
+            stroke: #3c3c3c;
+            rx: 2;
+        }
+
+        .trace-map .node-label text {
+            fill: #dfdfdf;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+        }
+
+        .trace-map .node-dot {
+            fill: var(--acid);
+            filter: drop-shadow(0 0 3px rgba(204, 255, 0, 0.6));
+        }
+
+        .trace-map .node-hot .node-dot {
+            fill: #fbbf24;
+            filter: drop-shadow(0 0 3px rgba(251, 191, 36, 0.8));
+            animation: pulseHot 2s ease-in-out infinite;
+        }
+
+        .fabric-stats {
+            margin-top: 0.6rem;
+            border: 1px solid #2f2f2f;
+            background: rgba(8, 8, 8, 0.9);
+            padding: 0.75rem;
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.55rem;
+        }
+
+        .fabric-stat {
+            border: 1px solid #2b2b2b;
+            background: #0d0d0d;
+            padding: 0.52rem 0.58rem;
+            min-height: 74px;
+        }
+
+        .fabric-stat .k {
+            color: #6d6d6d;
+            font-size: 0.63rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 0.38rem;
+        }
+
+        .fabric-stat .v {
+            color: var(--acid);
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 1.58rem;
+            line-height: 1;
+        }
+
+        .fabric-stat .s {
+            color: #8d8d8d;
+            font-size: 0.72rem;
+            margin-top: 0.2rem;
+        }
+
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.85rem;
+        }
+
+        .metric-card {
+            border: 1px solid #2a2a2a;
+            background: rgba(8, 8, 8, 0.82);
+            padding: 0.88rem;
+        }
+
+        .metric-value {
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 2rem;
+            line-height: 1;
+            color: var(--acid);
+            letter-spacing: 0.03em;
+        }
+
+        .hero-utils {
+            margin-top: 0.55rem;
+            border: 1px solid #2e2e2e;
+            background: #0f0f0f;
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 0.6rem;
+            align-items: center;
+            padding: 0.58rem 0.62rem;
+        }
+
+        .install-line {
+            margin: 0;
+            color: #c5c5c5;
+            font-size: 0.73rem;
+            overflow-x: auto;
+            white-space: nowrap;
+        }
+
+        .copy-btn {
+            border: 1px solid #3a3a3a;
+            background: #121212;
+            color: #d1d1d1;
+            font-size: 0.66rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            padding: 0.36rem 0.56rem;
+            cursor: pointer;
+            transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
+        }
+
+        .copy-btn:hover {
+            border-color: rgba(204, 255, 0, 0.48);
+            color: var(--acid);
+        }
+
+        .copy-btn.done {
+            border-color: rgba(204, 255, 0, 0.8);
+            color: var(--acid);
+            background: rgba(204, 255, 0, 0.07);
+        }
+
+        .diff-bar {
+            height: 0.58rem;
+            background: #171717;
+            border: 1px solid #2b2b2b;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .diff-fill {
+            position: absolute;
+            inset: 0;
+            width: var(--w, 50%);
+            background: linear-gradient(to right, rgba(204, 255, 0, 0.26), rgba(204, 255, 0, 0.78));
+            animation: fillGrow 1.5s ease forwards;
+            transform-origin: left center;
+        }
+
+        .module-card {
+            border: 1px solid #2b2b2b;
+            background: linear-gradient(140deg, rgba(16, 16, 16, 0.95), rgba(8, 8, 8, 0.95));
+            padding: 1rem;
+            min-height: 138px;
+            transition: transform 150ms ease, border-color 150ms ease;
+        }
+
+        .module-card:hover {
+            transform: translateY(-2px);
+            border-color: #5b5b5b;
+        }
+
+        .module-id {
+            color: var(--acid);
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.09em;
+            margin-bottom: 0.45rem;
+        }
+
+        .flow-row {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 0.5rem;
+        }
+
+        .flow-cell {
+            border: 1px solid #303030;
+            background: rgba(10, 10, 10, 0.9);
+            padding: 0.75rem;
+            position: relative;
+        }
+
+        .flow-cell::after {
+            content: ">";
+            position: absolute;
+            right: -0.42rem;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #656565;
+            font-weight: 700;
+            font-size: 0.82rem;
+        }
+
+        .flow-cell:last-child::after {
+            content: "";
+        }
+
+        .cta-field {
+            background: linear-gradient(130deg, rgba(173, 77, 46, 0.12), rgba(8, 8, 8, 0.95) 42%);
+            border: 1px solid #333;
+            box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.55);
+        }
+
+        .fade-up {
+            opacity: 0;
+            transform: translateY(16px);
+            animation: rise 560ms ease forwards;
+        }
+
+        .to-top {
+            position: fixed;
+            right: 0.95rem;
+            bottom: 0.95rem;
+            z-index: 120;
+            border: 1px solid #3a3a3a;
+            background: rgba(9, 9, 9, 0.88);
+            color: #a8a8a8;
+            font-size: 0.62rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            padding: 0.42rem 0.5rem;
+            opacity: 0;
+            transform: translateY(6px);
+            pointer-events: none;
+            transition: opacity 150ms ease, transform 150ms ease, border-color 140ms ease, color 140ms ease;
+        }
+
+        .to-top.visible {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+
+        .to-top:hover {
+            border-color: rgba(204, 255, 0, 0.45);
+            color: var(--acid);
+        }
+
+        .d1 { animation-delay: 100ms; }
+        .d2 { animation-delay: 200ms; }
+        .d3 { animation-delay: 290ms; }
+
+        @keyframes dashShift {
+            from { stroke-dashoffset: 0; }
+            to { stroke-dashoffset: -120; }
+        }
+
+        @keyframes pulseHot {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.48; }
+        }
+
+        @keyframes fillGrow {
+            0% { transform: scaleX(0); }
+            100% { transform: scaleX(1); }
+        }
+
+        @keyframes rise {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @media (max-width: 980px) {
+            .hero-manifest {
+                grid-template-columns: 1fr;
+            }
+
+            .proof-ribbon {
+                grid-template-columns: 1fr;
+            }
+
+            .proof-ribbon .s {
+                text-align: left;
+                max-width: none;
+            }
+
+            .stat-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .fabric-stats {
+                grid-template-columns: 1fr;
+            }
+
+            .flow-row {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .flow-cell::after {
+                display: none;
+            }
+
+            .hero-utils {
+                grid-template-columns: 1fr;
+            }
+
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            * {
+                animation: none !important;
+                transition: none !important;
+            }
+        }
+
+        ::selection {
+            background: #ccff00;
+            color: #000;
+        }
+    </style>
+</head>
+<body class="bg-off-black min-h-screen relative">
+    <a href="#main-content" class="skip-link">Skip to content</a>
+    <div class="scanlines"></div>
+    <div class="noise"></div>
+    <div class="fixed inset-0 bg-grid-pattern bg-[length:36px_36px] pointer-events-none z-0 opacity-32"></div>
+
+    <div class="relative z-10 max-w-[1500px] mx-auto px-4 sm:px-8 py-6 border-x border-[#1a1a1a] min-h-screen bg-[#050505]/88 backdrop-blur-sm">
+        <header class="panel px-4 sm:px-6 py-4 mb-4 fade-up d1">
+            <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                <div>
+                    <a href="index.html" class="inline-block font-display text-3xl font-bold tracking-tight text-white">dogwatch<span class="text-acid-green">_</span></a>
+                    <p class="text-xs text-steel mt-1">Observability and runtime security from one kernel-native binary.</p>
+                </div>
+                <nav class="flex flex-wrap gap-2 text-[11px] sm:text-xs font-bold uppercase tracking-wider">
+                    <a href="features.html" class="chip hover:text-acid-green">Features</a>
+                    <a href="docs.html" class="chip hover:text-acid-green">Docs</a>
+                    <a href="downloads.html" class="chip hover:text-acid-green">Downloads</a>
+                    <a href="pricing.html" class="chip hover:text-acid-green">Pricing</a>
+                    <a href="#" class="chip text-acid-green">Login</a>
+                </nav>
+            </div>
+        </header>
+
+        <main id="main-content">
+            <section class="hero-section grid lg:grid-cols-12 gap-8 mb-8">
+                <article class="hero-copy lg:col-span-7 panel p-8 sm:p-10 fade-up d2">
+                    <div class="hero-overline">Kernel-native signal architecture</div>
+                    <div class="flex flex-wrap items-center gap-2 mb-6 text-[12px] text-gray-400">
+                        <span class="chip">Build 1.2.0-rc.3</span>
+                        <span class="chip">Control Plane Online</span>
+                        <span class="chip">Zero-config rollout</span>
+                    </div>
+                    <h1 class="hero-headline">
+                        Observability for
+                        <span class="accent">chaotic systems.</span>
+                    </h1>
+                    <p class="text-sm sm:text-base text-gray-300 border-l-2 border-acid-green pl-4 max-w-2xl mb-6 leading-relaxed">
+                        Install one binary and dogwatch assembles traffic, traces, cost intelligence, and runtime risk into a single operational narrative. Built for production pressure, not dashboard theater.
+                    </p>
+                    <ul class="hero-manifest mb-6">
+                        <li><span class="n">01</span>Trace assembly from kernel events and wire-format parsing.</li>
+                        <li><span class="n">02</span>BubbleUp ranking that surfaces high-lift root-cause dimensions.</li>
+                        <li><span class="n">03</span>Control-plane shaping to cut low-utility telemetry before storage.</li>
+                        <li><span class="n">04</span>Deploy-aware incident timeline with change correlation scoring.</li>
+                    </ul>
+                    <div class="proof-ribbon">
+                        <div>
+                            <p class="k">Economic Signal</p>
+                            <p class="v"><span>$46,935/mo</span> projected delta</p>
+                        </div>
+                        <p class="s">Derived from live telemetry volume against Datadog-style host + ingest pricing models.</p>
+                    </div>
+                    <div class="flex flex-col sm:flex-row gap-3 mt-6 mb-6">
+                        <a href="downloads.html" class="bg-acid-green text-black px-6 py-3 font-bold uppercase text-sm text-center border border-acid-green shadow-[4px_4px_0_#ccff00] hover:bg-black hover:text-acid-green transition">Download Agent</a>
+                        <a href="docs.html" class="px-6 py-3 font-bold uppercase text-sm text-center border border-[#3a3a3a] hover:border-white hover:text-white transition">Read Quickstart</a>
+                    </div>
+                    <div class="hero-utils">
+                        <p id="install-command" class="install-line"><span class="text-acid-green">$</span> curl -sfL https://get.dogwatch.io/install | sudo sh -s -- --token $DOGWATCH_TOKEN</p>
+                        <button type="button" class="copy-btn" data-copy-install>Copy install</button>
+                    </div>
+                    <div class="stat-grid text-sm mt-5">
+                        <div class="metric-card">
+                            <p class="metric-value">60s</p>
+                            <p class="text-gray-400 uppercase tracking-widest text-[11px]">Time to value</p>
+                        </div>
+                        <div class="metric-card">
+                            <p class="metric-value">0</p>
+                            <p class="text-gray-400 uppercase tracking-widest text-[11px]">Code changes</p>
+                        </div>
+                        <div class="metric-card">
+                            <p class="metric-value">4317</p>
+                            <p class="text-gray-400 uppercase tracking-widest text-[11px]">OTLP gRPC</p>
+                        </div>
+                        <div class="metric-card">
+                            <p class="metric-value">84%</p>
+                            <p class="text-gray-400 uppercase tracking-widest text-[11px]">Typical volume cut</p>
+                        </div>
+                    </div>
+                </article>
+
+                <article class="lg:col-span-5 panel signal-canvas fade-up d3">
+                    <div class="trace-note">Hot route highlighted</div>
+                    <div class="fabric-frame">
+                        <div class="fabric-top">
+                            <span>Live Trace Fabric</span>
+                            <span>Route Correlation Online</span>
+                        </div>
+                        <div class="trace-stage">
+                            <svg class="trace-map" viewBox="0 0 560 320" aria-label="Trace fabric map">
+                                <circle class="orbit" cx="160" cy="134" r="120"></circle>
+                                <circle class="orbit" cx="160" cy="134" r="76"></circle>
+
+                                <path class="route" d="M106 66 L278 99 L363 164"></path>
+                                <path class="route" d="M252 164 L363 164"></path>
+                                <path class="route hot" d="M198 168 L360 224"></path>
+                                <path class="route" d="M98 231 L198 168"></path>
+
+                                <g class="node-label node-source" transform="translate(30,36)">
+                                    <rect width="132" height="26"></rect>
+                                    <circle class="node-dot" cx="12" cy="13" r="3.4"></circle>
+                                    <text x="22" y="17">EDGE-GATEWAY</text>
+                                </g>
+
+                                <g class="node-label" transform="translate(224,72)">
+                                    <rect width="122" height="26"></rect>
+                                    <circle class="node-dot" cx="12" cy="13" r="3.4"></circle>
+                                    <text x="22" y="17">API-SERVICE</text>
+                                </g>
+
+                                <g class="node-label" transform="translate(136,150)">
+                                    <rect width="123" height="26"></rect>
+                                    <circle class="node-dot" cx="12" cy="13" r="3.4"></circle>
+                                    <text x="22" y="17">AUTH-SERVICE</text>
+                                </g>
+
+                                <g class="node-label node-hot" transform="translate(300,211)">
+                                    <rect width="129" height="26"></rect>
+                                    <circle class="node-dot" cx="12" cy="13" r="3.4"></circle>
+                                    <text x="22" y="17">DB-SHARD-7</text>
+                                </g>
+
+                                <g class="node-label" transform="translate(74,235)">
+                                    <rect width="119" height="26"></rect>
+                                    <circle class="node-dot" cx="12" cy="13" r="3.4"></circle>
+                                    <text x="22" y="17">REDIS-CACHE</text>
+                                </g>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="fabric-stats">
+                        <div class="fabric-stat">
+                            <p class="k">Live Throughput</p>
+                            <p class="v">14,203</p>
+                            <p class="s">spans/sec assembled from kernel events</p>
+                        </div>
+                        <div class="fabric-stat">
+                            <p class="k">BubbleUp Signal</p>
+                            <p class="v">db_shard=7</p>
+                            <p class="s">12.25x lift in slow requests</p>
+                        </div>
+                    </div>
+                </article>
+            </section>
+
+            <section class="grid lg:grid-cols-12 gap-6 mb-6">
+                <article class="lg:col-span-4 panel p-5">
+                    <div class="flex items-center justify-between mb-3">
+                        <h2 class="section-head text-2xl text-white">Cost Intelligence</h2>
+                        <span class="chip">Live Delta</span>
+                    </div>
+                    <p class="text-xs text-gray-400 mb-4">Translate observed usage into competitor billing models in real time.</p>
+                    <div class="space-y-2 text-sm">
+                        <div class="flex justify-between border-b border-[#262626] pb-1"><span class="text-gray-400">Datadog</span><span class="text-red-400">$47,234/mo</span></div>
+                        <div class="flex justify-between border-b border-[#262626] pb-1"><span class="text-gray-400">New Relic</span><span class="text-yellow-300">$38,920/mo</span></div>
+                        <div class="flex justify-between border-b border-[#262626] pb-1"><span class="text-gray-400">Splunk</span><span class="text-orange-300">$52,100/mo</span></div>
+                        <div class="flex justify-between border-b border-[#262626] pb-1"><span class="text-gray-400">dogwatch</span><span class="text-acid-green">$299/mo</span></div>
+                    </div>
+                    <p class="text-acid-green text-lg font-bold mt-4">Projected savings: $46,935/mo</p>
+                </article>
+
+                <article class="lg:col-span-4 panel p-5">
+                    <div class="flex items-center justify-between mb-3">
+                        <h2 class="section-head text-2xl text-white">Control Plane</h2>
+                        <span class="chip">Impact Preview</span>
+                    </div>
+                    <p class="text-xs text-gray-400 mb-4">Cardinality shaping before storage commit.</p>
+                    <div class="space-y-3 text-xs">
+                        <div>
+                            <div class="flex justify-between mb-1"><span class="text-gray-400">Current series</span><span class="text-white">2.4M</span></div>
+                            <div class="diff-bar"><div class="diff-fill" style="--w: 96%;"></div></div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between mb-1"><span class="text-gray-400">After dropping pod,node</span><span class="text-acid-green">12K</span></div>
+                            <div class="diff-bar"><div class="diff-fill" style="--w: 8%;"></div></div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between mb-1"><span class="text-gray-400">Data volume reduction</span><span class="text-acid-green">99.5%</span></div>
+                            <div class="diff-bar"><div class="diff-fill" style="--w: 76%;"></div></div>
+                        </div>
+                    </div>
+                    <p class="text-gray-500 text-xs mt-4">Rule confidence: high // dashboards affected: none // alerts affected: none</p>
+                </article>
+
+                <article class="lg:col-span-4 panel p-5">
+                    <div class="flex items-center justify-between mb-3">
+                        <h2 class="section-head text-2xl text-white">Change Correlation</h2>
+                        <span class="chip">Incident Timeline</span>
+                    </div>
+                    <div class="space-y-3 text-xs">
+                        <div class="panel p-3">
+                            <p class="text-acid-green uppercase tracking-widest text-[10px]">High Correlation 94%</p>
+                            <p class="text-white mt-1">14:28 deploy api-service v2.4.1 -> v2.4.2</p>
+                            <p class="text-gray-500">Incident started 4 minutes later</p>
+                        </div>
+                        <div class="panel p-3">
+                            <p class="text-gray-400 uppercase tracking-widest text-[10px]">Low Correlation</p>
+                            <p class="text-white mt-1">14:15 rate limit config update</p>
+                            <p class="text-gray-500">Different service, 17 minutes earlier</p>
+                        </div>
+                    </div>
+                </article>
+            </section>
+
+            <section class="panel p-5 sm:p-6 mb-6">
+                <div class="flex items-end justify-between gap-3 mb-4">
+                    <h2 class="section-head text-2xl sm:text-3xl text-white">Signal Pipeline</h2>
+                    <a href="docs.html" class="text-xs uppercase tracking-widest text-gray-500 hover:text-acid-green">Open docs for full setup</a>
+                </div>
+                <div class="flow-row text-xs">
+                    <div class="flow-cell"><p class="text-acid-green uppercase text-[10px] mb-2">Stage 1</p><p class="text-white">eBPF event capture</p><p class="text-gray-500 mt-1">syscalls, tcp, uprobes</p></div>
+                    <div class="flow-cell"><p class="text-acid-green uppercase text-[10px] mb-2">Stage 2</p><p class="text-white">Protocol parsing</p><p class="text-gray-500 mt-1">HTTP, SQL, Redis wire formats</p></div>
+                    <div class="flow-cell"><p class="text-acid-green uppercase text-[10px] mb-2">Stage 3</p><p class="text-white">Entity synthesis</p><p class="text-gray-500 mt-1">services, hosts, queues map</p></div>
+                    <div class="flow-cell"><p class="text-acid-green uppercase text-[10px] mb-2">Stage 4</p><p class="text-white">Trace + metrics engine</p><p class="text-gray-500 mt-1">golden signals and exemplars</p></div>
+                    <div class="flow-cell"><p class="text-acid-green uppercase text-[10px] mb-2">Stage 5</p><p class="text-white">Control + insights</p><p class="text-gray-500 mt-1">BubbleUp, quotas, incident links</p></div>
+                </div>
+            </section>
+
+            <section class="panel p-5 sm:p-6 mb-6">
+                <div class="flex items-end justify-between gap-3 mb-4">
+                    <h2 class="section-head text-2xl sm:text-3xl text-white">Seven Killer Modules</h2>
+                    <a href="features.html" class="text-xs uppercase tracking-widest text-gray-500 hover:text-acid-green">View full module diagrams</a>
+                </div>
+                <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+                    <article class="module-card"><p class="module-id">01</p><h3 class="font-bold text-white mb-2">Zero-Config Tracing</h3><p class="text-gray-400 text-xs">Kernel traffic graph and trace assembly without instrumentation rollout.</p></article>
+                    <article class="module-card"><p class="module-id">02</p><h3 class="font-bold text-white mb-2">Cost Intelligence</h3><p class="text-gray-400 text-xs">Direct pricing equivalence against major vendors for budget narratives.</p></article>
+                    <article class="module-card"><p class="module-id">03</p><h3 class="font-bold text-white mb-2">Control Plane</h3><p class="text-gray-400 text-xs">Utility scoring and shaping rules to keep high-cardinality cost stable.</p></article>
+                    <article class="module-card"><p class="module-id">04</p><h3 class="font-bold text-white mb-2">BubbleUp RCA</h3><p class="text-gray-400 text-xs">Statistical divergence analysis ranks likely root-cause dimensions.</p></article>
+                    <article class="module-card"><p class="module-id">05</p><h3 class="font-bold text-white mb-2">Change Correlation</h3><p class="text-gray-400 text-xs">Timeline link between deploys/config edits and incident onset.</p></article>
+                    <article class="module-card"><p class="module-id">06</p><h3 class="font-bold text-white mb-2">Security Observability</h3><p class="text-gray-400 text-xs">Runtime detections from the same eBPF stream used for observability.</p></article>
+                    <article class="module-card"><p class="module-id">07</p><h3 class="font-bold text-white mb-2">Migration Assistant</h3><p class="text-gray-400 text-xs">Import dashboards, alerts, SLOs, and report compatibility gaps.</p></article>
+                    <article class="module-card flex flex-col justify-between">
+                        <div>
+                            <p class="module-id">Action</p>
+                            <h3 class="font-bold text-white mb-2">Run it now</h3>
+                            <p class="text-gray-400 text-xs mb-4">Install local in minutes, then scale into cluster mode.</p>
+                        </div>
+                        <a href="downloads.html" class="inline-block text-xs uppercase font-bold border border-acid-green text-acid-green px-3 py-2 text-center hover:bg-acid-green hover:text-black transition">Open downloads</a>
+                    </article>
+                </div>
+            </section>
+
+            <section class="cta-field p-6 sm:p-7 mb-8">
+                <div class="grid md:grid-cols-[1fr_auto] gap-5 items-end">
+                    <div>
+                        <h2 class="section-head text-3xl sm:text-4xl text-white mb-2">Install it before the next incident page</h2>
+                        <p class="text-sm sm:text-base text-gray-300 max-w-2xl">dogwatch is engineered for operational reality: high-cardinality systems, distributed ownership, and fast postmortems. One binary, one coherent timeline.</p>
+                    </div>
+                    <div class="flex flex-col gap-3 sm:min-w-[210px]">
+                        <a href="downloads.html" class="text-center bg-acid-green text-black font-bold uppercase text-sm px-5 py-3 border border-acid-green hover:bg-black hover:text-acid-green transition">Download Now</a>
+                        <a href="docs.html" class="text-center border border-white text-white font-bold uppercase text-sm px-5 py-3 hover:bg-white hover:text-black transition">Read Docs</a>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer class="panel px-4 sm:px-6 py-4 text-xs text-gray-500 flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between mb-4">
+            <p>DOGWATCH SYSTEM // VERSION 1.2.0-RC.3</p>
+            <p><a href="docs.html" class="hover:text-acid-green">Docs</a> // <a href="downloads.html" class="hover:text-acid-green">Downloads</a> // <a href="features.html" class="hover:text-acid-green">Features</a> // <a href="pricing.html" class="hover:text-acid-green">Pricing</a></p>
+        </footer>
+    </div>
+    <button type="button" id="to-top" class="to-top" aria-label="Back to top">Top</button>
+    <script>
+        (function() {
+            const copyButton = document.querySelector('[data-copy-install]');
+            const installCommand = document.getElementById('install-command');
+            const toTopButton = document.getElementById('to-top');
+
+            if (copyButton && installCommand) {
+                copyButton.addEventListener('click', async function() {
+                    const text = installCommand.textContent.replace(/^\$\s*/, '').trim();
+                    try {
+                        await navigator.clipboard.writeText(text);
+                        copyButton.classList.add('done');
+                        copyButton.textContent = 'Copied';
+                        setTimeout(function() {
+                            copyButton.classList.remove('done');
+                            copyButton.textContent = 'Copy install';
+                        }, 1200);
+                    } catch (err) {
+                        copyButton.textContent = 'Copy failed';
+                        setTimeout(function() {
+                            copyButton.textContent = 'Copy install';
+                        }, 1400);
+                    }
+                });
+            }
+
+            if (toTopButton) {
+                const toggleToTop = function() {
+                    if (window.scrollY > 420) {
+                        toTopButton.classList.add('visible');
+                    } else {
+                        toTopButton.classList.remove('visible');
+                    }
+                };
+
+                window.addEventListener('scroll', toggleToTop, { passive: true });
+                toggleToTop();
+
+                toTopButton.addEventListener('click', function() {
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                });
+            }
+        })();
+    </script>
+</body>
+</html>
