@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="internal/web/static/img/logo-new.png" alt="dogwatch logo" width="300">
+  <img src="dogwatch-landing-page/assets/dogwatch-logo.png" alt="dogwatch logo" width="420">
 </p>
 
 # dogwatch

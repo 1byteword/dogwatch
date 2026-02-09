@@ -46,6 +46,7 @@ type Dashboard struct {
 type WidgetConfig struct {
 	Service string `json:"service,omitempty"`
 	Since   string `json:"since,omitempty"`
+	Locked  bool   `json:"locked,omitempty"`
 }
 
 // FolderTree represents a folder with its children and dashboards

@@ -6,6 +6,7 @@ import { Chip } from "../../design/components/Chip";
 import { Input } from "../../design/components/Input";
 import { Button } from "../../design/components/Button";
 import { Badge } from "../../design/components/Badge";
+import dogwatchLogo from "../../assets/dogwatch-logo.png";
 
 const navItems = [
   { href: "/app/dashboards", label: "Dashboards" },
@@ -61,9 +62,9 @@ export function AppShell(props: ParentProps) {
     <div class="app-shell">
       <aside class="app-sidebar">
         <div class="brand-block">
-          <div class="brand-mark">DW</div>
+          <img src={dogwatchLogo} alt="dogwatch" class="brand-logo" />
           <div class="brand-copy">
-            <strong>dogwatch V2</strong>
+            <strong>dogwatch</strong>
             <span>Operations Command</span>
           </div>
         </div>

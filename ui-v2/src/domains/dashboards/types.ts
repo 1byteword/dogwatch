@@ -9,6 +9,7 @@ export interface DashboardWidgetPosition {
 export interface DashboardWidgetConfig {
   service?: string;
   since?: string;
+  locked?: boolean;
 }
 
 export interface DashboardItem {
