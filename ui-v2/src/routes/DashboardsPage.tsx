@@ -204,11 +204,13 @@ function normalizeWidgetConfig(config: Record<string, DashboardWidgetConfig>): R
     const entry = config[widgetId];
     const service = entry?.service?.trim() || "";
     const since = entry?.since?.trim() || "";
+    const severity = entry?.severity?.trim() || "";
     const locked = Boolean(entry?.locked);
-    if (!service && !since && !locked) continue;
+    if (!service && !since && !severity && !locked) continue;
     normalized[widgetId] = {};
     if (service) normalized[widgetId].service = service;
     if (since) normalized[widgetId].since = since;
+    if (severity) normalized[widgetId].severity = severity;
     if (locked) normalized[widgetId].locked = true;
   }
   return normalized;
@@ -242,6 +244,7 @@ export function DashboardsPage() {
   const [newDashboardName, setNewDashboardName] = createSignal(DEFAULT_DASHBOARD_NAME);
   const [timeRange, setTimeRange] = createSignal("1h");
   const [serviceFilter, setServiceFilter] = createSignal("");
+  const [severityFilter, setSeverityFilter] = createSignal("");
   const [draggingWidgetId, setDraggingWidgetId] = createSignal("");
   const [dragOverWidgetId, setDragOverWidgetId] = createSignal("");
   const [canvasDropPoint, setCanvasDropPoint] = createSignal<{ x: number; y: number } | null>(null);
@@ -549,6 +552,10 @@ export function DashboardsPage() {
     return widgetConfig()[widgetId]?.since || timeRange();
   }
 
+  function resolveWidgetSeverity(widgetId: string): string {
+    return widgetConfig()[widgetId]?.severity || severityFilter();
+  }
+
   function isWidgetLocked(widgetId: string): boolean {
     return Boolean(widgetConfig()[widgetId]?.locked);
   }
@@ -560,24 +567,43 @@ export function DashboardsPage() {
     return Date.now() - ts <= sinceToMs(since);
   }
 
+  function matchesSeverity(level: string, wanted: string): boolean {
+    if (!wanted) return true;
+    const value = (level || "").toLowerCase();
+    if (value === wanted) return true;
+    if (wanted === "critical") return value === "critical" || value === "fatal" || value === "error";
+    if (wanted === "high") return value === "high" || value === "error" || value === "fatal";
+    if (wanted === "medium") return value === "medium" || value === "warn" || value === "warning";
+    if (wanted === "low") return value === "low" || value === "info" || value === "debug" || value === "trace";
+    return true;
+  }
+
   function filterAlertsForWidget(widgetId: string) {
     const svc = resolveWidgetService(widgetId);
     const since = resolveWidgetSince(widgetId);
-    return (alerts() || []).filter((a) => (!svc || a.service === svc) && isWithinSince(a.startedAtRaw, since));
+    const severity = resolveWidgetSeverity(widgetId);
+    return (alerts() || []).filter(
+      (a) => (!svc || a.service === svc) && matchesSeverity(a.severity, severity) && isWithinSince(a.startedAtRaw, since)
+    );
   }
 
   function filterIncidentsForWidget(widgetId: string) {
     const svc = resolveWidgetService(widgetId);
     const since = resolveWidgetSince(widgetId);
-    return (incidents() || []).filter((i) => (!svc || i.service === svc) && isWithinSince(i.startedAtRaw, since));
+    const severity = resolveWidgetSeverity(widgetId);
+    return (incidents() || []).filter(
+      (i) => (!svc || i.service === svc) && matchesSeverity(i.severity, severity) && isWithinSince(i.startedAtRaw, since)
+    );
   }
 
   function filterLogsForWidget(widgetId: string) {
     const svc = resolveWidgetService(widgetId);
     const horizon = sinceToMs(resolveWidgetSince(widgetId));
+    const severity = resolveWidgetSeverity(widgetId);
     const now = Date.now();
     return (logs() || []).filter((row) => {
       if (svc && row.service !== svc) return false;
+      if (!matchesSeverity(row.level, severity)) return false;
       const ts = new Date(row.timestamp).getTime();
       if (!Number.isFinite(ts)) return false;
       return now - ts <= horizon;
@@ -587,15 +613,26 @@ export function DashboardsPage() {
   function filterCorrelationsForWidget(widgetId: string) {
     const svc = resolveWidgetService(widgetId);
     const since = resolveWidgetSince(widgetId);
+    const severity = resolveWidgetSeverity(widgetId);
     return (correlations() || []).filter((corr) => {
       if (svc && corr.deployment.service !== svc) return false;
+      if (severity) {
+        const level = corr.confidence >= 0.75 ? "critical" : corr.confidence >= 0.5 ? "high" : corr.confidence >= 0.25 ? "medium" : "low";
+        if (!matchesSeverity(level, severity)) return false;
+      }
       return isWithinSince(corr.deployment.timestamp, since);
     });
   }
 
   function filterServicesForWidget(widgetId: string) {
     const svc = resolveWidgetService(widgetId);
-    return (catalogServices() || []).filter((row) => !svc || row.name === svc || row.displayName === svc);
+    const severity = resolveWidgetSeverity(widgetId);
+    return (catalogServices() || []).filter((row) => {
+      if (svc && row.name !== svc && row.displayName !== svc) return false;
+      if (!severity) return true;
+      const healthLevel = row.health === "unhealthy" ? "critical" : row.health === "degraded" ? "high" : "low";
+      return matchesSeverity(healthLevel, severity);
+    });
   }
 
   function widgetDefForId(id: string): WidgetDef | undefined {
@@ -725,6 +762,11 @@ export function DashboardsPage() {
   function setWidgetService(widgetId: string, service: string) {
     pushHistory();
     setWidgetConfig((curr) => ({ ...curr, [widgetId]: { ...(curr[widgetId] || {}), service } }));
+  }
+
+  function setWidgetSeverity(widgetId: string, severity: string) {
+    pushHistory();
+    setWidgetConfig((curr) => ({ ...curr, [widgetId]: { ...(curr[widgetId] || {}), severity } }));
   }
 
   function setWidgetLocked(widgetId: string, locked: boolean) {
@@ -1684,6 +1726,13 @@ export function DashboardsPage() {
               {(svc) => <option value={svc}>{svc}</option>}
             </For>
           </select>
+          <select class="input dashboard-filter-select" value={severityFilter()} onChange={(e) => setSeverityFilter(e.currentTarget.value)}>
+            <option value="">all severities</option>
+            <option value="critical">critical</option>
+            <option value="high">high</option>
+            <option value="medium">medium</option>
+            <option value="low">low</option>
+          </select>
           <Button onClick={addServicePack}>Add Service Pack</Button>
           <Input
             value={newDashboardName()}
@@ -1702,6 +1751,9 @@ export function DashboardsPage() {
           <Button onClick={applyTemplate}>Apply Template</Button>
           <Button onClick={onSaveAsNew}>Save As New</Button>
           <Badge tone="neutral">{activeLayout().length} widgets</Badge>
+          <Show when={severityFilter()}>
+            <Badge tone="warn">severity: {severityFilter()}</Badge>
+          </Show>
           <Show when={showOnlyUnlocked()}>
             <Badge tone="warn">{visibleLayout().length} visible</Badge>
           </Show>
@@ -1833,6 +1885,18 @@ export function DashboardsPage() {
                 <For each={serviceOptions()}>
                   {(svc) => <option value={svc}>{svc}</option>}
                 </For>
+              </select>
+              <label>Severity Scope</label>
+              <select
+                class="input widget-scope-select"
+                value={widgetConfig()[focusedWidget()!.id]?.severity || ""}
+                onChange={(e) => setWidgetSeverity(focusedWidget()!.id, e.currentTarget.value)}
+              >
+                <option value="">default severity ({severityFilter() || "all"})</option>
+                <option value="critical">critical</option>
+                <option value="high">high</option>
+                <option value="medium">medium</option>
+                <option value="low">low</option>
               </select>
             </div>
             <div class="row">

@@ -951,7 +951,7 @@ body {
 
 .widget-inspector-grid {
   display: grid;
-  grid-template-columns: auto minmax(180px, 260px) auto minmax(180px, 260px);
+  grid-template-columns: auto minmax(160px, 220px) auto minmax(160px, 220px) auto minmax(160px, 220px);
   gap: var(--v2-space-2);
   align-items: center;
 }

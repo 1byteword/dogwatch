@@ -44,9 +44,10 @@ type Dashboard struct {
 
 // WidgetConfig stores optional per-widget dashboard settings.
 type WidgetConfig struct {
-	Service string `json:"service,omitempty"`
-	Since   string `json:"since,omitempty"`
-	Locked  bool   `json:"locked,omitempty"`
+	Service  string `json:"service,omitempty"`
+	Since    string `json:"since,omitempty"`
+	Severity string `json:"severity,omitempty"`
+	Locked   bool   `json:"locked,omitempty"`
 }
 
 // FolderTree represents a folder with its children and dashboards

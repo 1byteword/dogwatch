@@ -8,7 +8,7 @@ interface ApiDashboard {
   created?: string;
   updated?: string;
   layout?: Array<{ id?: string; x?: number; y?: number; w?: number; h?: number }>;
-  widget_config?: Record<string, { service?: string; since?: string; locked?: boolean }>;
+  widget_config?: Record<string, { service?: string; since?: string; severity?: string; locked?: boolean }>;
 }
 
 function mapLayout(layout: ApiDashboard["layout"]): DashboardWidgetPosition[] {
@@ -28,6 +28,7 @@ function mapDashboard(raw: ApiDashboard, idx: number): DashboardItem {
     widgetConfig[widgetId] = {
       service: cfg?.service || undefined,
       since: cfg?.since || undefined,
+      severity: cfg?.severity || undefined,
       locked: Boolean(cfg?.locked)
     };
   }
