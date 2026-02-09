@@ -77,3 +77,14 @@ export interface TraceDependency {
   child: string;
   call_count: number;
 }
+
+export interface SystemMetricPoint {
+  timestamp: string;
+  cpu_percent: number;
+  mem_percent: number;
+  load_1?: number;
+  disk_read_bytes?: number;
+  disk_write_bytes?: number;
+  net_rx_bytes?: number;
+  net_tx_bytes?: number;
+}

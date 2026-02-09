@@ -5,6 +5,7 @@ import {
   ProcessInfo,
   ServiceMapData,
   StatsSummary,
+  SystemMetricPoint,
   SystemMetrics,
   TraceDependency,
   TraceSummary
@@ -125,6 +126,24 @@ export async function loadTraceServices(): Promise<string[]> {
   try {
     const raw = await api.get<string[]>("/api/trace/services");
     return Array.isArray(raw) ? raw.filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function loadSystemHistory(duration = "1h"): Promise<SystemMetricPoint[]> {
+  try {
+    const raw = await api.get<Array<Partial<SystemMetricPoint>>>(`/api/history/system?duration=${duration}`);
+    return (raw || []).map((row) => ({
+      timestamp: row.timestamp || "",
+      cpu_percent: Number(row.cpu_percent || 0),
+      mem_percent: Number(row.mem_percent || 0),
+      load_1: Number(row.load_1 || 0),
+      disk_read_bytes: Number(row.disk_read_bytes || 0),
+      disk_write_bytes: Number(row.disk_write_bytes || 0),
+      net_rx_bytes: Number(row.net_rx_bytes || 0),
+      net_tx_bytes: Number(row.net_tx_bytes || 0),
+    }));
   } catch {
     return [];
   }

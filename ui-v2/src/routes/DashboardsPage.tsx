@@ -1,9 +1,12 @@
 import { A } from "@solidjs/router";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
+import type uPlot from "uplot";
 import { useAutoRefresh } from "../core/live";
 import { Badge } from "../design/components/Badge";
 import { Button } from "../design/components/Button";
+import { ChartPanel } from "../design/components/ChartPanel";
 import { Input } from "../design/components/Input";
+import { Sparkline } from "../design/components/Sparkline";
 import {
   createDashboard,
   deleteDashboard,
@@ -24,6 +27,7 @@ import { loadNotifyChannels, loadNotifyHistory } from "../domains/notify/service
 import {
   loadServiceMap,
   loadStatsSummary,
+  loadSystemHistory,
   loadSystemMetrics,
   loadTopProcesses,
   loadTraceDependencies,
@@ -365,6 +369,10 @@ export function DashboardsPage() {
   const [channels, { refetch: refetchChannels }] = createResource(loadNotifyChannels);
   const [history, { refetch: refetchHistory }] = createResource(() => loadNotifyHistory(""));
   const [systemMetrics, { refetch: refetchSystemMetrics }] = createResource(loadSystemMetrics);
+  const [systemHistory, { refetch: refetchSystemHistory }] = createResource(
+    () => timeRange(),
+    (duration) => loadSystemHistory(duration)
+  );
   const [statsSummary, { refetch: refetchStatsSummary }] = createResource(loadStatsSummary);
   const [topProcesses, { refetch: refetchTopProcesses }] = createResource(loadTopProcesses);
   const [serviceMap, { refetch: refetchServiceMap }] = createResource(loadServiceMap);
@@ -510,6 +518,7 @@ export function DashboardsPage() {
     refetchChannels();
     refetchHistory();
     refetchSystemMetrics();
+    refetchSystemHistory();
     refetchStatsSummary();
     refetchTopProcesses();
     refetchServiceMap();
@@ -1185,6 +1194,7 @@ export function DashboardsPage() {
       refetchChannels(),
       refetchHistory(),
       refetchSystemMetrics(),
+      refetchSystemHistory(),
       refetchStatsSummary(),
       refetchTopProcesses(),
       refetchServiceMap(),
@@ -1474,27 +1484,50 @@ export function DashboardsPage() {
     })();
     if (widgetTypeId === "system-overview") {
       const sys = systemMetrics();
+      const historyData = (): uPlot.AlignedData => {
+        const pts = systemHistory() || [];
+        if (pts.length < 2) {
+          const now = Math.floor(Date.now() / 1000);
+          return [[now - 60, now], [sys?.cpu_usage_percent || 0, sys?.cpu_usage_percent || 0], [sys?.mem_usage_percent || 0, sys?.mem_usage_percent || 0]];
+        }
+        const xs = new Float64Array(pts.length);
+        const cpu = new Float64Array(pts.length);
+        const mem = new Float64Array(pts.length);
+        for (let i = 0; i < pts.length; i++) {
+          xs[i] = Math.floor(new Date(pts[i].timestamp).getTime() / 1000);
+          cpu[i] = pts[i].cpu_percent;
+          mem[i] = pts[i].mem_percent;
+        }
+        return [xs, cpu, mem];
+      };
       return (
-        <div class="widget-body widget-kpi-grid">
-          <div>
-            <label>CPU</label>
-            <strong>{Math.round(sys?.cpu_usage_percent || 0)}%</strong>
+        <div class="widget-body" style={{ gap: "var(--v2-space-2)" }}>
+          <ChartPanel
+            data={historyData()}
+            series={[
+              { label: "CPU %", stroke: "#ccff00", fill: "rgba(204,255,0,0.08)", width: 1.5 },
+              { label: "Memory %", stroke: "#2ed67a", fill: "rgba(46,214,122,0.06)", width: 1.5 },
+            ]}
+            height={120}
+          />
+          <div class="widget-kpi-grid" style={{ flex: "none" }}>
+            <div>
+              <label>CPU</label>
+              <strong>{Math.round(sys?.cpu_usage_percent || 0)}%</strong>
+            </div>
+            <div>
+              <label>Memory</label>
+              <strong>{Math.round(sys?.mem_usage_percent || 0)}%</strong>
+            </div>
+            <div>
+              <label>Disk I/O</label>
+              <strong>{Math.round((sys?.disk_read_per_sec || 0) / 1024 / 1024)}/{Math.round((sys?.disk_write_per_sec || 0) / 1024 / 1024)} MB/s</strong>
+            </div>
+            <div>
+              <label>Load (1/5/15)</label>
+              <strong>{(sys?.load_1 || 0).toFixed(2)} / {(sys?.load_5 || 0).toFixed(2)} / {(sys?.load_15 || 0).toFixed(2)}</strong>
+            </div>
           </div>
-          <div>
-            <label>Memory</label>
-            <strong>{Math.round(sys?.mem_usage_percent || 0)}%</strong>
-          </div>
-          <div>
-            <label>Disk I/O</label>
-            <strong>{Math.round((sys?.disk_read_per_sec || 0) / 1024 / 1024)}/{Math.round((sys?.disk_write_per_sec || 0) / 1024 / 1024)} MB/s</strong>
-          </div>
-          <div>
-            <label>Load (1/5/15)</label>
-            <strong>{(sys?.load_1 || 0).toFixed(2)} / {(sys?.load_5 || 0).toFixed(2)} / {(sys?.load_15 || 0).toFixed(2)}</strong>
-          </div>
-          <Badge tone={(sys?.cpu_usage_percent || 0) > 85 || (sys?.mem_usage_percent || 0) > 90 ? "error" : "ok"}>
-            {(sys?.net_rx_per_sec || 0) > 0 || (sys?.net_tx_per_sec || 0) > 0 ? "system active" : "idle"}
-          </Badge>
         </div>
       );
     }
@@ -1682,11 +1715,7 @@ export function DashboardsPage() {
           <Badge tone={healthTone(widgetReliability.healthy, widgetReliability.degraded, widgetReliability.unhealthy)}>
             health mix: {widgetReliability.healthy}/{widgetReliability.degraded}/{widgetReliability.unhealthy}
           </Badge>
-          <div class="widget-sparkline" aria-label="Error pulse trend">
-            <For each={widgetPulse}>
-              {(value) => <span style={{ height: `${value}%` }} />}
-            </For>
-          </div>
+          <Sparkline values={widgetPulse} width={200} height={36} color="var(--v2-error)" />
         </div>
       );
     }
