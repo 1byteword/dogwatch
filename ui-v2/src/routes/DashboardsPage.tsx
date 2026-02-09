@@ -21,6 +21,15 @@ import { loadDeployIncidentCorrelations } from "../domains/correlation/service";
 import { loadCurrentOncall, loadOncallPolicies, loadOncallSchedules } from "../domains/oncall/service";
 import { loadK8sSummary } from "../domains/kubernetes/service";
 import { loadNotifyChannels, loadNotifyHistory } from "../domains/notify/service";
+import {
+  loadServiceMap,
+  loadStatsSummary,
+  loadSystemMetrics,
+  loadTopProcesses,
+  loadTraceDependencies,
+  loadTraceServices,
+  loadTraceSummaries
+} from "../domains/ops/service";
 
 type WidgetDef = {
   id: string;
@@ -31,6 +40,15 @@ type WidgetDef = {
 };
 
 const WIDGETS: WidgetDef[] = [
+  { id: "system-overview", title: "System Overview", description: "CPU, memory, load, and core platform pressure", defaultW: 4, defaultH: 2 },
+  { id: "traffic-overview", title: "Traffic Overview", description: "Request, error, and connection totals", defaultW: 4, defaultH: 2 },
+  { id: "endpoint-latency", title: "Endpoint Latency", description: "Top endpoints by p99 latency and errors", defaultW: 6, defaultH: 2 },
+  { id: "connection-hotspots", title: "Connection Hotspots", description: "Busiest process to remote network paths", defaultW: 6, defaultH: 2 },
+  { id: "process-top", title: "Top Processes", description: "Highest CPU and memory process consumers", defaultW: 4, defaultH: 2 },
+  { id: "service-map-health", title: "Service Map Health", description: "Topology node/link pressure and shape", defaultW: 4, defaultH: 2 },
+  { id: "trace-throughput", title: "Trace Throughput", description: "Recent traces with duration and status", defaultW: 6, defaultH: 2 },
+  { id: "trace-services", title: "Trace Services", description: "Services currently emitting trace spans", defaultW: 4, defaultH: 2 },
+  { id: "trace-dependencies", title: "Trace Dependencies", description: "Service dependency call relationships", defaultW: 6, defaultH: 2 },
   { id: "kpi-reliability", title: "Reliability Pulse", description: "SLO health and error pressure", defaultW: 4, defaultH: 2 },
   { id: "alerts-feed", title: "Alert Feed", description: "Active alert pressure and top triggers", defaultW: 4, defaultH: 2 },
   { id: "alerts-severity-map", title: "Alert Severity Mix", description: "Current severity distribution and pending load", defaultW: 4, defaultH: 2 },
@@ -156,11 +174,53 @@ function clampSpan(value: number, min: number, max: number): number {
 const GRID_COLUMNS = 12;
 const GRID_MAX_Y = 60;
 const GRID_ROW_HEIGHT_PX = 92;
+const GRID_MAX_H = 6;
+const GRID_RESIZE_DRAG_STEP_PX = 68;
+
+function quantizeDragDelta(pxDelta: number, stepPx: number): number {
+  if (!Number.isFinite(pxDelta) || !Number.isFinite(stepPx) || stepPx <= 0) return 0;
+  return Math.trunc(pxDelta / stepPx);
+}
 
 function overlaps(a: DashboardWidgetPosition, b: DashboardWidgetPosition): boolean {
   const noXOverlap = a.x + a.w <= b.x || b.x + b.w <= a.x;
   const noYOverlap = a.y + a.h <= b.y || b.y + b.h <= a.y;
   return !(noXOverlap || noYOverlap);
+}
+
+function hasOverlap(item: DashboardWidgetPosition, placed: DashboardWidgetPosition[]): boolean {
+  return placed.some((other) => overlaps(item, other));
+}
+
+function findNearestSlot(
+  item: DashboardWidgetPosition,
+  placed: DashboardWidgetPosition[],
+  preferredX: number,
+  preferredY: number
+): DashboardWidgetPosition {
+  const maxX = Math.max(0, GRID_COLUMNS - item.w);
+  let best: DashboardWidgetPosition | null = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (let y = 0; y <= GRID_MAX_Y; y += 1) {
+    for (let x = 0; x <= maxX; x += 1) {
+      const candidate = { ...item, x, y };
+      if (hasOverlap(candidate, placed)) continue;
+      const score = Math.abs(y - preferredY) * 100 + Math.abs(x - preferredX);
+      if (score < bestScore) {
+        bestScore = score;
+        best = candidate;
+        if (score === 0) return candidate;
+      }
+    }
+  }
+
+  if (best) return best;
+  return {
+    ...item,
+    x: clampSpan(preferredX, 0, maxX),
+    y: clampSpan(preferredY, 0, GRID_MAX_Y)
+  };
 }
 
 function packLayout(items: DashboardWidgetPosition[], prioritizeId?: string): DashboardWidgetPosition[] {
@@ -169,7 +229,7 @@ function packLayout(items: DashboardWidgetPosition[], prioritizeId?: string): Da
     return {
       ...item,
       w,
-      h: clampSpan(item.h, 1, 4),
+      h: clampSpan(item.h, 1, GRID_MAX_H),
       x: clampSpan(item.x, 0, Math.max(0, GRID_COLUMNS - w)),
       y: clampSpan(item.y, 0, GRID_MAX_Y)
     };
@@ -183,11 +243,7 @@ function packLayout(items: DashboardWidgetPosition[], prioritizeId?: string): Da
 
   const placed: DashboardWidgetPosition[] = [];
   for (const item of ordered) {
-    const next = { ...item };
-    while (placed.some((other) => overlaps(next, other))) {
-      next.y += 1;
-      if (next.y > GRID_MAX_Y) break;
-    }
+    const next = findNearestSlot(item, placed, item.x, item.y);
     placed.push(next);
   }
 
@@ -196,6 +252,32 @@ function packLayout(items: DashboardWidgetPosition[], prioritizeId?: string): Da
 
 function normalizeLayout(items: DashboardWidgetPosition[]): DashboardWidgetPosition[] {
   return packLayout(items);
+}
+
+function compactLayout(items: DashboardWidgetPosition[]): DashboardWidgetPosition[] {
+  const normalized = items
+    .map((item) => {
+      const w = clampSpan(item.w, 2, GRID_COLUMNS);
+      return {
+        ...item,
+        w,
+        h: clampSpan(item.h, 1, GRID_MAX_H),
+        x: clampSpan(item.x, 0, Math.max(0, GRID_COLUMNS - w)),
+        y: clampSpan(item.y, 0, GRID_MAX_Y)
+      };
+    })
+    .sort((a, b) => a.y - b.y || a.x - b.x);
+
+  const placed: DashboardWidgetPosition[] = [];
+  for (const item of normalized) {
+    const next = findNearestSlot(item, placed, 0, 0);
+    placed.push(next);
+  }
+  return placed;
+}
+
+function sanitizeLayout(items: DashboardWidgetPosition[], allowed: Set<string>): DashboardWidgetPosition[] {
+  return compactLayout(items.filter((item) => allowed.has(baseWidgetId(item.id))));
 }
 
 function normalizeWidgetConfig(config: Record<string, DashboardWidgetConfig>): Record<string, DashboardWidgetConfig> {
@@ -282,6 +364,16 @@ export function DashboardsPage() {
   const [k8sSummary, { refetch: refetchK8sSummary }] = createResource(loadK8sSummary);
   const [channels, { refetch: refetchChannels }] = createResource(loadNotifyChannels);
   const [history, { refetch: refetchHistory }] = createResource(() => loadNotifyHistory(""));
+  const [systemMetrics, { refetch: refetchSystemMetrics }] = createResource(loadSystemMetrics);
+  const [statsSummary, { refetch: refetchStatsSummary }] = createResource(loadStatsSummary);
+  const [topProcesses, { refetch: refetchTopProcesses }] = createResource(loadTopProcesses);
+  const [serviceMap, { refetch: refetchServiceMap }] = createResource(loadServiceMap);
+  const [traceSummaries, { refetch: refetchTraceSummaries }] = createResource(
+    () => ({ limit: 60, service: serviceFilter(), duration: timeRange() }),
+    (params) => loadTraceSummaries(params.limit, params.service, params.duration)
+  );
+  const [traceServices, { refetch: refetchTraceServices }] = createResource(loadTraceServices);
+  const [traceDependencies, { refetch: refetchTraceDependencies }] = createResource(loadTraceDependencies);
 
   onMount(() => {
     if (typeof window === "undefined") return;
@@ -417,6 +509,13 @@ export function DashboardsPage() {
     refetchK8sSummary();
     refetchChannels();
     refetchHistory();
+    refetchSystemMetrics();
+    refetchStatsSummary();
+    refetchTopProcesses();
+    refetchServiceMap();
+    refetchTraceSummaries();
+    refetchTraceServices();
+    refetchTraceDependencies();
   }, 30000);
 
   createEffect(() => {
@@ -429,8 +528,10 @@ export function DashboardsPage() {
   createEffect(() => {
     const dashboard = selectedDashboard();
     if (!dashboard) return;
+    const allowed = new Set(WIDGETS.map((w) => w.id));
+    const nextLayout = sanitizeLayout(dashboard.layout.length ? dashboard.layout : defaultLayout, allowed);
     setCanvasName(dashboard.name);
-    setLayout(dashboard.layout.length ? dashboard.layout : defaultLayout);
+    setLayout(nextLayout);
     setWidgetConfig(dashboard.widgetConfig || {});
     setFocusedWidgetId("");
     setResizingWidgetId("");
@@ -514,6 +615,7 @@ export function DashboardsPage() {
     for (const incident of incidents() || []) set.add(incident.service);
     for (const log of logs() || []) if (log.service) set.add(log.service);
     for (const service of catalogServices() || []) set.add(service.name);
+    for (const service of traceServices() || []) set.add(service);
     return Array.from(set).filter(Boolean).sort();
   });
 
@@ -910,7 +1012,7 @@ export function DashboardsPage() {
         return {
           ...next,
           w,
-          h: clampSpan(next.h, 1, 4),
+          h: clampSpan(next.h, 1, GRID_MAX_H),
           x: clampSpan(next.x, 0, Math.max(0, GRID_COLUMNS - w)),
           y: clampSpan(next.y, 0, GRID_MAX_Y)
         };
@@ -929,7 +1031,7 @@ export function DashboardsPage() {
   function resizeWidget(widgetId: string, dw: number, dh: number) {
     updateWidget(widgetId, (item) => {
       const nextW = clampSpan(item.w + dw, 2, 12);
-      const nextH = clampSpan(item.h + dh, 1, 4);
+      const nextH = clampSpan(item.h + dh, 1, GRID_MAX_H);
       return {
         ...item,
         w: nextW,
@@ -963,12 +1065,12 @@ export function DashboardsPage() {
     const colWidth = rect.width > 0 ? rect.width / GRID_COLUMNS : 1;
 
     const onMove = (e: MouseEvent) => {
-      const dxCols = Math.round((e.clientX - startX) / colWidth);
-      const dyRows = Math.round((e.clientY - startY) / GRID_ROW_HEIGHT_PX);
+      const dxCols = quantizeDragDelta(e.clientX - startX, colWidth);
+      const dyRows = quantizeDragDelta(e.clientY - startY, GRID_RESIZE_DRAG_STEP_PX);
       const apply = e.altKey ? applyWidgetUpdateRaw : applyWidgetUpdate;
       apply(widgetId, (item) => {
         const nextW = axis === "e" || axis === "se" ? clampSpan(startW + dxCols, 2, GRID_COLUMNS) : startW;
-        const nextH = axis === "s" || axis === "se" ? clampSpan(startH + dyRows, 1, 4) : startH;
+        const nextH = axis === "s" || axis === "se" ? clampSpan(startH + dyRows, 1, GRID_MAX_H) : startH;
         return {
           ...item,
           w: nextW,
@@ -1081,7 +1183,14 @@ export function DashboardsPage() {
       refetchCurrentOncall(),
       refetchK8sSummary(),
       refetchChannels(),
-      refetchHistory()
+      refetchHistory(),
+      refetchSystemMetrics(),
+      refetchStatsSummary(),
+      refetchTopProcesses(),
+      refetchServiceMap(),
+      refetchTraceSummaries(),
+      refetchTraceServices(),
+      refetchTraceDependencies()
     ]);
     setNotice("Dashboard and widget data refreshed.");
   }
@@ -1219,7 +1328,7 @@ export function DashboardsPage() {
           x: clampSpan(item.x, 0, GRID_COLUMNS - 1),
           y: clampSpan(item.y, 0, GRID_MAX_Y),
           w: clampSpan(item.w, 2, GRID_COLUMNS),
-          h: clampSpan(item.h, 1, 4)
+          h: clampSpan(item.h, 1, GRID_MAX_H)
         }));
 
       if (!filteredLayout.length) {
@@ -1253,6 +1362,9 @@ export function DashboardsPage() {
   function renderWidget(item: DashboardWidgetPosition) {
     const widgetId = item.id;
     const widgetTypeId = baseWidgetId(widgetId);
+    const listRows = Math.max(4, item.h * 2 + 1);
+    const logRows = Math.max(6, item.h * 3);
+    const actionRows = Math.max(6, item.h * 2 + 2);
     const widgetAlerts = filterAlertsForWidget(widgetId);
     const widgetIncidents = filterIncidentsForWidget(widgetId);
     const widgetLogs = filterLogsForWidget(widgetId);
@@ -1264,7 +1376,7 @@ export function DashboardsPage() {
         const rank = (h: string) => (h === "unhealthy" ? 3 : h === "degraded" ? 2 : h === "healthy" ? 1 : 0);
         return rank(b.health) - rank(a.health);
       })
-      .slice(0, 3);
+      .slice(0, listRows);
     const widgetReliability = {
       totalAlerts: widgetAlerts.length,
       criticalAlerts: widgetAlerts.filter((a) => a.severity === "critical").length,
@@ -1288,14 +1400,31 @@ export function DashboardsPage() {
       }, new Map<string, number>())
     )
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .slice(0, 5);
+      .slice(0, listRows);
     const latencyHotspots = widgetServices
       .slice()
       .sort((a, b) => b.avgResponseTimeMs - a.avgResponseTimeMs)
-      .slice(0, 5);
+      .slice(0, listRows);
+    const endpointRows = (statsSummary()?.endpoints || [])
+      .filter((row) => {
+        const svc = resolveWidgetService(widgetId);
+        if (!svc) return true;
+        return row.path.includes(svc);
+      })
+      .slice()
+      .sort((a, b) => b.p99_ms - a.p99_ms || b.error_rate - a.error_rate)
+      .slice(0, listRows);
+    const connectionRows = (statsSummary()?.connections || [])
+      .slice()
+      .sort((a, b) => b.count - a.count)
+      .slice(0, logRows);
+    const processRows = (topProcesses() || []).slice(0, listRows);
+    const traceRows = (traceSummaries() || []).slice(0, logRows);
+    const traceServiceRows = (traceServices() || []).slice(0, logRows);
+    const traceDependencyRows = (traceDependencies() || []).slice(0, listRows);
     const failedDelivery = (history() || [])
       .filter((entry) => entry.status.toLowerCase() !== "sent")
-      .slice(0, 5);
+      .slice(0, logRows);
     const k8sNodesReady = k8sSummary()?.nodesReady || 0;
     const k8sNodes = k8sSummary()?.nodes || 0;
     const k8sPodsRunning = k8sSummary()?.podsRunning || 0;
@@ -1308,7 +1437,7 @@ export function DashboardsPage() {
     const opsActions = [
       ...widgetIncidents
         .filter((incident) => incident.status === "triggered")
-        .slice(0, 3)
+        .slice(0, Math.max(3, Math.ceil(actionRows / 2)))
         .map((incident) => ({
           id: `incident-${incident.id}`,
           label: `Acknowledge incident: ${incident.title}`,
@@ -1317,14 +1446,14 @@ export function DashboardsPage() {
         })),
       ...widgetAlerts
         .filter((alert) => alert.severity === "critical")
-        .slice(0, 3)
+        .slice(0, Math.max(3, Math.ceil(actionRows / 2)))
         .map((alert) => ({
           id: `alert-${alert.id}`,
           label: `Investigate alert: ${alert.name}`,
           owner: alert.service,
           tone: "warn" as const
         }))
-    ].slice(0, 6);
+    ].slice(0, actionRows);
     const widgetPulse = (() => {
       const now = Date.now();
       const horizon = sinceToMs(resolveWidgetSince(widgetId));
@@ -1343,6 +1472,193 @@ export function DashboardsPage() {
       const max = Math.max(...buckets, 1);
       return buckets.map((value) => Math.max(10, Math.round((value / max) * 100)));
     })();
+    if (widgetTypeId === "system-overview") {
+      const sys = systemMetrics();
+      return (
+        <div class="widget-body widget-kpi-grid">
+          <div>
+            <label>CPU</label>
+            <strong>{Math.round(sys?.cpu_usage_percent || 0)}%</strong>
+          </div>
+          <div>
+            <label>Memory</label>
+            <strong>{Math.round(sys?.mem_usage_percent || 0)}%</strong>
+          </div>
+          <div>
+            <label>Disk I/O</label>
+            <strong>{Math.round((sys?.disk_read_per_sec || 0) / 1024 / 1024)}/{Math.round((sys?.disk_write_per_sec || 0) / 1024 / 1024)} MB/s</strong>
+          </div>
+          <div>
+            <label>Load (1/5/15)</label>
+            <strong>{(sys?.load_1 || 0).toFixed(2)} / {(sys?.load_5 || 0).toFixed(2)} / {(sys?.load_15 || 0).toFixed(2)}</strong>
+          </div>
+          <Badge tone={(sys?.cpu_usage_percent || 0) > 85 || (sys?.mem_usage_percent || 0) > 90 ? "error" : "ok"}>
+            {(sys?.net_rx_per_sec || 0) > 0 || (sys?.net_tx_per_sec || 0) > 0 ? "system active" : "idle"}
+          </Badge>
+        </div>
+      );
+    }
+    if (widgetTypeId === "traffic-overview") {
+      const stats = statsSummary();
+      return (
+        <div class="widget-body widget-kpi-grid">
+          <div>
+            <label>Total Requests</label>
+            <strong>{stats?.total_requests || 0}</strong>
+          </div>
+          <div>
+            <label>Total Errors</label>
+            <strong>{stats?.total_errors || 0}</strong>
+          </div>
+          <div>
+            <label>Connections</label>
+            <strong>{stats?.total_connections || 0}</strong>
+          </div>
+          <div>
+            <label>Error Rate</label>
+            <strong>
+              {(stats?.total_requests || 0) > 0
+                ? `${(((stats?.total_errors || 0) / (stats?.total_requests || 1)) * 100).toFixed(1)}%`
+                : "0.0%"}
+            </strong>
+          </div>
+          <Badge tone={(stats?.total_errors || 0) > 0 ? "warn" : "ok"}>
+            {(stats?.endpoints?.length || 0) > 0 ? `${stats?.endpoints.length} endpoints observed` : "no endpoint traffic yet"}
+          </Badge>
+        </div>
+      );
+    }
+    if (widgetTypeId === "endpoint-latency") {
+      return (
+        <div class="widget-body widget-list mono">
+          <For each={endpointRows}>
+            {(row) => (
+              <div class="widget-list-row widget-log-row">
+                <span>{row.method}</span>
+                <Badge tone={row.error_rate > 10 ? "error" : row.error_rate > 2 ? "warn" : "ok"}>{row.error_rate.toFixed(1)}%</Badge>
+                <span class="truncate-text">{row.path}</span>
+                <span class="truncate-text">p99 {row.p99_ms.toFixed(1)}ms | req {row.request_count}</span>
+              </div>
+            )}
+          </For>
+          <Show when={endpointRows.length === 0}><p class="paragraph">No endpoint metrics yet.</p></Show>
+        </div>
+      );
+    }
+    if (widgetTypeId === "connection-hotspots") {
+      return (
+        <div class="widget-body widget-list mono">
+          <For each={connectionRows}>
+            {(row) => (
+              <div class="widget-list-row widget-log-row">
+                <span>{row.process}</span>
+                <Badge tone={row.count > 100 ? "warn" : "neutral"}>{row.count}</Badge>
+                <span class="truncate-text">{row.remote}:{row.port}</span>
+                <span class="truncate-text">pid {row.pid}</span>
+              </div>
+            )}
+          </For>
+          <Show when={connectionRows.length === 0}><p class="paragraph">No connection flows yet.</p></Show>
+        </div>
+      );
+    }
+    if (widgetTypeId === "process-top") {
+      return (
+        <div class="widget-body widget-list">
+          <For each={processRows}>
+            {(row) => (
+              <div class="widget-list-row">
+                <strong>{row.name}</strong>
+                <span>pid {row.pid}</span>
+                <Badge tone={row.cpu_pct > 50 ? "error" : row.cpu_pct > 20 ? "warn" : "ok"}>
+                  {row.cpu_pct.toFixed(1)}% cpu
+                </Badge>
+              </div>
+            )}
+          </For>
+          <Show when={processRows.length === 0}><p class="paragraph">No process metrics yet.</p></Show>
+        </div>
+      );
+    }
+    if (widgetTypeId === "service-map-health") {
+      const nodes = serviceMap()?.nodes?.length || 0;
+      const links = serviceMap()?.links?.length || 0;
+      const processNodes = (serviceMap()?.nodes || []).filter((n) => n.type === "process" || n.type === "service").length;
+      const externalNodes = (serviceMap()?.nodes || []).filter((n) => n.type === "external").length;
+      return (
+        <div class="widget-body widget-kpi-grid">
+          <div>
+            <label>Nodes</label>
+            <strong>{nodes}</strong>
+          </div>
+          <div>
+            <label>Links</label>
+            <strong>{links}</strong>
+          </div>
+          <div>
+            <label>Internal</label>
+            <strong>{processNodes}</strong>
+          </div>
+          <div>
+            <label>External</label>
+            <strong>{externalNodes}</strong>
+          </div>
+          <Badge tone={links > nodes * 2 ? "warn" : "ok"}>
+            {nodes > 0 ? "topology observed" : "awaiting traffic"}
+          </Badge>
+        </div>
+      );
+    }
+    if (widgetTypeId === "trace-throughput") {
+      return (
+        <div class="widget-body widget-list mono">
+          <For each={traceRows}>
+            {(row) => (
+              <div class="widget-list-row widget-log-row">
+                <span>{row.status}</span>
+                <Badge tone={row.status === "ERROR" ? "error" : "ok"}>{row.duration_ms.toFixed(1)}ms</Badge>
+                <span class="truncate-text">{row.service_name || "-"}</span>
+                <span class="truncate-text">{row.name}</span>
+              </div>
+            )}
+          </For>
+          <Show when={traceRows.length === 0}><p class="paragraph">No recent traces.</p></Show>
+        </div>
+      );
+    }
+    if (widgetTypeId === "trace-services") {
+      return (
+        <div class="widget-body widget-list">
+          <For each={traceServiceRows}>
+            {(serviceName) => (
+              <div class="widget-list-row">
+                <strong>{serviceName}</strong>
+                <span>trace-enabled</span>
+                <Badge tone="ok">active</Badge>
+              </div>
+            )}
+          </For>
+          <Show when={traceServiceRows.length === 0}><p class="paragraph">No trace services yet.</p></Show>
+        </div>
+      );
+    }
+    if (widgetTypeId === "trace-dependencies") {
+      return (
+        <div class="widget-body widget-list mono">
+          <For each={traceDependencyRows}>
+            {(dep) => (
+              <div class="widget-list-row widget-log-row">
+                <span>{dep.parent}</span>
+                <Badge tone={dep.call_count > 1000 ? "warn" : "neutral"}>{dep.call_count}</Badge>
+                <span class="truncate-text">{"-> "}{dep.child}</span>
+                <span class="truncate-text">calls</span>
+              </div>
+            )}
+          </For>
+          <Show when={traceDependencyRows.length === 0}><p class="paragraph">No service dependencies yet.</p></Show>
+        </div>
+      );
+    }
 
     if (widgetTypeId === "kpi-reliability") {
       return (
@@ -1378,7 +1694,7 @@ export function DashboardsPage() {
     if (widgetTypeId === "alerts-feed") {
       return (
         <div class="widget-body widget-list">
-          <For each={widgetAlerts.slice(0, 4)}>
+          <For each={widgetAlerts.slice(0, listRows)}>
             {(alert) => (
               <div class="widget-list-row">
                 <strong>{alert.name}</strong>
@@ -1397,7 +1713,7 @@ export function DashboardsPage() {
     if (widgetTypeId === "incidents-live") {
       return (
         <div class="widget-body widget-list">
-          <For each={widgetIncidents.slice(0, 4)}>
+          <For each={widgetIncidents.slice(0, listRows)}>
             {(incident) => (
               <div class="widget-list-row">
                 <strong>{incident.title}</strong>
@@ -1432,7 +1748,7 @@ export function DashboardsPage() {
     if (widgetTypeId === "logs-errors") {
       return (
         <div class="widget-body widget-list mono">
-          <For each={widgetLogs.slice(0, 6)}>
+          <For each={widgetLogs.slice(0, logRows)}>
             {(entry) => (
               <div class="widget-list-row widget-log-row">
                 <span>{new Date(entry.timestamp).toLocaleTimeString()}</span>
@@ -1452,7 +1768,7 @@ export function DashboardsPage() {
     if (widgetTypeId === "deploy-correlation") {
       return (
         <div class="widget-body widget-list">
-          <For each={widgetCorrelations.slice(0, 4)}>
+          <For each={widgetCorrelations.slice(0, listRows)}>
             {(corr) => (
               <div class="widget-list-row">
                 <strong>{corr.deployment.service}</strong>
@@ -1811,7 +2127,7 @@ export function DashboardsPage() {
               }}
               style={{
                 "grid-column": `${clampSpan(item.x, 0, 11) + 1} / span ${clampSpan(item.w, 2, 12)}`,
-                "grid-row": `${clampSpan(item.y, 0, 60) + 1} / span ${clampSpan(item.h, 1, 4)}`
+                "grid-row": `${clampSpan(item.y, 0, 60) + 1} / span ${clampSpan(item.h, 1, GRID_MAX_H)}`
               }}
             >
               <header class="widget-head">

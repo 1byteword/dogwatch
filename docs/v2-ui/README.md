@@ -14,6 +14,7 @@ This folder contains the Phase 0 blueprint for the new frontend direction.
 - `04-workflows.md`: core workflow specs.
 - `05-acceptance-criteria.md`: measurable done criteria.
 - `06-implementation-backlog.md`: execution order and file-level targets.
+- `07-v1-parity-and-prod-hump.md`: V1 widget parity matrix and production-readiness plan.
 
 ## Constraints
 - No-glow baseline visual language.

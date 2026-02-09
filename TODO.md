@@ -91,3 +91,8 @@ Last updated: 2026-02-07
 - [x] Start Phase 0 artifact creation in `/docs/v2-ui/`.
 - [x] Define Solid project layout and module boundaries before coding pages.
 - [x] Build first style guide page with canonical components and states.
+- [x] Create V1 widget parity matrix + production hump plan: `docs/v2-ui/07-v1-parity-and-prod-hump.md`.
+- [ ] Deliver widget pack parity wave 1: System + Discovery + Trace.
+- [ ] Deliver widget pack parity wave 2: SLO/Synthetics + Cost/Usage + Admin.
+- [ ] Add autosave + crash recovery + per-widget error boundaries for dashboard editor.
+- [ ] Enforce CI performance budgets and golden-flow E2E for V2 default routes.
