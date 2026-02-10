@@ -1,4 +1,5 @@
-import { AuditLogRow, AuditLogsPage, AuditSummary } from "./types";
+import { api } from "../../core/api";
+import { ApiKeyInfo, AuditLogRow, AuditLogsPage, AuditSummary, BackupInfo } from "./types";
 
 function parseErrorMessage(status: number): string {
   if (status === 403) return "Audit API requires admin/owner access.";
@@ -58,4 +59,50 @@ export async function loadAuditLogs(limit: number, offset: number): Promise<Audi
     offset: Number(raw.offset || offset),
     hasMore: Boolean(raw.has_more)
   };
+}
+
+export async function loadRecentAuditLogs(): Promise<AuditLogRow[]> {
+  try {
+    const page = await loadAuditLogs(20, 0);
+    return page.logs;
+  } catch {
+    return [];
+  }
+}
+
+export async function loadApiKeys(): Promise<ApiKeyInfo[]> {
+  try {
+    const raw = await api.get<Array<Partial<ApiKeyInfo & { created_at?: string; last_used?: string }>>>("/api/apikeys");
+    return (raw || []).map((row, idx) => ({
+      id: row.id || `key-${idx}`,
+      name: row.name || "unnamed",
+      prefix: row.prefix || "dw_***",
+      createdAt: row.createdAt || row.created_at || "",
+      lastUsed: row.lastUsed || row.last_used || "",
+      role: row.role || "viewer"
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export async function loadBackups(): Promise<BackupInfo[]> {
+  try {
+    const raw = await api.get<Array<Partial<BackupInfo & { created_at?: string }>>>("/api/backup/list");
+    return (raw || []).map((row, idx) => ({
+      id: row.id || `backup-${idx}`,
+      filename: row.filename || "",
+      size: Number(row.size || 0),
+      createdAt: row.createdAt || row.created_at || "",
+      status: toBackupStatus(row.status)
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function toBackupStatus(s: string | undefined): BackupInfo["status"] {
+  const v = (s || "").toLowerCase();
+  if (v === "completed" || v === "failed" || v === "running" || v === "scheduled") return v;
+  return "completed";
 }

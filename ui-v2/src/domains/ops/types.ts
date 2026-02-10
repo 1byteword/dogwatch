@@ -88,3 +88,13 @@ export interface SystemMetricPoint {
   net_rx_bytes?: number;
   net_tx_bytes?: number;
 }
+
+export interface TraceSpan {
+  span_id: string;
+  parent_span_id: string;
+  operation_name: string;
+  service_name: string;
+  duration_ms: number;
+  status: string;
+  depth: number;
+}

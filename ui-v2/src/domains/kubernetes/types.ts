@@ -52,3 +52,13 @@ export interface K8sEvent {
   objectName: string;
   lastTimestamp?: string;
 }
+
+export interface K8sContainer {
+  name: string;
+  podName: string;
+  namespace: string;
+  image: string;
+  status: string;
+  restartCount: number;
+  ready: boolean;
+}

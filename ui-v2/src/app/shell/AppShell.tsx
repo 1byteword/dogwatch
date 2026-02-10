@@ -63,12 +63,8 @@ export function AppShell(props: ParentProps) {
       <aside class="app-sidebar">
         <div class="brand-block">
           <img src={dogwatchLogo} alt="dogwatch" class="brand-logo" />
-          <div class="brand-copy">
-            <strong>dogwatch</strong>
-            <span>Operations Command</span>
-          </div>
         </div>
-        <nav class="nav-stack">
+        <nav class="nav-stack" aria-label="Main navigation">
           {navItems.map((item) => (
             <A href={item.href} class="nav-item" activeClass="is-active">
               {item.label}
@@ -89,8 +85,9 @@ export function AppShell(props: ParentProps) {
               value={command()}
               onInput={(e) => setCommand(e.currentTarget.value)}
               onKeyDown={(e) => e.key === "Enter" && runCommand()}
+              aria-label="Command input"
             />
-            <Button onClick={runCommand}>Run</Button>
+            <Button onClick={runCommand} aria-label="Run command">Run</Button>
           </div>
           <div class="topbar-note">
             <Badge tone={status()?.healthy ? "ok" : "error"}>

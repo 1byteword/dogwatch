@@ -1,5 +1,5 @@
 import { api } from "../../core/api";
-import { K8sDeployment, K8sEvent, K8sNamespace, K8sPod, K8sServiceItem, K8sSummary } from "./types";
+import { K8sContainer, K8sDeployment, K8sEvent, K8sNamespace, K8sPod, K8sServiceItem, K8sSummary } from "./types";
 
 interface ApiK8sSummary {
   nodes?: number;
@@ -88,6 +88,24 @@ export async function loadK8sServices(namespace: string): Promise<K8sServiceItem
       type: String(svc.type || "ClusterIP"),
       clusterIP: String(svc.cluster_ip || ""),
       endpointCount: Number(svc.endpoint_count || 0)
+    };
+  });
+}
+
+export async function loadK8sContainers(namespace: string): Promise<K8sContainer[]> {
+  const q = namespace ? `?namespace=${encodeURIComponent(namespace)}` : "";
+  const raw = await api.get<unknown>(`/api/k8s/containers${q}`);
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item, idx) => {
+    const c = item as Record<string, unknown>;
+    return {
+      name: String(c.name || `container-${idx}`),
+      podName: String(c.pod_name || c.podName || ""),
+      namespace: String(c.namespace || "default"),
+      image: String(c.image || ""),
+      status: String(c.status || "unknown"),
+      restartCount: Number(c.restart_count || c.restartCount || 0),
+      ready: Boolean(c.ready)
     };
   });
 }

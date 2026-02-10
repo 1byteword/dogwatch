@@ -14,6 +14,7 @@ interface ChartPanelProps {
   series: SeriesConfig[];
   height?: number;
   class?: string;
+  "aria-label"?: string;
 }
 
 const DEFAULT_SERIES_COLORS = ["#ccff00", "#2ed67a", "#ffc34d", "#ff4d55"];
@@ -91,6 +92,8 @@ export function ChartPanel(props: ChartPanelProps) {
     <div
       ref={containerRef}
       class={`chart-panel${props.class ? ` ${props.class}` : ""}`}
+      role="img"
+      aria-label={props["aria-label"] || "Chart"}
     />
   );
 }

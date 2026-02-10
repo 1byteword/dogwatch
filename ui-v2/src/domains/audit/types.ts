@@ -26,3 +26,20 @@ export interface AuditLogsPage {
   limit: number;
   hasMore: boolean;
 }
+
+export interface ApiKeyInfo {
+  id: string;
+  name: string;
+  prefix: string;
+  createdAt: string;
+  lastUsed: string;
+  role: string;
+}
+
+export interface BackupInfo {
+  id: string;
+  filename: string;
+  size: number;
+  createdAt: string;
+  status: "completed" | "failed" | "running" | "scheduled";
+}

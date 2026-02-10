@@ -14,3 +14,22 @@ export interface AlertItem {
   recentDeploy: string;
   traceErrors: number;
 }
+
+export interface WatchRule {
+  id: string;
+  name: string;
+  query: string;
+  condition: string;
+  enabled: boolean;
+  lastEvaluated: string;
+  service: string;
+}
+
+export interface AlertSilence {
+  id: string;
+  matchers: string;
+  createdBy: string;
+  startsAt: string;
+  endsAt: string;
+  comment: string;
+}

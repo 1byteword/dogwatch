@@ -1,5 +1,5 @@
 import { A } from "@solidjs/router";
-import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
+import { ErrorBoundary, For, Show, batch, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack } from "solid-js";
 import type uPlot from "uplot";
 import { useAutoRefresh } from "../core/live";
 import { Badge } from "../design/components/Badge";
@@ -7,6 +7,8 @@ import { Button } from "../design/components/Button";
 import { ChartPanel } from "../design/components/ChartPanel";
 import { Input } from "../design/components/Input";
 import { Sparkline } from "../design/components/Sparkline";
+import { WidgetErrorFallback } from "../design/components/WidgetErrorFallback";
+import { WidgetLoading } from "../design/components/WidgetLoading";
 import {
   createDashboard,
   deleteDashboard,
@@ -22,7 +24,7 @@ import { loadLogs } from "../domains/logs/service";
 import { loadCatalogServices, loadCatalogStats } from "../domains/catalog/service";
 import { loadDeployIncidentCorrelations } from "../domains/correlation/service";
 import { loadCurrentOncall, loadOncallPolicies, loadOncallSchedules } from "../domains/oncall/service";
-import { loadK8sSummary } from "../domains/kubernetes/service";
+import { loadK8sContainers, loadK8sDeployments, loadK8sEvents, loadK8sPods, loadK8sSummary } from "../domains/kubernetes/service";
 import { loadNotifyChannels, loadNotifyHistory } from "../domains/notify/service";
 import {
   loadServiceMap,
@@ -32,8 +34,16 @@ import {
   loadTopProcesses,
   loadTraceDependencies,
   loadTraceServices,
+  loadTraceSpans,
   loadTraceSummaries
 } from "../domains/ops/service";
+import { loadSlos, loadSyntheticChecks, loadSyntheticFailures } from "../domains/slo/service";
+import { loadCostEstimate, loadCardinalityHotspots, loadCostQuickWins, loadCostRecommendations } from "../domains/cost/service";
+import { loadAnomalies, loadDbQueries, loadFlamegraphHotspots, loadSlowQueries } from "../domains/performance/service";
+import { loadWatches, loadSilences } from "../domains/alerts/service";
+import { loadLogComparison, loadLogPatterns, loadTrendingPatterns } from "../domains/logs/service";
+import { loadDeploys, loadDeployStats } from "../domains/deploys/service";
+import { loadRecentAuditLogs, loadApiKeys, loadBackups } from "../domains/audit/service";
 
 type WidgetDef = {
   id: string;
@@ -68,11 +78,43 @@ const WIDGETS: WidgetDef[] = [
   { id: "notify-delivery", title: "Notification Delivery", description: "Channel reliability and failed sends", defaultW: 4, defaultH: 2 },
   { id: "notify-failure-log", title: "Delivery Failures", description: "Recent failed notification deliveries", defaultW: 6, defaultH: 2 },
   { id: "ops-action-queue", title: "Ops Action Queue", description: "Highest-priority actions to execute now", defaultW: 6, defaultH: 2 },
-  { id: "command-links", title: "Ops Shortcuts", description: "Jump to triage and response surfaces", defaultW: 8, defaultH: 1 }
+  { id: "command-links", title: "Ops Shortcuts", description: "Jump to triage and response surfaces", defaultW: 8, defaultH: 2 },
+  { id: "slo-burn-rate", title: "SLO Burn Rate", description: "Error budget consumption speed across SLOs", defaultW: 4, defaultH: 2 },
+  { id: "slo-budget-remaining", title: "SLO Budget Remaining", description: "Remaining error budgets and SLO health", defaultW: 4, defaultH: 2 },
+  { id: "synthetic-uptime", title: "Synthetic Uptime", description: "Synthetic check uptime and latency overview", defaultW: 4, defaultH: 2 },
+  { id: "synthetic-failures", title: "Synthetic Failures", description: "Recent synthetic check failures and errors", defaultW: 6, defaultH: 2 },
+  { id: "cost-estimate", title: "Cost Estimate", description: "Platform cost vs Datadog equivalent spend", defaultW: 4, defaultH: 2 },
+  { id: "cardinality-hotspots", title: "Cardinality Hotspots", description: "Highest cardinality metric series and growth", defaultW: 6, defaultH: 2 },
+  { id: "cost-recommendations", title: "Cost Recommendations", description: "Actionable cost optimizations and quick wins", defaultW: 6, defaultH: 2 },
+  { id: "perf-anomalies", title: "Anomalies", description: "Recently detected metric anomalies", defaultW: 6, defaultH: 2 },
+  { id: "perf-db-queries", title: "DB Queries", description: "Slowest database queries and error rates", defaultW: 6, defaultH: 2 },
+  { id: "perf-flamegraph-top", title: "CPU Hotspots", description: "Top CPU-consuming functions from profiling", defaultW: 6, defaultH: 2 },
+  { id: "alerts-watches", title: "Watch Rules", description: "Configured alert watch rules and evaluation status", defaultW: 4, defaultH: 2 },
+  { id: "alerts-silences", title: "Alert Silences", description: "Active alert silences and expiry", defaultW: 4, defaultH: 2 },
+  { id: "logs-patterns", title: "Log Patterns", description: "Discovered log patterns grouped by frequency", defaultW: 6, defaultH: 2 },
+  { id: "logs-trending", title: "Trending Patterns", description: "Log patterns gaining frequency", defaultW: 6, defaultH: 2 },
+  { id: "deploy-feed", title: "Deploy Feed", description: "Recent deployments across services", defaultW: 6, defaultH: 2 },
+  { id: "admin-audit-feed", title: "Audit Feed", description: "Recent user actions and system events", defaultW: 6, defaultH: 2 },
+  { id: "admin-api-keys", title: "API Keys", description: "Active API key inventory and usage", defaultW: 4, defaultH: 2 },
+  { id: "admin-backup-status", title: "Backup Status", description: "Backup health and recent backups", defaultW: 4, defaultH: 2 },
+  { id: "k8s-containers", title: "Containers", description: "Container status, images, and restart counts", defaultW: 6, defaultH: 2 },
+  { id: "k8s-pods", title: "Pods", description: "Pod list sorted by restarts with status and node", defaultW: 6, defaultH: 2 },
+  { id: "k8s-deployments", title: "Deployments", description: "Deployment readiness and replica status", defaultW: 6, defaultH: 2 },
+  { id: "k8s-events", title: "K8s Events", description: "Recent Kubernetes events sorted by time", defaultW: 6, defaultH: 2 },
+  { id: "endpoint-detail", title: "Endpoint Detail", description: "Full endpoint list with latency and error rate", defaultW: 6, defaultH: 2 },
+  { id: "connection-detail", title: "Connection Detail", description: "Connection list with count, remote, and protocol", defaultW: 6, defaultH: 2 },
+  { id: "trace-detail", title: "Trace Detail", description: "Trace waterfall with span hierarchy and timing", defaultW: 8, defaultH: 3 },
+  { id: "log-compare", title: "Log Compare", description: "Side-by-side before/after log comparison", defaultW: 8, defaultH: 3 },
+  { id: "deploy-stats", title: "Deploy Stats", description: "Deployment KPIs: total, success rate, rollback rate", defaultW: 4, defaultH: 2 },
+  { id: "perf-slow-queries", title: "Slow Queries", description: "Slowest database queries by max execution time", defaultW: 6, defaultH: 2 },
+  { id: "cost-quick-wins", title: "Cost Quick Wins", description: "Top savings opportunities sorted by monthly impact", defaultW: 6, defaultH: 2 }
 ];
 
 const DEFAULT_DASHBOARD_NAME = "Operations Command";
 const EDIT_MODE_PREF_KEY = "dogwatch-v2-dashboard-edit-mode";
+const DRAFT_STORAGE_KEY = "dogwatch-v2-dashboard-draft";
+const DRAFT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const DRAFT_DEBOUNCE_MS = 2000;
 const MAX_HISTORY = 50;
 const WIDGET_INSTANCE_SEP = "::";
 
@@ -107,7 +149,7 @@ const defaultLayout: DashboardWidgetPosition[] = [
   { id: "oncall-now", x: 4, y: 4, w: 4, h: 2 },
   { id: "k8s-cluster", x: 8, y: 4, w: 4, h: 2 },
   { id: "notify-delivery", x: 0, y: 6, w: 4, h: 2 },
-  { id: "command-links", x: 4, y: 6, w: 8, h: 1 }
+  { id: "command-links", x: 4, y: 6, w: 8, h: 2 }
 ];
 
 const DASHBOARD_TEMPLATES: DashboardTemplate[] = [
@@ -122,7 +164,7 @@ const DASHBOARD_TEMPLATES: DashboardTemplate[] = [
       { id: "service-health", x: 0, y: 2, w: 4, h: 2 },
       { id: "notify-delivery", x: 4, y: 2, w: 4, h: 2 },
       { id: "ops-action-queue", x: 8, y: 2, w: 4, h: 2 },
-      { id: "command-links", x: 0, y: 4, w: 12, h: 1 }
+      { id: "command-links", x: 0, y: 4, w: 12, h: 2 }
     ]
   },
   {
@@ -150,8 +192,10 @@ const DASHBOARD_TEMPLATES: DashboardTemplate[] = [
       { id: "service-health", x: 0, y: 2, w: 4, h: 2 },
       { id: "service-latency-top", x: 4, y: 2, w: 4, h: 2 },
       { id: "notify-failure-log", x: 8, y: 2, w: 4, h: 2 },
-      { id: "logs-errors", x: 0, y: 4, w: 8, h: 2 },
-      { id: "notify-delivery", x: 8, y: 4, w: 4, h: 2 }
+      { id: "k8s-pods", x: 0, y: 4, w: 6, h: 2 },
+      { id: "k8s-events", x: 6, y: 4, w: 6, h: 2 },
+      { id: "logs-errors", x: 0, y: 6, w: 8, h: 2 },
+      { id: "notify-delivery", x: 8, y: 6, w: 4, h: 2 }
     ]
   },
   {
@@ -164,9 +208,38 @@ const DASHBOARD_TEMPLATES: DashboardTemplate[] = [
       { id: "alerts-feed", x: 8, y: 0, w: 4, h: 2 },
       { id: "logs-errors", x: 0, y: 2, w: 6, h: 2 },
       { id: "deploy-correlation", x: 6, y: 2, w: 6, h: 2 },
-      { id: "alerts-severity-map", x: 0, y: 4, w: 4, h: 2 },
-      { id: "ops-action-queue", x: 4, y: 4, w: 4, h: 2 },
-      { id: "command-links", x: 8, y: 4, w: 4, h: 1 }
+      { id: "deploy-stats", x: 0, y: 4, w: 4, h: 2 },
+      { id: "alerts-severity-map", x: 4, y: 4, w: 4, h: 2 },
+      { id: "ops-action-queue", x: 8, y: 4, w: 4, h: 2 },
+      { id: "command-links", x: 0, y: 6, w: 12, h: 2 }
+    ]
+  },
+  {
+    id: "finops",
+    name: "FinOps",
+    description: "Cost intelligence, SLO health, and cardinality control.",
+    layout: [
+      { id: "cost-estimate", x: 0, y: 0, w: 4, h: 2 },
+      { id: "slo-burn-rate", x: 4, y: 0, w: 4, h: 2 },
+      { id: "slo-budget-remaining", x: 8, y: 0, w: 4, h: 2 },
+      { id: "cardinality-hotspots", x: 0, y: 2, w: 6, h: 2 },
+      { id: "cost-recommendations", x: 6, y: 2, w: 6, h: 2 },
+      { id: "synthetic-uptime", x: 0, y: 4, w: 4, h: 2 },
+      { id: "synthetic-failures", x: 4, y: 4, w: 8, h: 2 },
+      { id: "cost-quick-wins", x: 0, y: 6, w: 6, h: 2 }
+    ]
+  },
+  {
+    id: "security-compliance",
+    name: "Security & Compliance",
+    description: "Audit trail, API key posture, and backup health.",
+    layout: [
+      { id: "admin-audit-feed", x: 0, y: 0, w: 6, h: 2 },
+      { id: "admin-api-keys", x: 6, y: 0, w: 3, h: 2 },
+      { id: "admin-backup-status", x: 9, y: 0, w: 3, h: 2 },
+      { id: "alerts-watches", x: 0, y: 2, w: 4, h: 2 },
+      { id: "alerts-silences", x: 4, y: 2, w: 4, h: 2 },
+      { id: "perf-anomalies", x: 8, y: 2, w: 4, h: 2 }
     ]
   }
 ];
@@ -220,10 +293,12 @@ function findNearestSlot(
   }
 
   if (best) return best;
+  // Fallback: place below all existing widgets to guarantee no overlap
+  const maxUsedY = placed.reduce((max, p) => Math.max(max, p.y + p.h), 0);
   return {
     ...item,
-    x: clampSpan(preferredX, 0, maxX),
-    y: clampSpan(preferredY, 0, GRID_MAX_Y)
+    x: 0,
+    y: maxUsedY
   };
 }
 
@@ -233,7 +308,7 @@ function packLayout(items: DashboardWidgetPosition[], prioritizeId?: string): Da
     return {
       ...item,
       w,
-      h: clampSpan(item.h, 1, GRID_MAX_H),
+      h: clampSpan(item.h, 2, GRID_MAX_H),
       x: clampSpan(item.x, 0, Math.max(0, GRID_COLUMNS - w)),
       y: clampSpan(item.y, 0, GRID_MAX_Y)
     };
@@ -265,7 +340,7 @@ function compactLayout(items: DashboardWidgetPosition[]): DashboardWidgetPositio
       return {
         ...item,
         w,
-        h: clampSpan(item.h, 1, GRID_MAX_H),
+        h: clampSpan(item.h, 2, GRID_MAX_H),
         x: clampSpan(item.x, 0, Math.max(0, GRID_COLUMNS - w)),
         y: clampSpan(item.y, 0, GRID_MAX_Y)
       };
@@ -324,7 +399,24 @@ export function DashboardsPage() {
   const [notice, setNotice] = createSignal("");
   const [selectedDashboardId, setSelectedDashboardId] = createSignal("");
   const [canvasName, setCanvasName] = createSignal(DEFAULT_DASHBOARD_NAME);
-  const [layout, setLayout] = createSignal<DashboardWidgetPosition[]>(defaultLayout);
+  const [layoutRaw, setLayoutRaw] = createSignal<DashboardWidgetPosition[]>(defaultLayout);
+  // Validated layout setter: always ensures no overlaps
+  const layout = (): DashboardWidgetPosition[] => layoutRaw();
+  const setLayout = (value: DashboardWidgetPosition[] | ((prev: DashboardWidgetPosition[]) => DashboardWidgetPosition[])) => {
+    setLayoutRaw((prev) => {
+      const next = typeof value === "function" ? value(prev) : value;
+      // Verify: if any overlaps exist in the result, force a repack
+      for (let i = 0; i < next.length; i++) {
+        for (let j = i + 1; j < next.length; j++) {
+          if (overlaps(next[i], next[j])) {
+            console.error("[dogwatch] setLayout produced overlap, auto-repacking", next[i].id, next[j].id);
+            return packLayout(next);
+          }
+        }
+      }
+      return next;
+    });
+  };
   const [showPicker, setShowPicker] = createSignal(false);
   const [pickerQuery, setPickerQuery] = createSignal("");
   const [newDashboardName, setNewDashboardName] = createSignal(DEFAULT_DASHBOARD_NAME);
@@ -334,6 +426,7 @@ export function DashboardsPage() {
   const [draggingWidgetId, setDraggingWidgetId] = createSignal("");
   const [dragOverWidgetId, setDragOverWidgetId] = createSignal("");
   const [canvasDropPoint, setCanvasDropPoint] = createSignal<{ x: number; y: number } | null>(null);
+  const [dragGrabOffset, setDragGrabOffset] = createSignal<{ cols: number; rows: number }>({ cols: 0, rows: 0 });
   const [editMode, setEditMode] = createSignal(false);
   const [widgetConfig, setWidgetConfig] = createSignal<Record<string, DashboardWidgetConfig>>({});
   const [focusedWidgetId, setFocusedWidgetId] = createSignal("");
@@ -343,6 +436,13 @@ export function DashboardsPage() {
   const [historyFuture, setHistoryFuture] = createSignal<EditorSnapshot[]>([]);
   const [copiedWidget, setCopiedWidget] = createSignal<CopiedWidget | null>(null);
   const [resizingWidgetId, setResizingWidgetId] = createSignal("");
+  const [pendingDraft, setPendingDraft] = createSignal<{
+    dashboardId: string;
+    name: string;
+    layout: DashboardWidgetPosition[];
+    widgetConfig: Record<string, DashboardWidgetConfig>;
+    savedAt: number;
+  } | null>(null);
 
   const [dashboards, { refetch: refetchDashboards }] = createResource(loadDashboards);
   const [selectedDashboard, { refetch: refetchSelectedDashboard }] = createResource(selectedDashboardId, loadDashboard);
@@ -382,11 +482,54 @@ export function DashboardsPage() {
   );
   const [traceServices, { refetch: refetchTraceServices }] = createResource(loadTraceServices);
   const [traceDependencies, { refetch: refetchTraceDependencies }] = createResource(loadTraceDependencies);
+  const [slos, { refetch: refetchSlos }] = createResource(loadSlos);
+  const [syntheticChecks, { refetch: refetchSyntheticChecks }] = createResource(loadSyntheticChecks);
+  const [syntheticFailures, { refetch: refetchSyntheticFailures }] = createResource(loadSyntheticFailures);
+  const [costEstimate, { refetch: refetchCostEstimate }] = createResource(loadCostEstimate);
+  const [cardinalityHotspots, { refetch: refetchCardinalityHotspots }] = createResource(loadCardinalityHotspots);
+  const [costRecommendations, { refetch: refetchCostRecommendations }] = createResource(loadCostRecommendations);
+  const [anomalies, { refetch: refetchAnomalies }] = createResource(loadAnomalies);
+  const [dbQueries, { refetch: refetchDbQueries }] = createResource(loadDbQueries);
+  const [flamegraphHotspots, { refetch: refetchFlamegraphHotspots }] = createResource(loadFlamegraphHotspots);
+  const [watches, { refetch: refetchWatches }] = createResource(loadWatches);
+  const [silences, { refetch: refetchSilences }] = createResource(loadSilences);
+  const [logPatterns, { refetch: refetchLogPatterns }] = createResource(loadLogPatterns);
+  const [trendingPatterns, { refetch: refetchTrendingPatterns }] = createResource(loadTrendingPatterns);
+  const [deploys, { refetch: refetchDeploys }] = createResource(loadDeploys);
+  const [auditLogs, { refetch: refetchAuditLogs }] = createResource(loadRecentAuditLogs);
+  const [apiKeys, { refetch: refetchApiKeys }] = createResource(loadApiKeys);
+  const [backups, { refetch: refetchBackups }] = createResource(loadBackups);
+  const [k8sContainers, { refetch: refetchK8sContainers }] = createResource(() => loadK8sContainers(""));
+  const [k8sPodList, { refetch: refetchK8sPodList }] = createResource(() => loadK8sPods(""));
+  const [k8sDeployments, { refetch: refetchK8sDeployments }] = createResource(() => loadK8sDeployments(""));
+  const [k8sEvents, { refetch: refetchK8sEvents }] = createResource(() => loadK8sEvents(""));
+  const [traceSpans, { refetch: refetchTraceSpans }] = createResource(
+    () => (traceSummaries() || [])[0]?.trace_id || "",
+    loadTraceSpans
+  );
+  const [logComparison, { refetch: refetchLogComparison }] = createResource(() => loadLogComparison("", "1h", "now"));
+  const [deployStats, { refetch: refetchDeployStats }] = createResource(loadDeployStats);
+  const [slowQueries, { refetch: refetchSlowQueries }] = createResource(loadSlowQueries);
+  const [costQuickWins, { refetch: refetchCostQuickWins }] = createResource(loadCostQuickWins);
 
   onMount(() => {
     if (typeof window === "undefined") return;
     const raw = window.localStorage.getItem(EDIT_MODE_PREF_KEY);
     if (raw === "1") setEditMode(true);
+
+    try {
+      const draftRaw = window.localStorage.getItem(DRAFT_STORAGE_KEY);
+      if (draftRaw) {
+        const draft = JSON.parse(draftRaw);
+        if (draft && draft.savedAt && Date.now() - draft.savedAt < DRAFT_MAX_AGE_MS) {
+          setPendingDraft(draft);
+        } else {
+          window.localStorage.removeItem(DRAFT_STORAGE_KEY);
+        }
+      }
+    } catch {
+      window.localStorage.removeItem(DRAFT_STORAGE_KEY);
+    }
 
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -500,6 +643,54 @@ export function DashboardsPage() {
   });
 
   createEffect(() => {
+    const draft = pendingDraft();
+    if (!draft) return;
+    const currentId = selectedDashboardId();
+    if (!currentId && !draft.dashboardId) {
+      setCanvasName(draft.name);
+      setLayout(packLayout(draft.layout));
+      setWidgetConfig(draft.widgetConfig);
+      setPendingDraft(null);
+      setNotice("Recovered unsaved dashboard changes.");
+      return;
+    }
+    if (currentId && currentId === draft.dashboardId) {
+      setCanvasName(draft.name);
+      setLayout(packLayout(draft.layout));
+      setWidgetConfig(draft.widgetConfig);
+      setPendingDraft(null);
+      setNotice("Recovered unsaved dashboard changes.");
+    }
+  });
+
+  {
+    let draftTimer: ReturnType<typeof setTimeout> | undefined;
+    createEffect(() => {
+      const currentLayout = layout();
+      const currentConfig = widgetConfig();
+      const currentName = canvasName();
+      const dashboardId = selectedDashboardId();
+
+      if (draftTimer) clearTimeout(draftTimer);
+      draftTimer = setTimeout(() => {
+        if (typeof window === "undefined") return;
+        try {
+          window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({
+            dashboardId,
+            name: currentName,
+            layout: currentLayout,
+            widgetConfig: currentConfig,
+            savedAt: Date.now(),
+          }));
+        } catch {
+          // localStorage full or unavailable — ignore
+        }
+      }, DRAFT_DEBOUNCE_MS);
+    });
+    onCleanup(() => { if (draftTimer) clearTimeout(draftTimer); });
+  }
+
+  createEffect(() => {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(EDIT_MODE_PREF_KEY, editMode() ? "1" : "0");
   });
@@ -525,6 +716,32 @@ export function DashboardsPage() {
     refetchTraceSummaries();
     refetchTraceServices();
     refetchTraceDependencies();
+    refetchSlos();
+    refetchSyntheticChecks();
+    refetchSyntheticFailures();
+    refetchCostEstimate();
+    refetchCardinalityHotspots();
+    refetchCostRecommendations();
+    refetchAnomalies();
+    refetchDbQueries();
+    refetchFlamegraphHotspots();
+    refetchWatches();
+    refetchSilences();
+    refetchLogPatterns();
+    refetchTrendingPatterns();
+    refetchDeploys();
+    refetchAuditLogs();
+    refetchApiKeys();
+    refetchBackups();
+    refetchK8sContainers();
+    refetchK8sPodList();
+    refetchK8sDeployments();
+    refetchK8sEvents();
+    refetchTraceSpans();
+    refetchLogComparison();
+    refetchDeployStats();
+    refetchSlowQueries();
+    refetchCostQuickWins();
   }, 30000);
 
   createEffect(() => {
@@ -556,9 +773,22 @@ export function DashboardsPage() {
       .slice()
       .sort((a, b) => (a.y - b.y) || (a.x - b.x))
   );
-  const visibleLayout = createMemo(() =>
+  const visibleLayoutRaw = createMemo(() =>
     showOnlyUnlocked() ? activeLayout().filter((item) => !isWidgetLocked(item.id)) : activeLayout()
   );
+  // Render-level safety: guarantee no overlapping items reach the DOM
+  const visibleLayout = createMemo(() => {
+    const items = visibleLayoutRaw();
+    for (let i = 0; i < items.length; i++) {
+      for (let j = i + 1; j < items.length; j++) {
+        if (overlaps(items[i], items[j])) {
+          console.error("[dogwatch] render-level overlap detected, repacking", items[i].id, items[j].id);
+          return packLayout(items);
+        }
+      }
+    }
+    return items;
+  });
   const dropPoint = createMemo(() => canvasDropPoint());
   const normalizedCurrentConfig = createMemo(() => normalizeWidgetConfig(widgetConfig()));
 
@@ -638,6 +868,24 @@ export function DashboardsPage() {
     onCleanup(() => window.removeEventListener("beforeunload", onBeforeUnload));
   });
   createEffect(() => {
+    const items = layout();
+    if (items.length < 2) return;
+    let hasOverlaps = false;
+    for (let i = 0; i < items.length && !hasOverlaps; i++) {
+      for (let j = i + 1; j < items.length; j++) {
+        if (overlaps(items[i], items[j])) {
+          hasOverlaps = true;
+          break;
+        }
+      }
+    }
+    if (hasOverlaps) {
+      console.warn("[dogwatch] overlap detected, repacking");
+      const packed = untrack(() => packLayout(items));
+      batch(() => setLayout(packed));
+    }
+  });
+  createEffect(() => {
     if (!focusedWidgetId()) return;
     if (!activeLayout().some((item) => item.id === focusedWidgetId())) {
       setFocusedWidgetId("");
@@ -669,6 +917,67 @@ export function DashboardsPage() {
 
   function isWidgetLocked(widgetId: string): boolean {
     return Boolean(widgetConfig()[widgetId]?.locked);
+  }
+
+  function isWidgetLoading(widgetTypeId: string): boolean {
+    const loadingMap: Record<string, () => boolean> = {
+      "system-overview": () => systemMetrics.loading,
+      "traffic-overview": () => statsSummary.loading,
+      "endpoint-latency": () => statsSummary.loading,
+      "connection-hotspots": () => statsSummary.loading,
+      "process-top": () => topProcesses.loading,
+      "service-map-health": () => serviceMap.loading,
+      "trace-throughput": () => traceSummaries.loading,
+      "trace-services": () => traceServices.loading,
+      "trace-dependencies": () => traceDependencies.loading,
+      "kpi-reliability": () => alerts.loading || catalogStats.loading,
+      "alerts-feed": () => alerts.loading,
+      "alerts-severity-map": () => alerts.loading,
+      "incidents-live": () => incidents.loading,
+      "incidents-by-commander": () => incidents.loading,
+      "logs-errors": () => logs.loading,
+      "deploy-correlation": () => correlations.loading,
+      "service-health": () => catalogServices.loading,
+      "service-latency-top": () => catalogServices.loading,
+      "oncall-now": () => currentOncall.loading || schedules.loading || policies.loading,
+      "k8s-cluster": () => k8sSummary.loading,
+      "k8s-capacity-risk": () => k8sSummary.loading,
+      "notify-delivery": () => channels.loading || history.loading,
+      "notify-failure-log": () => history.loading,
+      "ops-action-queue": () => alerts.loading || incidents.loading,
+      "command-links": () => false,
+      "slo-burn-rate": () => slos.loading,
+      "slo-budget-remaining": () => slos.loading,
+      "synthetic-uptime": () => syntheticChecks.loading,
+      "synthetic-failures": () => syntheticFailures.loading,
+      "cost-estimate": () => costEstimate.loading,
+      "cardinality-hotspots": () => cardinalityHotspots.loading,
+      "cost-recommendations": () => costRecommendations.loading,
+      "perf-anomalies": () => anomalies.loading,
+      "perf-db-queries": () => dbQueries.loading,
+      "perf-flamegraph-top": () => flamegraphHotspots.loading,
+      "alerts-watches": () => watches.loading,
+      "alerts-silences": () => silences.loading,
+      "logs-patterns": () => logPatterns.loading,
+      "logs-trending": () => trendingPatterns.loading,
+      "deploy-feed": () => deploys.loading,
+      "admin-audit-feed": () => auditLogs.loading,
+      "admin-api-keys": () => apiKeys.loading,
+      "admin-backup-status": () => backups.loading,
+      "k8s-containers": () => k8sContainers.loading,
+      "k8s-pods": () => k8sPodList.loading,
+      "k8s-deployments": () => k8sDeployments.loading,
+      "k8s-events": () => k8sEvents.loading,
+      "endpoint-detail": () => statsSummary.loading,
+      "connection-detail": () => statsSummary.loading,
+      "trace-detail": () => traceSpans.loading,
+      "log-compare": () => logComparison.loading,
+      "deploy-stats": () => deployStats.loading,
+      "perf-slow-queries": () => slowQueries.loading,
+      "cost-quick-wins": () => costQuickWins.loading,
+    };
+    const check = loadingMap[widgetTypeId];
+    return check ? check() : false;
   }
 
   function isWithinSince(rawTs: string | undefined, since: string): boolean {
@@ -929,7 +1238,7 @@ export function DashboardsPage() {
     }
     const widget = widgetDefForId(widgetId);
     pushHistory();
-    setLayout((curr) => curr.filter((item) => item.id !== widgetId));
+    setLayout((curr) => compactLayout(curr.filter((item) => item.id !== widgetId)));
     setWidgetConfig((curr) => {
       if (!(widgetId in curr)) return curr;
       const next = { ...curr };
@@ -1012,35 +1321,19 @@ export function DashboardsPage() {
     setLayout((curr) => packLayout(curr.map((item) => (item.id === widgetId ? fn(item) : item)), widgetId));
   }
 
-  function applyWidgetUpdateRaw(widgetId: string, fn: (item: DashboardWidgetPosition) => DashboardWidgetPosition) {
-    setLayout((curr) =>
-      curr.map((item) => {
-        if (item.id !== widgetId) return item;
-        const next = fn(item);
-        const w = clampSpan(next.w, 2, GRID_COLUMNS);
-        return {
-          ...next,
-          w,
-          h: clampSpan(next.h, 1, GRID_MAX_H),
-          x: clampSpan(next.x, 0, Math.max(0, GRID_COLUMNS - w)),
-          y: clampSpan(next.y, 0, GRID_MAX_Y)
-        };
-      })
-    );
-  }
 
   function nudgeWidget(widgetId: string, dx: number, dy: number) {
     updateWidget(widgetId, (item) => ({
       ...item,
-      x: clampSpan(item.x + dx, 0, Math.max(0, 12 - item.w)),
-      y: clampSpan(item.y + dy, 0, 30)
+      x: clampSpan(item.x + dx, 0, Math.max(0, GRID_COLUMNS - item.w)),
+      y: clampSpan(item.y + dy, 0, GRID_MAX_Y)
     }));
   }
 
   function resizeWidget(widgetId: string, dw: number, dh: number) {
     updateWidget(widgetId, (item) => {
       const nextW = clampSpan(item.w + dw, 2, 12);
-      const nextH = clampSpan(item.h + dh, 1, GRID_MAX_H);
+      const nextH = clampSpan(item.h + dh, 2, GRID_MAX_H);
       return {
         ...item,
         w: nextW,
@@ -1076,10 +1369,9 @@ export function DashboardsPage() {
     const onMove = (e: MouseEvent) => {
       const dxCols = quantizeDragDelta(e.clientX - startX, colWidth);
       const dyRows = quantizeDragDelta(e.clientY - startY, GRID_RESIZE_DRAG_STEP_PX);
-      const apply = e.altKey ? applyWidgetUpdateRaw : applyWidgetUpdate;
-      apply(widgetId, (item) => {
+      applyWidgetUpdate(widgetId, (item) => {
         const nextW = axis === "e" || axis === "se" ? clampSpan(startW + dxCols, 2, GRID_COLUMNS) : startW;
-        const nextH = axis === "s" || axis === "se" ? clampSpan(startH + dyRows, 1, GRID_MAX_H) : startH;
+        const nextH = axis === "s" || axis === "se" ? clampSpan(startH + dyRows, 2, GRID_MAX_H) : startH;
         return {
           ...item,
           w: nextW,
@@ -1091,6 +1383,7 @@ export function DashboardsPage() {
 
     const onUp = () => {
       setResizingWidgetId("");
+      setLayout((curr) => packLayout(curr, widgetId));
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
@@ -1110,10 +1403,12 @@ export function DashboardsPage() {
       const a = curr.find((item) => item.id === aId);
       const b = curr.find((item) => item.id === bId);
       if (!a || !b) return curr;
+      const aTargetX = clampSpan(b.x, 0, Math.max(0, GRID_COLUMNS - a.w));
+      const bTargetX = clampSpan(a.x, 0, Math.max(0, GRID_COLUMNS - b.w));
       return packLayout(
         curr.map((item) => {
-          if (item.id === aId) return { ...item, x: b.x, y: b.y };
-          if (item.id === bId) return { ...item, x: a.x, y: a.y };
+          if (item.id === aId) return { ...item, x: aTargetX, y: b.y };
+          if (item.id === bId) return { ...item, x: bTargetX, y: a.y };
           return item;
         }),
         aId
@@ -1122,10 +1417,25 @@ export function DashboardsPage() {
     setNotice(`Moved ${widgetTitle(aId)}.`);
   }
 
-  function onWidgetDragStart(widgetId: string) {
+  function onWidgetDragStart(widgetId: string, e: DragEvent) {
     if (isWidgetLocked(widgetId)) {
       setNotice("Widget is locked. Unlock in inspector to move.");
       return;
+    }
+    // Compute grab offset in grid cells using the same column math as canvasPointToGrid
+    const widget = layout().find((item) => item.id === widgetId);
+    if (canvasRef && widget) {
+      const canvasRect = canvasRef.getBoundingClientRect();
+      const colWidth = canvasRect.width / GRID_COLUMNS;
+      // Cursor position in grid columns, minus widget's current x = offset within widget
+      const cursorCol = Math.floor((e.clientX - canvasRect.left) / colWidth);
+      const cursorRow = Math.floor((e.clientY - canvasRect.top) / GRID_ROW_HEIGHT_PX);
+      setDragGrabOffset({
+        cols: clampSpan(cursorCol - widget.x, 0, widget.w - 1),
+        rows: clampSpan(cursorRow - widget.y, 0, widget.h - 1)
+      });
+    } else {
+      setDragGrabOffset({ cols: 0, rows: 0 });
     }
     setDraggingWidgetId(widgetId);
     setDragOverWidgetId("");
@@ -1147,29 +1457,29 @@ export function DashboardsPage() {
     onWidgetDragEnd();
   }
 
-  function canvasPointToGrid(clientX: number, clientY: number): { x: number; y: number } | null {
+  function canvasPointToGrid(clientX: number, clientY: number, applyGrabOffset = false): { x: number; y: number } | null {
     if (!canvasRef) return null;
     const rect = canvasRef.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return null;
     const columnWidth = rect.width / GRID_COLUMNS;
-    const x = clampSpan(Math.floor((clientX - rect.left) / columnWidth), 0, GRID_COLUMNS - 1);
-    const y = clampSpan(Math.floor((clientY - rect.top) / GRID_ROW_HEIGHT_PX), 0, GRID_MAX_Y);
-    return { x, y };
+    // Raw cursor position in grid cells
+    const rawCol = Math.floor((clientX - rect.left) / columnWidth);
+    const rawRow = Math.floor((clientY - rect.top) / GRID_ROW_HEIGHT_PX);
+    // Subtract grab offset (in grid cells) so drop tracks the widget's top-left corner
+    const offset = applyGrabOffset ? dragGrabOffset() : { cols: 0, rows: 0 };
+    const dragged = applyGrabOffset ? layout().find((item) => item.id === draggingWidgetId()) : null;
+    const maxX = dragged ? Math.max(0, GRID_COLUMNS - dragged.w) : GRID_COLUMNS - 1;
+    return {
+      x: clampSpan(rawCol - offset.cols, 0, maxX),
+      y: clampSpan(rawRow - offset.rows, 0, GRID_MAX_Y)
+    };
   }
 
-  function moveDraggedWidgetTo(point: { x: number; y: number }, bypassPack = false) {
+  function moveDraggedWidgetTo(point: { x: number; y: number }) {
     const draggedId = draggingWidgetId();
     if (!draggedId) return;
     if (isWidgetLocked(draggedId)) return;
     pushHistory();
-    if (bypassPack) {
-      applyWidgetUpdateRaw(draggedId, (item) => ({
-        ...item,
-        x: clampSpan(point.x, 0, Math.max(0, GRID_COLUMNS - item.w)),
-        y: clampSpan(point.y, 0, GRID_MAX_Y)
-      }));
-      return;
-    }
     applyWidgetUpdate(draggedId, (item) => ({
       ...item,
       x: clampSpan(point.x, 0, Math.max(0, GRID_COLUMNS - item.w)),
@@ -1200,7 +1510,33 @@ export function DashboardsPage() {
       refetchServiceMap(),
       refetchTraceSummaries(),
       refetchTraceServices(),
-      refetchTraceDependencies()
+      refetchTraceDependencies(),
+      refetchSlos(),
+      refetchSyntheticChecks(),
+      refetchSyntheticFailures(),
+      refetchCostEstimate(),
+      refetchCardinalityHotspots(),
+      refetchCostRecommendations(),
+      refetchAnomalies(),
+      refetchDbQueries(),
+      refetchFlamegraphHotspots(),
+      refetchWatches(),
+      refetchSilences(),
+      refetchLogPatterns(),
+      refetchTrendingPatterns(),
+      refetchDeploys(),
+      refetchAuditLogs(),
+      refetchApiKeys(),
+      refetchBackups(),
+      refetchK8sContainers(),
+      refetchK8sPodList(),
+      refetchK8sDeployments(),
+      refetchK8sEvents(),
+      refetchTraceSpans(),
+      refetchLogComparison(),
+      refetchDeployStats(),
+      refetchSlowQueries(),
+      refetchCostQuickWins()
     ]);
     setNotice("Dashboard and widget data refreshed.");
   }
@@ -1216,6 +1552,7 @@ export function DashboardsPage() {
       await updateDashboard(id, canvasName().trim() || selectedDashboardName(), activeLayout(), normalizedCurrentConfig());
       await refetchDashboards();
       await refetchSelectedDashboard();
+      try { window.localStorage.removeItem(DRAFT_STORAGE_KEY); } catch {}
       setNotice("Dashboard saved.");
     } catch {
       setNotice("Failed to save dashboard.");
@@ -1236,6 +1573,7 @@ export function DashboardsPage() {
         setSelectedDashboardId(created.id);
       }
       setCanvasName(name);
+      try { window.localStorage.removeItem(DRAFT_STORAGE_KEY); } catch {}
       setNotice("Dashboard created.");
     } catch {
       setNotice("Failed to create dashboard.");
@@ -1338,7 +1676,7 @@ export function DashboardsPage() {
           x: clampSpan(item.x, 0, GRID_COLUMNS - 1),
           y: clampSpan(item.y, 0, GRID_MAX_Y),
           w: clampSpan(item.w, 2, GRID_COLUMNS),
-          h: clampSpan(item.h, 1, GRID_MAX_H)
+          h: clampSpan(item.h, 2, GRID_MAX_H)
         }));
 
       if (!filteredLayout.length) {
@@ -1997,6 +2335,719 @@ export function DashboardsPage() {
       );
     }
 
+    if (widgetTypeId === "slo-burn-rate") {
+      const sloRows = (slos() || [])
+        .slice()
+        .sort((a, b) => b.burnRate - a.burnRate)
+        .slice(0, listRows);
+      return (
+        <div class="widget-body widget-list">
+          <For each={sloRows}>
+            {(slo) => (
+              <div class="widget-list-row">
+                <strong>{slo.name}</strong>
+                <span>{slo.service || "-"}</span>
+                <Badge tone={slo.burnRate > 2 ? "error" : slo.burnRate > 1 ? "warn" : "ok"}>
+                  {slo.burnRate.toFixed(2)}x burn
+                </Badge>
+              </div>
+            )}
+          </For>
+          <Show when={sloRows.length === 0}><p class="paragraph">No SLOs configured.</p></Show>
+        </div>
+      );
+    }
+
+    if (widgetTypeId === "slo-budget-remaining") {
+      const sloRows = (slos() || [])
+        .slice()
+        .sort((a, b) => a.budgetRemaining - b.budgetRemaining)
+        .slice(0, listRows);
+      const breached = (slos() || []).filter((s) => s.status === "breached").length;
+      const atRisk = (slos() || []).filter((s) => s.status === "at_risk").length;
+      return (
+        <div class="widget-body widget-list">
+          <div class="widget-kpi-grid" style={{ flex: "none", "padding-bottom": "var(--v2-space-2)" }}>
+            <div>
+              <label>Total SLOs</label>
+              <strong>{(slos() || []).length}</strong>
+            </div>
+            <div>
+              <label>Breached</label>
+              <strong>{breached}</strong>
+            </div>
+            <div>
+              <label>At Risk</label>
+              <strong>{atRisk}</strong>
+            </div>
+          </div>
+          <For each={sloRows}>
+            {(slo) => (
+              <div class="widget-meter-row">
+                <span>{slo.name}</span>
+                <div class="widget-meter-track">
+                  <div class="widget-meter-fill" style={{ width: `${Math.max(3, Math.min(100, slo.budgetRemaining))}%` }} />
+                </div>
+                <Badge tone={slo.status === "breached" ? "error" : slo.status === "at_risk" ? "warn" : "ok"}>
+                  {slo.budgetRemaining.toFixed(1)}%
+                </Badge>
+              </div>
+            )}
+          </For>
+          <Show when={sloRows.length === 0}><p class="paragraph">No SLOs configured.</p></Show>
+        </div>
+      );
+    }
+
+    if (widgetTypeId === "synthetic-uptime") {
+      const checks = (syntheticChecks() || [])
+        .slice()
+        .sort((a, b) => a.uptimePercent - b.uptimePercent)
+        .slice(0, listRows);
+      const failing = (syntheticChecks() || []).filter((c) => c.status === "failing").length;
+      return (
+        <div class="widget-body widget-list">
+          <div class="widget-kpi-grid" style={{ flex: "none", "padding-bottom": "var(--v2-space-2)" }}>
+            <div>
+              <label>Total Checks</label>
+              <strong>{(syntheticChecks() || []).length}</strong>
+            </div>
+            <div>
+              <label>Failing</label>
+              <strong>{failing}</strong>
+            </div>
+          </div>
+          <For each={checks}>
+            {(check) => (
+              <div class="widget-meter-row">
+                <span>{check.name}</span>
+                <div class="widget-meter-track">
+                  <div class="widget-meter-fill" style={{ width: `${Math.max(3, check.uptimePercent)}%` }} />
+                </div>
+                <Badge tone={check.status === "failing" ? "error" : check.status === "degraded" ? "warn" : "ok"}>
+                  {check.uptimePercent.toFixed(1)}%
+                </Badge>
+              </div>
+            )}
+          </For>
+          <Show when={checks.length === 0}><p class="paragraph">No synthetic checks configured.</p></Show>
+        </div>
+      );
+    }
+
+    if (widgetTypeId === "synthetic-failures") {
+      const failures = (syntheticFailures() || []).slice(0, logRows);
+      return (
+        <div class="widget-body widget-list mono">
+          <For each={failures}>
+            {(f) => (
+              <div class="widget-list-row widget-log-row">
+                <span>{f.timestamp ? new Date(f.timestamp).toLocaleTimeString() : "-"}</span>
+                <Badge tone="error">{f.statusCode || "err"}</Badge>
+                <span class="truncate-text">{f.checkName}</span>
+                <span class="truncate-text">{f.error || `HTTP ${f.statusCode}`}</span>
+              </div>
+            )}
+          </For>
+          <Show when={failures.length === 0}><p class="paragraph">No synthetic failures.</p></Show>
+        </div>
+      );
+    }
+
+    if (widgetTypeId === "cost-estimate") {
+      const cost = costEstimate();
+      return (
+        <div class="widget-body widget-kpi-grid">
+          <div>
+            <label>Monthly Cost</label>
+            <strong>${cost?.totalMonthly?.toLocaleString() || "0"}</strong>
+          </div>
+          <div>
+            <label>Datadog Equivalent</label>
+            <strong>${cost?.datadogEquivalent?.toLocaleString() || "0"}</strong>
+          </div>
+          <div>
+            <label>Savings</label>
+            <strong>{cost?.savingsPercent || 0}%</strong>
+          </div>
+          <Badge tone={(cost?.savingsPercent || 0) > 50 ? "ok" : (cost?.savingsPercent || 0) > 20 ? "neutral" : "warn"}>
+            {(cost?.savingsPercent || 0) > 0 ? `saving ${cost?.savingsPercent}% vs Datadog` : "calculating..."}
+          </Badge>
+        </div>
+      );
+    }
+
+    if (widgetTypeId === "cardinality-hotspots") {
+      const hotspots = (cardinalityHotspots() || [])
+        .slice()
+        .sort((a, b) => b.series - a.series)
+        .slice(0, logRows);
+      return (
+        <div class="widget-body widget-list mono">
+          <For each={hotspots}>
+            {(hs) => (
+              <div class="widget-list-row widget-log-row">
+                <span class="truncate-text">{hs.metric}</span>
+                <Badge tone={hs.series > 10000 ? "error" : hs.series > 1000 ? "warn" : "neutral"}>
+                  {hs.series.toLocaleString()} series
+                </Badge>
+                <span>{hs.labels} labels</span>
+                <span>{hs.growthRate > 0 ? `+${hs.growthRate.toFixed(1)}%` : `${hs.growthRate.toFixed(1)}%`}</span>
+              </div>
+            )}
+          </For>
+          <Show when={hotspots.length === 0}><p class="paragraph">No cardinality data yet.</p></Show>
+        </div>
+      );
+    }
+
+    if (widgetTypeId === "cost-recommendations") {
+      const recs = (costRecommendations() || [])
+        .slice()
+        .sort((a, b) => b.savingsEstimate - a.savingsEstimate)
+        .slice(0, listRows);
+      return (
+        <div class="widget-body widget-list">
+          <For each={recs}>
+            {(rec) => (
+              <div class="widget-list-row">
+                <strong>{rec.title}</strong>
+                <span>${rec.savingsEstimate.toLocaleString()}/mo</span>
+                <Badge tone={rec.impact === "high" ? "error" : rec.impact === "medium" ? "warn" : "neutral"}>
+                  {rec.impact} impact
+                </Badge>
+              </div>
+            )}
+          </For>
+          <Show when={recs.length === 0}><p class="paragraph">No cost recommendations yet.</p></Show>
+        </div>
+      );
+    }
+
+    if (widgetTypeId === "perf-anomalies") {
+      const rows = (anomalies() || [])
+        .slice()
+        .sort((a, b) => b.score - a.score)
+        .slice(0, listRows);
+      return (
+        <div class="widget-body widget-list">
+          <For each={rows}>
+            {(a) => (
+              <div class="widget-list-row">
+                <strong>{a.metric}</strong>
+                <span>{a.service || "-"}</span>
+                <Badge tone={a.severity === "critical" ? "error" : a.severity === "high" ? "warn" : "neutral"}>
+                  {a.severity} ({a.score.toFixed(1)})
+                </Badge>
+              </div>
+            )}
+          </For>
+          <Show when={rows.length === 0}><p class="paragraph">No anomalies detected.</p></Show>
+        </div>
+      );
+    }
+
+    if (widgetTypeId === "perf-db-queries") {
+      const rows = (dbQueries() || [])
+        .slice()
+        .sort((a, b) => b.avgMs - a.avgMs)
+        .slice(0, logRows);
+      return (
+        <div class="widget-body widget-list mono">
+          <For each={rows}>
+            {(q) => (
+              <div class="widget-list-row widget-log-row">
+                <Badge tone={q.avgMs > 500 ? "error" : q.avgMs > 100 ? "warn" : "ok"}>
+                  {q.avgMs.toFixed(0)}ms
+                </Badge>
+                <span class="truncate-text">{q.database || "-"}</span>
+                <span class="truncate-text">{q.query}</span>
+                <span>{q.callCount} calls</span>
+              </div>
+            )}
+          </For>
+          <Show when={rows.length === 0}><p class="paragraph">No DB query data yet.</p></Show>
+        </div>
+      );
+    }
+
+    if (widgetTypeId === "perf-flamegraph-top") {
+      const rows = (flamegraphHotspots() || [])
+        .slice()
+        .sort((a, b) => b.selfPercent - a.selfPercent)
+        .slice(0, logRows);
+      return (
+        <div class="widget-body widget-list mono">
+          <For each={rows}>
+            {(fn) => (
+              <div class="widget-list-row widget-log-row">
+                <Badge tone={fn.selfPercent > 10 ? "error" : fn.selfPercent > 5 ? "warn" : "neutral"}>
+                  {fn.selfPercent.toFixed(1)}% self
+                </Badge>
+                <span class="truncate-text">{fn.function}</span>
+                <span class="truncate-text">{fn.module}</span>
+                <span>{fn.samples} samples</span>
+              </div>
+            )}
+          </For>
+          <Show when={rows.length === 0}><p class="paragraph">No profiling data yet.</p></Show>
+        </div>
+      );
+    }
+
+    if (widgetTypeId === "alerts-watches") {
+      const rows = (watches() || []).slice(0, listRows);
+      const disabled = (watches() || []).filter((w) => !w.enabled).length;
+      return (
+        <div class="widget-body widget-list">
+          <div class="widget-kpi-grid" style={{ flex: "none", "padding-bottom": "var(--v2-space-2)" }}>
+            <div>
+              <label>Total Rules</label>
+              <strong>{(watches() || []).length}</strong>
+            </div>
+            <div>
+              <label>Disabled</label>
+              <strong>{disabled}</strong>
+            </div>
+          </div>
+          <For each={rows}>
+            {(w) => (
+              <div class="widget-list-row">
+                <strong>{w.name}</strong>
+                <span>{w.service || "-"}</span>
+                <Badge tone={w.enabled ? "ok" : "neutral"}>
+                  {w.enabled ? "active" : "disabled"}
+                </Badge>
+              </div>
+            )}
+          </For>
+          <Show when={rows.length === 0}><p class="paragraph">No watch rules configured.</p></Show>
+        </div>
+      );
+    }
+
+    if (widgetTypeId === "alerts-silences") {
+      const rows = (silences() || []).slice(0, listRows);
+      return (
+        <div class="widget-body widget-list">
+          <For each={rows}>
+            {(s) => (
+              <div class="widget-list-row">
+                <strong>{s.matchers || "all"}</strong>
+                <span>{s.createdBy || "-"}</span>
+                <Badge tone="neutral">
+                  until {s.endsAt ? new Date(s.endsAt).toLocaleString() : "forever"}
+                </Badge>
+              </div>
+            )}
+          </For>
+          <Show when={rows.length === 0}><p class="paragraph">No active silences.</p></Show>
+        </div>
+      );
+    }
+
+    if (widgetTypeId === "logs-patterns") {
+      const rows = (logPatterns() || [])
+        .slice()
+        .sort((a, b) => b.count - a.count)
+        .slice(0, logRows);
+      return (
+        <div class="widget-body widget-list mono">
+          <For each={rows}>
+            {(p) => (
+              <div class="widget-list-row widget-log-row">
+                <Badge tone={p.level === "error" || p.level === "fatal" ? "error" : p.level === "warn" ? "warn" : "neutral"}>
+                  {p.count}
+                </Badge>
+                <span class="truncate-text">{p.pattern}</span>
+                <span class="truncate-text">{p.services.join(", ") || "-"}</span>
+              </div>
+            )}
+          </For>
+          <Show when={rows.length === 0}><p class="paragraph">No log patterns discovered.</p></Show>
+        </div>
+      );
+    }
+
+    if (widgetTypeId === "logs-trending") {
+      const rows = (trendingPatterns() || [])
+        .slice()
+        .sort((a, b) => b.growthPercent - a.growthPercent)
+        .slice(0, logRows);
+      return (
+        <div class="widget-body widget-list mono">
+          <For each={rows}>
+            {(p) => (
+              <div class="widget-list-row widget-log-row">
+                <Badge tone={p.growthPercent > 100 ? "error" : p.growthPercent > 30 ? "warn" : "neutral"}>
+                  +{p.growthPercent.toFixed(0)}%
+                </Badge>
+                <span class="truncate-text">{p.pattern}</span>
+                <span>{p.count} hits</span>
+              </div>
+            )}
+          </For>
+          <Show when={rows.length === 0}><p class="paragraph">No trending patterns.</p></Show>
+        </div>
+      );
+    }
+
+    if (widgetTypeId === "deploy-feed") {
+      const rows = (deploys() || []).slice(0, logRows);
+      return (
+        <div class="widget-body widget-list mono">
+          <For each={rows}>
+            {(d) => (
+              <div class="widget-list-row widget-log-row">
+                <span>{d.deployedAt ? new Date(d.deployedAt).toLocaleTimeString() : "-"}</span>
+                <Badge tone={d.status === "failed" ? "error" : d.status === "rolling" ? "warn" : "ok"}>
+                  {d.status}
+                </Badge>
+                <span class="truncate-text">{d.service}</span>
+                <span class="truncate-text">{d.version}</span>
+              </div>
+            )}
+          </For>
+          <Show when={rows.length === 0}><p class="paragraph">No recent deploys.</p></Show>
+        </div>
+      );
+    }
+
+    if (widgetTypeId === "admin-audit-feed") {
+      const rows = (auditLogs() || []).slice(0, logRows);
+      return (
+        <div class="widget-body widget-list mono">
+          <For each={rows}>
+            {(entry) => (
+              <div class="widget-list-row widget-log-row">
+                <span>{new Date(entry.timestamp).toLocaleTimeString()}</span>
+                <Badge tone={entry.outcome === "failure" ? "error" : "neutral"}>
+                  {entry.action}
+                </Badge>
+                <span class="truncate-text">{entry.userEmail || entry.userId}</span>
+                <span class="truncate-text">{entry.resourceType}: {entry.resourceName}</span>
+              </div>
+            )}
+          </For>
+          <Show when={rows.length === 0}><p class="paragraph">No audit events.</p></Show>
+        </div>
+      );
+    }
+
+    if (widgetTypeId === "admin-api-keys") {
+      const keys = (apiKeys() || []).slice(0, listRows);
+      return (
+        <div class="widget-body widget-list">
+          <div class="widget-kpi-grid" style={{ flex: "none", "padding-bottom": "var(--v2-space-2)" }}>
+            <div>
+              <label>Active Keys</label>
+              <strong>{(apiKeys() || []).length}</strong>
+            </div>
+          </div>
+          <For each={keys}>
+            {(k) => (
+              <div class="widget-list-row">
+                <strong>{k.name}</strong>
+                <span>{k.prefix}</span>
+                <Badge tone="neutral">{k.role}</Badge>
+              </div>
+            )}
+          </For>
+          <Show when={keys.length === 0}><p class="paragraph">No API keys configured.</p></Show>
+        </div>
+      );
+    }
+
+    if (widgetTypeId === "admin-backup-status") {
+      const rows = (backups() || []).slice(0, listRows);
+      const failed = (backups() || []).filter((b) => b.status === "failed").length;
+      return (
+        <div class="widget-body widget-list">
+          <div class="widget-kpi-grid" style={{ flex: "none", "padding-bottom": "var(--v2-space-2)" }}>
+            <div>
+              <label>Total Backups</label>
+              <strong>{(backups() || []).length}</strong>
+            </div>
+            <div>
+              <label>Failed</label>
+              <strong>{failed}</strong>
+            </div>
+          </div>
+          <For each={rows}>
+            {(b) => (
+              <div class="widget-list-row">
+                <strong>{b.filename || b.id}</strong>
+                <span>{b.size > 0 ? `${(b.size / 1024 / 1024).toFixed(1)} MB` : "-"}</span>
+                <Badge tone={b.status === "failed" ? "error" : b.status === "running" ? "warn" : "ok"}>
+                  {b.status}
+                </Badge>
+              </div>
+            )}
+          </For>
+          <Show when={rows.length === 0}><p class="paragraph">No backups found.</p></Show>
+        </div>
+      );
+    }
+
+    if (widgetTypeId === "k8s-containers") {
+      const rows = (k8sContainers() || []).slice(0, logRows);
+      return (
+        <div class="widget-body widget-list mono">
+          <For each={rows}>
+            {(c) => (
+              <div class="widget-list-row widget-log-row">
+                <Badge tone={c.status === "running" ? "ok" : c.status === "waiting" ? "warn" : "error"}>{c.status}</Badge>
+                <strong>{c.name}</strong>
+                <span style={{ opacity: 0.6 }}>{c.image}</span>
+                <Show when={c.restartCount > 0}>
+                  <Badge tone="warn">{c.restartCount} restarts</Badge>
+                </Show>
+              </div>
+            )}
+          </For>
+          <Show when={rows.length === 0}><p class="paragraph">No containers found.</p></Show>
+        </div>
+      );
+    }
+    if (widgetTypeId === "k8s-pods") {
+      const rows = (k8sPodList() || []).slice().sort((a, b) => b.restartCount - a.restartCount).slice(0, logRows);
+      return (
+        <div class="widget-body widget-list mono">
+          <For each={rows}>
+            {(pod) => (
+              <div class="widget-list-row widget-log-row">
+                <Badge tone={pod.status === "Running" ? "ok" : pod.status === "Pending" ? "warn" : "error"}>{pod.status}</Badge>
+                <strong>{pod.name}</strong>
+                <span style={{ opacity: 0.6 }}>{pod.nodeName || "-"}</span>
+                <Show when={pod.restartCount > 0}>
+                  <Badge tone="warn">{pod.restartCount} restarts</Badge>
+                </Show>
+              </div>
+            )}
+          </For>
+          <Show when={rows.length === 0}><p class="paragraph">No pods found.</p></Show>
+        </div>
+      );
+    }
+    if (widgetTypeId === "k8s-deployments") {
+      const rows = (k8sDeployments() || []).slice(0, logRows);
+      return (
+        <div class="widget-body widget-list mono">
+          <For each={rows}>
+            {(dep) => (
+              <div class="widget-list-row widget-log-row">
+                <Badge tone={dep.readyReplicas >= dep.replicas ? "ok" : dep.readyReplicas > 0 ? "warn" : "error"}>
+                  {dep.readyReplicas}/{dep.replicas}
+                </Badge>
+                <strong>{dep.name}</strong>
+                <span style={{ opacity: 0.6 }}>{dep.namespace}</span>
+                <span>{dep.status}</span>
+              </div>
+            )}
+          </For>
+          <Show when={rows.length === 0}><p class="paragraph">No deployments found.</p></Show>
+        </div>
+      );
+    }
+    if (widgetTypeId === "k8s-events") {
+      const rows = (k8sEvents() || [])
+        .slice()
+        .sort((a, b) => (b.lastTimestamp || "").localeCompare(a.lastTimestamp || ""))
+        .slice(0, logRows);
+      return (
+        <div class="widget-body widget-list mono">
+          <For each={rows}>
+            {(evt) => (
+              <div class="widget-list-row widget-log-row">
+                <Badge tone={evt.type === "Warning" ? "warn" : "ok"}>{evt.type}</Badge>
+                <strong>{evt.reason}</strong>
+                <span style={{ opacity: 0.6 }}>{evt.objectKind}/{evt.objectName}</span>
+                <span>{evt.message.slice(0, 80)}</span>
+              </div>
+            )}
+          </For>
+          <Show when={rows.length === 0}><p class="paragraph">No events found.</p></Show>
+        </div>
+      );
+    }
+    if (widgetTypeId === "endpoint-detail") {
+      const rows = (statsSummary()?.endpoints || []).slice().sort((a, b) => b.p99_ms - a.p99_ms).slice(0, logRows);
+      return (
+        <div class="widget-body widget-list mono">
+          <For each={rows}>
+            {(ep) => (
+              <div class="widget-list-row widget-log-row">
+                <Badge tone="neutral">{ep.method}</Badge>
+                <strong>{ep.path}</strong>
+                <span>avg {ep.avg_ms.toFixed(1)}ms</span>
+                <span>p99 {ep.p99_ms.toFixed(1)}ms</span>
+                <Badge tone={ep.error_rate > 5 ? "error" : ep.error_rate > 1 ? "warn" : "ok"}>
+                  {ep.error_rate.toFixed(1)}% err
+                </Badge>
+              </div>
+            )}
+          </For>
+          <Show when={rows.length === 0}><p class="paragraph">No endpoint data yet.</p></Show>
+        </div>
+      );
+    }
+    if (widgetTypeId === "connection-detail") {
+      const rows = (statsSummary()?.connections || []).slice().sort((a, b) => b.count - a.count).slice(0, logRows);
+      return (
+        <div class="widget-body widget-list mono">
+          <For each={rows}>
+            {(conn) => (
+              <div class="widget-list-row widget-log-row">
+                <Badge tone="neutral">{conn.count}</Badge>
+                <strong>{conn.remote}:{conn.port}</strong>
+                <span style={{ opacity: 0.6 }}>{conn.process}</span>
+              </div>
+            )}
+          </For>
+          <Show when={rows.length === 0}><p class="paragraph">No connections found.</p></Show>
+        </div>
+      );
+    }
+    if (widgetTypeId === "trace-detail") {
+      const spans = (traceSpans() || []).slice(0, logRows * 2);
+      const firstTrace = (traceSummaries() || [])[0];
+      return (
+        <div class="widget-body widget-list">
+          <div class="widget-kpi-grid" style={{ flex: "none", "padding-bottom": "var(--v2-space-2)" }}>
+            <div>
+              <label>Trace ID</label>
+              <strong style={{ "font-size": "0.75rem" }}>{firstTrace?.trace_id?.slice(0, 16) || "-"}…</strong>
+            </div>
+            <div>
+              <label>Duration</label>
+              <strong>{firstTrace?.duration_ms?.toFixed(1) || 0}ms</strong>
+            </div>
+            <div>
+              <label>Spans</label>
+              <strong>{spans.length}</strong>
+            </div>
+          </div>
+          <div class="mono" style={{ overflow: "auto", flex: 1 }}>
+            <For each={spans}>
+              {(span) => (
+                <div class="widget-list-row widget-log-row" style={{ "padding-left": `${span.depth * 16 + 4}px` }}>
+                  <Badge tone={span.status === "ERROR" ? "error" : span.status === "OK" ? "ok" : "neutral"}>{span.duration_ms.toFixed(1)}ms</Badge>
+                  <strong>{span.operation_name}</strong>
+                  <span style={{ opacity: 0.6 }}>{span.service_name}</span>
+                </div>
+              )}
+            </For>
+            <Show when={spans.length === 0}><p class="paragraph">No spans loaded. Select a trace to view detail.</p></Show>
+          </div>
+        </div>
+      );
+    }
+    if (widgetTypeId === "log-compare") {
+      const cmp = logComparison();
+      return (
+        <div class="widget-body" style={{ display: "flex", "flex-direction": "column", gap: "var(--v2-space-2)" }}>
+          <div style={{ display: "flex", gap: "var(--v2-space-3)", flex: 1, overflow: "hidden" }}>
+            <div class="widget-list mono" style={{ flex: 1, overflow: "auto" }}>
+              <label style={{ "font-weight": "bold", "padding-bottom": "var(--v2-space-1)" }}>Before</label>
+              <For each={(cmp?.beforeEntries || []).slice(0, logRows)}>
+                {(entry) => (
+                  <div class="widget-list-row widget-log-row">
+                    <Badge tone={entry.level === "error" ? "error" : entry.level === "warn" ? "warn" : "ok"}>{entry.level}</Badge>
+                    <span>{entry.message.slice(0, 100)}</span>
+                  </div>
+                )}
+              </For>
+              <Show when={!cmp?.beforeEntries?.length}><p class="paragraph">No before entries.</p></Show>
+            </div>
+            <div class="widget-list mono" style={{ flex: 1, overflow: "auto" }}>
+              <label style={{ "font-weight": "bold", "padding-bottom": "var(--v2-space-1)" }}>After</label>
+              <For each={(cmp?.afterEntries || []).slice(0, logRows)}>
+                {(entry) => (
+                  <div class="widget-list-row widget-log-row">
+                    <Badge tone={entry.level === "error" ? "error" : entry.level === "warn" ? "warn" : "ok"}>{entry.level}</Badge>
+                    <span>{entry.message.slice(0, 100)}</span>
+                  </div>
+                )}
+              </For>
+              <Show when={!cmp?.afterEntries?.length}><p class="paragraph">No after entries.</p></Show>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: "var(--v2-space-2)", "flex-wrap": "wrap" }}>
+            <For each={cmp?.addedPatterns || []}>
+              {(p) => <Badge tone="ok">+ {p}</Badge>}
+            </For>
+            <For each={cmp?.removedPatterns || []}>
+              {(p) => <Badge tone="error">− {p}</Badge>}
+            </For>
+            <Show when={!cmp?.addedPatterns?.length && !cmp?.removedPatterns?.length}>
+              <span class="paragraph">No pattern changes detected.</span>
+            </Show>
+          </div>
+        </div>
+      );
+    }
+    if (widgetTypeId === "deploy-stats") {
+      const stats = deployStats();
+      const successRate = stats && stats.totalDeploys > 0 ? ((stats.successCount / stats.totalDeploys) * 100).toFixed(1) : "0.0";
+      const rollbackRate = stats && stats.totalDeploys > 0 ? ((stats.rollbackCount / stats.totalDeploys) * 100).toFixed(1) : "0.0";
+      return (
+        <div class="widget-body widget-kpi-grid">
+          <div>
+            <label>Total Deploys</label>
+            <strong>{stats?.totalDeploys || 0}</strong>
+          </div>
+          <div>
+            <label>Success Rate</label>
+            <strong>{successRate}%</strong>
+          </div>
+          <div>
+            <label>Rollback Rate</label>
+            <strong>{rollbackRate}%</strong>
+          </div>
+          <div>
+            <label>Avg/Day</label>
+            <strong>{stats?.avgFrequencyPerDay?.toFixed(1) || "0.0"}</strong>
+          </div>
+        </div>
+      );
+    }
+    if (widgetTypeId === "perf-slow-queries") {
+      const rows = (slowQueries() || []).slice().sort((a, b) => b.maxMs - a.maxMs).slice(0, logRows);
+      return (
+        <div class="widget-body widget-list mono">
+          <For each={rows}>
+            {(q) => (
+              <div class="widget-list-row widget-log-row">
+                <Badge tone={q.maxMs > 1000 ? "error" : q.maxMs > 200 ? "warn" : "ok"}>{q.maxMs.toFixed(0)}ms</Badge>
+                <span>avg {q.avgMs.toFixed(0)}ms</span>
+                <span style={{ opacity: 0.6 }}>{q.database}</span>
+                <strong style={{ "text-overflow": "ellipsis", overflow: "hidden", "white-space": "nowrap" }}>{q.query.slice(0, 80)}</strong>
+              </div>
+            )}
+          </For>
+          <Show when={rows.length === 0}><p class="paragraph">No slow queries detected.</p></Show>
+        </div>
+      );
+    }
+    if (widgetTypeId === "cost-quick-wins") {
+      const rows = (costQuickWins() || []).slice().sort((a, b) => b.monthlySavings - a.monthlySavings).slice(0, logRows);
+      return (
+        <div class="widget-body widget-list">
+          <For each={rows}>
+            {(win) => (
+              <div class="widget-list-row widget-log-row">
+                <strong>{win.title}</strong>
+                <Badge tone="ok">${win.monthlySavings.toFixed(0)}/mo</Badge>
+                <Badge tone={win.impact === "high" ? "error" : win.impact === "medium" ? "warn" : "neutral"}>{win.impact}</Badge>
+                <Badge tone="neutral">{win.effort}</Badge>
+              </div>
+            )}
+          </For>
+          <Show when={rows.length === 0}><p class="paragraph">No quick wins found.</p></Show>
+        </div>
+      );
+    }
+
     return (
       <div class="widget-body widget-links">
         <A href="/app/detect/alerts" class="catalog-link">Detect</A>
@@ -2116,24 +3167,31 @@ export function DashboardsPage() {
         class={`dashboard-canvas${draggingWidgetId() ? " is-drag-active" : ""}`}
         onDragOver={(e) => {
           e.preventDefault();
-          const point = canvasPointToGrid(e.clientX, e.clientY);
+          const point = canvasPointToGrid(e.clientX, e.clientY, true);
           if (point) setCanvasDropPoint(point);
         }}
         onDrop={(e) => {
           e.preventDefault();
-          const point = canvasPointToGrid(e.clientX, e.clientY);
-          if (point) moveDraggedWidgetTo(point, e.altKey);
+          const point = canvasPointToGrid(e.clientX, e.clientY, true);
+          if (point) moveDraggedWidgetTo(point);
           onWidgetDragEnd();
         }}
       >
         <Show when={draggingWidgetId() && dropPoint()}>
-          <div
-            class="canvas-drop-hint"
-            style={{
-              "grid-column": `${dropPoint()!.x + 1} / span 1`,
-              "grid-row": `${dropPoint()!.y + 1} / span 1`
-            }}
-          />
+          {(() => {
+            const dragged = layout().find((item) => item.id === draggingWidgetId());
+            const w = dragged ? dragged.w : 2;
+            const h = dragged ? dragged.h : 1;
+            return (
+              <div
+                class="canvas-drop-hint"
+                style={{
+                  "grid-column": `${dropPoint()!.x + 1} / span ${w}`,
+                  "grid-row": `${dropPoint()!.y + 1} / span ${h}`
+                }}
+              />
+            );
+          })()}
         </Show>
         <For each={visibleLayout()}>
           {(item) => (
@@ -2143,20 +3201,20 @@ export function DashboardsPage() {
               tabindex={editMode() ? 0 : -1}
               onFocus={() => setFocusedWidgetId(item.id)}
               onClick={() => setFocusedWidgetId(item.id)}
-              onDragStart={() => onWidgetDragStart(item.id)}
+              onDragStart={(e) => onWidgetDragStart(item.id, e as DragEvent)}
               onDragEnd={onWidgetDragEnd}
               onDragOver={(e) => {
                 e.preventDefault();
                 if (draggingWidgetId() && draggingWidgetId() !== item.id) setDragOverWidgetId(item.id);
               }}
               onDrop={(e) => {
+                // Let the drop bubble to the canvas so the widget lands
+                // where the hint shows, not at this widget's old position
                 e.preventDefault();
-                e.stopPropagation();
-                onWidgetDrop(item.id);
               }}
               style={{
                 "grid-column": `${clampSpan(item.x, 0, 11) + 1} / span ${clampSpan(item.w, 2, 12)}`,
-                "grid-row": `${clampSpan(item.y, 0, 60) + 1} / span ${clampSpan(item.h, 1, GRID_MAX_H)}`
+                "grid-row": `${clampSpan(item.y, 0, 60) + 1} / span ${clampSpan(item.h, 2, GRID_MAX_H)}`
               }}
             >
               <header class="widget-head">
@@ -2172,7 +3230,17 @@ export function DashboardsPage() {
                       {isWidgetLocked(item.id) ? "locked" : "drag to move"}
                     </Badge>
                   </Show>
-                  <Button onClick={() => removeWidget(item.id)} disabled={isWidgetLocked(item.id)}>Remove</Button>
+                  <button
+                    class="widget-trash-btn"
+                    title="Remove widget"
+                    aria-label={`Remove ${widgetTitle(item.id)}`}
+                    disabled={isWidgetLocked(item.id)}
+                    onClick={() => removeWidget(item.id)}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M2 4h12M5.33 4V2.67a1.33 1.33 0 011.34-1.34h2.66a1.33 1.33 0 011.34 1.34V4M6.67 7.33v4M9.33 7.33v4M12.67 4v9.33a1.33 1.33 0 01-1.34 1.34H4.67a1.33 1.33 0 01-1.34-1.34V4" />
+                    </svg>
+                  </button>
                 </div>
               </header>
               <Show when={editMode() && !isWidgetLocked(item.id)}>
@@ -2192,7 +3260,11 @@ export function DashboardsPage() {
                   onMouseDown={(e) => startResize(item.id, "se", e)}
                 />
               </Show>
-              {renderWidget(item)}
+              <ErrorBoundary fallback={(err, reset) => <WidgetErrorFallback error={err} reset={reset} />}>
+                <Show when={!isWidgetLoading(baseWidgetId(item.id))} fallback={<WidgetLoading />}>
+                  {renderWidget(item)}
+                </Show>
+              </ErrorBoundary>
             </article>
           )}
         </For>

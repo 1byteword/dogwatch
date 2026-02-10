@@ -8,6 +8,7 @@ import {
   SystemMetricPoint,
   SystemMetrics,
   TraceDependency,
+  TraceSpan,
   TraceSummary
 } from "./types";
 
@@ -143,6 +144,24 @@ export async function loadSystemHistory(duration = "1h"): Promise<SystemMetricPo
       disk_write_bytes: Number(row.disk_write_bytes || 0),
       net_rx_bytes: Number(row.net_rx_bytes || 0),
       net_tx_bytes: Number(row.net_tx_bytes || 0),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export async function loadTraceSpans(traceId: string): Promise<TraceSpan[]> {
+  if (!traceId) return [];
+  try {
+    const raw = await api.get<Array<Partial<TraceSpan & { span_id?: string; parent_span_id?: string; operation_name?: string; service_name?: string; duration_ms?: number }>>>(`/api/traces/${encodeURIComponent(traceId)}/spans`);
+    return (raw || []).map((row, idx) => ({
+      span_id: row.span_id || `span-${idx}`,
+      parent_span_id: row.parent_span_id || "",
+      operation_name: row.operation_name || "unknown",
+      service_name: row.service_name || "",
+      duration_ms: Number(row.duration_ms || 0),
+      status: row.status || "UNSET",
+      depth: Number(row.depth || 0)
     }));
   } catch {
     return [];

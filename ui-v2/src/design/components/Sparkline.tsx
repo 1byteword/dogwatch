@@ -6,6 +6,7 @@ interface SparklineProps {
   height?: number;
   color?: string;
   class?: string;
+  "aria-label"?: string;
 }
 
 export function Sparkline(props: SparklineProps) {
@@ -36,6 +37,8 @@ export function Sparkline(props: SparklineProps) {
       height={h()}
       viewBox={`0 0 ${w()} ${h()}`}
       preserveAspectRatio="none"
+      role="img"
+      aria-label={props["aria-label"] || "Sparkline"}
     >
       <defs>
         <linearGradient id={gradId()} x1="0" y1="0" x2="0" y2="1">
