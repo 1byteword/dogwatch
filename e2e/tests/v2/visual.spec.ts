@@ -5,7 +5,9 @@ test.describe('Visual regression', () => {
   test('dashboard page', async ({ page }) => {
     await gotoV2(page, '/app/dashboards');
     await page.waitForTimeout(1000); // let widgets settle
-    await expect(page).toHaveScreenshot('dashboard-page.png');
+    await expect(page).toHaveScreenshot('dashboard-page.png', {
+      maxDiffPixelRatio: 0.05, // dashboard has dynamic timestamps/counters
+    });
   });
 
   test('dashboard edit mode', async ({ page }) => {

@@ -96,3 +96,5 @@ export function ConfigureAuditPage() {
     </div>
   );
 }
+
+export default ConfigureAuditPage;

@@ -343,3 +343,5 @@ export function DetectAlertsPage() {
     </>
   );
 }
+
+export default DetectAlertsPage;

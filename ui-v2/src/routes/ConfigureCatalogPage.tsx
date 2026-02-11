@@ -354,3 +354,5 @@ export function ConfigureCatalogPage() {
     </div>
   );
 }
+
+export default ConfigureCatalogPage;

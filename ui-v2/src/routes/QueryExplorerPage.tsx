@@ -172,3 +172,5 @@ function formatCell(value: unknown): string {
   if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toFixed(3);
   return String(value);
 }
+
+export default QueryExplorerPage;

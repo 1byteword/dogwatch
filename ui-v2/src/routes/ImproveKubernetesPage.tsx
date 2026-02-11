@@ -166,3 +166,5 @@ export function ImproveKubernetesPage() {
     </div>
   );
 }
+
+export default ImproveKubernetesPage;

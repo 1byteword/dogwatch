@@ -220,3 +220,5 @@ export function ImproveOncallPage() {
     </div>
   );
 }
+
+export default ImproveOncallPage;

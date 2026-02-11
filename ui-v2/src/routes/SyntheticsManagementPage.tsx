@@ -194,3 +194,5 @@ function DetailRow(props: { label: string; value?: string; children?: any }) {
     </div>
   );
 }
+
+export default SyntheticsManagementPage;

@@ -173,3 +173,5 @@ export function ConfigureNotificationsPage() {
     </div>
   );
 }
+
+export default ConfigureNotificationsPage;

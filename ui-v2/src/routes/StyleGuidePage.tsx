@@ -111,3 +111,5 @@ export function StyleGuidePage() {
     </div>
   );
 }
+
+export default StyleGuidePage;

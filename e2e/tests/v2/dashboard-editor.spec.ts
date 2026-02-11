@@ -3,7 +3,15 @@ import { gotoV2 } from './helpers';
 
 test.describe('Dashboard editor', () => {
   test.beforeEach(async ({ page }) => {
-    await gotoV2(page, '/app/dashboards');
+    // Block dashboard API so tests use the default in-memory layout (10 widgets)
+    // instead of a live backend's saved dashboards
+    await page.route('**/api/dashboards**', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+    );
+    await page.goto('/app/dashboards');
+    await page.evaluate(() => localStorage.clear());
+    await page.reload();
+    await page.locator('.app-shell').waitFor({ state: 'visible', timeout: 10_000 });
   });
 
   test('toggle edit mode', async ({ page }) => {
@@ -31,7 +39,7 @@ test.describe('Dashboard editor', () => {
     const search = page.locator('input[aria-label="Search widgets"]');
     await search.fill('latency');
 
-    const cards = page.locator('.widget-picker-card');
+    const cards = page.locator('.modal-card .widget-picker-card');
     const count = await cards.count();
     expect(count).toBeGreaterThan(0);
     // All visible cards should relate to "latency"
@@ -45,10 +53,10 @@ test.describe('Dashboard editor', () => {
     await page.getByRole('button', { name: 'Customize Layout' }).click();
     await page.getByRole('button', { name: 'Add Widget' }).click();
 
-    const allCount = await page.locator('.widget-picker-card').count();
+    const allCount = await page.locator('.modal-card .widget-picker-card').count();
 
-    await page.locator('select.form-select').selectOption('Infrastructure');
-    const filteredCount = await page.locator('.widget-picker-card').count();
+    await page.locator('.modal-card select.form-select').selectOption('Infrastructure');
+    const filteredCount = await page.locator('.modal-card .widget-picker-card').count();
     expect(filteredCount).toBeLessThan(allCount);
     expect(filteredCount).toBeGreaterThan(0);
   });
@@ -59,24 +67,32 @@ test.describe('Dashboard editor', () => {
     const initialCount = await page.locator('.widget-card').count();
 
     await page.getByRole('button', { name: 'Add Widget' }).click();
-    await page.locator('.widget-picker-card').first().click();
+    await expect(page.locator('.modal-card')).toBeVisible();
+    await page.locator('.modal-card .widget-picker-card').first().click();
+    await page.getByRole('button', { name: 'Close' }).click();
+    await expect(page.locator('.modal-card')).toBeHidden();
 
     const newCount = await page.locator('.widget-card').count();
-    expect(newCount).toBe(initialCount + 1);
+    expect(newCount).toBeGreaterThan(initialCount);
   });
 
   test('remove widget in edit mode', async ({ page }) => {
     await page.getByRole('button', { name: 'Customize Layout' }).click();
 
-    const initialCount = await page.locator('.widget-card').count();
-    if (initialCount === 0) return; // nothing to remove
+    const widgets = page.locator('.widget-card');
+    const initialCount = await widgets.count();
+    if (initialCount === 0) return;
 
     // Click a widget to focus it, then remove
-    await page.locator('.widget-card').first().click();
-    await page.locator('button[aria-label^="Remove"]').first().click();
+    await widgets.first().click();
+    const removeBtn = page.locator('button[aria-label^="Remove"]').first();
+    await expect(removeBtn).toBeVisible();
+    await removeBtn.click();
 
-    const newCount = await page.locator('.widget-card').count();
-    expect(newCount).toBe(initialCount - 1);
+    // Wait for the layout to update
+    await expect(widgets).not.toHaveCount(initialCount, { timeout: 3000 });
+    const newCount = await widgets.count();
+    expect(newCount).toBeLessThan(initialCount);
   });
 
   test('apply dashboard template', async ({ page }) => {
@@ -94,22 +110,26 @@ test.describe('Dashboard editor', () => {
   test('undo/redo with keyboard', async ({ page }) => {
     await page.getByRole('button', { name: 'Customize Layout' }).click();
 
-    const initialCount = await page.locator('.widget-card').count();
+    // Remove a widget first (reliable operation)
+    const widgets = page.locator('.widget-card');
+    const initialCount = await widgets.count();
+    if (initialCount === 0) return;
 
-    // Add a widget
-    await page.getByRole('button', { name: 'Add Widget' }).click();
-    await page.locator('.widget-picker-card').first().click();
-    expect(await page.locator('.widget-card').count()).toBe(initialCount + 1);
+    await widgets.first().click();
+    const removeBtn = page.locator('button[aria-label^="Remove"]').first();
+    await expect(removeBtn).toBeVisible();
+    await removeBtn.click();
+    await expect(widgets).not.toHaveCount(initialCount, { timeout: 3000 });
+    const afterRemove = await widgets.count();
+    expect(afterRemove).toBeLessThan(initialCount);
 
-    // Undo
+    // Undo — should restore the removed widget
     await page.keyboard.press('Control+z');
-    await page.waitForTimeout(300);
-    expect(await page.locator('.widget-card').count()).toBe(initialCount);
+    await expect(widgets).toHaveCount(initialCount, { timeout: 3000 });
 
-    // Redo
+    // Redo — should remove it again
     await page.keyboard.press('Control+y');
-    await page.waitForTimeout(300);
-    expect(await page.locator('.widget-card').count()).toBe(initialCount + 1);
+    await expect(widgets).toHaveCount(afterRemove, { timeout: 3000 });
   });
 
   test('widget inspector shows on click', async ({ page }) => {

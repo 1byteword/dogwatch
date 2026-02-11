@@ -394,3 +394,5 @@ function RuleForm(props: {
     </div>
   );
 }
+
+export default RecordingRulesPage;

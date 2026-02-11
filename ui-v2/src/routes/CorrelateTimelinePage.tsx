@@ -113,3 +113,5 @@ export function CorrelateTimelinePage() {
     </div>
   );
 }
+
+export default CorrelateTimelinePage;

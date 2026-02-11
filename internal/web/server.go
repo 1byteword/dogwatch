@@ -44,9 +44,6 @@ import (
 	"github.com/google/uuid"
 )
 
-//go:embed all:static
-var staticFiles embed.FS
-
 //go:embed all:v2dist
 var v2Files embed.FS
 
@@ -123,19 +120,9 @@ func gzipMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 
-		// Add cache headers for static assets
-		if strings.HasPrefix(path, "/assets/") && (strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".css")) {
-			// V2 hashed assets — cache for 1 year (filename changes on content change)
+		// Cache headers for hashed V2 assets (immutable — filename changes on content change)
+		if strings.HasPrefix(path, "/assets/") {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		} else if strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".css") {
-			// V1 JS/CSS: always revalidate to pick up code changes quickly
-			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
-		} else if strings.HasSuffix(path, ".woff2") || strings.HasSuffix(path, ".woff") || strings.HasSuffix(path, ".ttf") {
-			// Cache fonts for 1 year (they rarely change)
-			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		} else if strings.HasSuffix(path, ".png") || strings.HasSuffix(path, ".jpg") || strings.HasSuffix(path, ".svg") || strings.HasSuffix(path, ".ico") {
-			// Cache images for 1 day
-			w.Header().Set("Cache-Control", "public, max-age=86400")
 		}
 
 		// Check if client accepts gzip
@@ -180,9 +167,14 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	mux := http.NewServeMux()
 	s.mux = mux
 
-	// Serve V1 static files with gzip compression
-	staticFS, _ := fs.Sub(staticFiles, "static")
-	mux.Handle("/", gzipMiddleware(http.FileServer(http.FS(staticFS))))
+	// Root redirects to V2 UI; unknown paths get 404
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			http.Redirect(w, r, "/app/dashboards", http.StatusFound)
+			return
+		}
+		http.NotFound(w, r)
+	})
 
 	// Serve V2 UI — SPA with /app/* fallback to index.html
 	v2FS, _ := fs.Sub(v2Files, "v2dist")
@@ -689,13 +681,13 @@ func (s *Server) initStatusPages() {
 	}
 
 	s.statusPageStore = store
-	s.statusPageHandlers = NewStatusPageHandlers(store, staticFiles)
+	s.statusPageHandlers = NewStatusPageHandlers(store, v2Files)
 }
 
 // SetStatusPageStore sets the status page store
 func (s *Server) SetStatusPageStore(store *statuspage.Store) {
 	s.statusPageStore = store
-	s.statusPageHandlers = NewStatusPageHandlers(store, staticFiles)
+	s.statusPageHandlers = NewStatusPageHandlers(store, v2Files)
 }
 
 // initCatalog initializes the service catalog store and handlers

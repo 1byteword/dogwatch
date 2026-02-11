@@ -19,9 +19,9 @@ type StatusPageHandlers struct {
 }
 
 // NewStatusPageHandlers creates status page handlers
-func NewStatusPageHandlers(store *statuspage.Store, staticFiles embed.FS) *StatusPageHandlers {
-	staticFS, _ := fs.Sub(staticFiles, "static")
-	return &StatusPageHandlers{store: store, staticFS: staticFS}
+func NewStatusPageHandlers(store *statuspage.Store, v2Files embed.FS) *StatusPageHandlers {
+	v2FS, _ := fs.Sub(v2Files, "v2dist")
+	return &StatusPageHandlers{store: store, staticFS: v2FS}
 }
 
 // RegisterRoutes registers status page routes

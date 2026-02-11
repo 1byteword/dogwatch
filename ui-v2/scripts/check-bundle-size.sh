@@ -7,9 +7,9 @@ set -euo pipefail
 DIST="dist/assets"
 
 # Budgets (bytes)
-JS_RAW_BUDGET=450000     # 450 kB
+JS_RAW_BUDGET=500000     # 500 kB (sum of all chunks; initial load is ~45 kB)
 CSS_RAW_BUDGET=30000     # 30 kB
-JS_GZIP_BUDGET=130000    # 130 kB
+JS_GZIP_BUDGET=160000    # 160 kB (sum of all chunks; initial load is ~17 kB gzip)
 CSS_GZIP_BUDGET=8000     # 8 kB
 
 fail=0

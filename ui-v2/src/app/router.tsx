@@ -1,22 +1,24 @@
+import { lazy } from "solid-js";
 import { Navigate, Route, Router } from "@solidjs/router";
 import { AppShell } from "./shell/AppShell";
-import { DetectAlertsPage } from "../routes/DetectAlertsPage";
-import { MonitorsPage } from "../routes/MonitorsPage";
-import { InvestigateLogsPage } from "../routes/InvestigateLogsPage";
-import { QueryExplorerPage } from "../routes/QueryExplorerPage";
-import { RespondIncidentsPage } from "../routes/RespondIncidentsPage";
-import { CorrelateTimelinePage } from "../routes/CorrelateTimelinePage";
-import { ImproveOncallPage } from "../routes/ImproveOncallPage";
-import { ImproveKubernetesPage } from "../routes/ImproveKubernetesPage";
-import { ConfigureCatalogPage } from "../routes/ConfigureCatalogPage";
-import { ConfigureNotificationsPage } from "../routes/ConfigureNotificationsPage";
-import { ConfigureAuditPage } from "../routes/ConfigureAuditPage";
-import { SloManagementPage } from "../routes/SloManagementPage";
-import { SyntheticsManagementPage } from "../routes/SyntheticsManagementPage";
-import { StyleGuidePage } from "../routes/StyleGuidePage";
-import { DashboardsPage } from "../routes/DashboardsPage";
-import { RecordingRulesPage } from "../routes/RecordingRulesPage";
-import { NotFoundPage } from "../routes/NotFoundPage";
+
+const DashboardsPage = lazy(() => import("../routes/DashboardsPage"));
+const DetectAlertsPage = lazy(() => import("../routes/DetectAlertsPage"));
+const MonitorsPage = lazy(() => import("../routes/MonitorsPage"));
+const InvestigateLogsPage = lazy(() => import("../routes/InvestigateLogsPage"));
+const QueryExplorerPage = lazy(() => import("../routes/QueryExplorerPage"));
+const CorrelateTimelinePage = lazy(() => import("../routes/CorrelateTimelinePage"));
+const RespondIncidentsPage = lazy(() => import("../routes/RespondIncidentsPage"));
+const ImproveOncallPage = lazy(() => import("../routes/ImproveOncallPage"));
+const ImproveKubernetesPage = lazy(() => import("../routes/ImproveKubernetesPage"));
+const ConfigureCatalogPage = lazy(() => import("../routes/ConfigureCatalogPage"));
+const ConfigureNotificationsPage = lazy(() => import("../routes/ConfigureNotificationsPage"));
+const ConfigureAuditPage = lazy(() => import("../routes/ConfigureAuditPage"));
+const SloManagementPage = lazy(() => import("../routes/SloManagementPage"));
+const SyntheticsManagementPage = lazy(() => import("../routes/SyntheticsManagementPage"));
+const RecordingRulesPage = lazy(() => import("../routes/RecordingRulesPage"));
+const StyleGuidePage = lazy(() => import("../routes/StyleGuidePage"));
+const NotFoundPage = lazy(() => import("../routes/NotFoundPage"));
 
 export function AppRouter() {
   return (

@@ -629,3 +629,5 @@ function RuleForm(props: {
     </div>
   );
 }
+
+export default MonitorsPage;

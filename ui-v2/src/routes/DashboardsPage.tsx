@@ -1767,3 +1767,5 @@ export function DashboardsPage() {
     </>
   );
 }
+
+export default DashboardsPage;

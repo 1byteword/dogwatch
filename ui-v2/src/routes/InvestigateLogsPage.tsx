@@ -122,3 +122,5 @@ export function InvestigateLogsPage() {
     </div>
   );
 }
+
+export default InvestigateLogsPage;
