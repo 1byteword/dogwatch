@@ -189,10 +189,28 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	v2index, _ := fs.ReadFile(v2FS, "index.html")
 	// Hashed assets — long cache
 	mux.Handle("/assets/", gzipMiddleware(http.FileServer(http.FS(v2FS))))
-	// SPA fallback: any /app/* path serves index.html
+	// V2 favicon
+	mux.HandleFunc("/favicon.svg", func(w http.ResponseWriter, r *http.Request) {
+		data, err := fs.ReadFile(v2FS, "favicon.svg")
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "image/svg+xml")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Write(data)
+	})
+	// SPA fallback: any /app/* path serves index.html (with gzip)
 	mux.HandleFunc("/app/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			w.Header().Set("Content-Encoding", "gzip")
+			gz := gzip.NewWriter(w)
+			defer gz.Close()
+			gz.Write(v2index)
+			return
+		}
 		w.Write(v2index)
 	})
 

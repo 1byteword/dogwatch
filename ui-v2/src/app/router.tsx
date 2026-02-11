@@ -16,6 +16,7 @@ import { SyntheticsManagementPage } from "../routes/SyntheticsManagementPage";
 import { StyleGuidePage } from "../routes/StyleGuidePage";
 import { DashboardsPage } from "../routes/DashboardsPage";
 import { RecordingRulesPage } from "../routes/RecordingRulesPage";
+import { NotFoundPage } from "../routes/NotFoundPage";
 
 export function AppRouter() {
   return (
@@ -37,6 +38,7 @@ export function AppRouter() {
       <Route path="/app/configure/synthetics" component={SyntheticsManagementPage} />
       <Route path="/app/configure/recording-rules" component={RecordingRulesPage} />
       <Route path="/app/style-guide" component={StyleGuidePage} />
+      <Route path="*" component={NotFoundPage} />
     </Router>
   );
 }
