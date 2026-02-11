@@ -47,6 +47,9 @@ import (
 //go:embed all:static
 var staticFiles embed.FS
 
+//go:embed all:v2dist
+var v2Files embed.FS
+
 // FlameGraphProvider interface for getting flame graph data
 type FlameGraphProvider interface {
 	GetFlameGraph() (interface{}, error)
@@ -121,8 +124,11 @@ func gzipMiddleware(next http.Handler) http.Handler {
 		path := r.URL.Path
 
 		// Add cache headers for static assets
-		if strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".css") {
-			// JS/CSS: always revalidate to pick up code changes quickly
+		if strings.HasPrefix(path, "/assets/") && (strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".css")) {
+			// V2 hashed assets — cache for 1 year (filename changes on content change)
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else if strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".css") {
+			// V1 JS/CSS: always revalidate to pick up code changes quickly
 			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 		} else if strings.HasSuffix(path, ".woff2") || strings.HasSuffix(path, ".woff") || strings.HasSuffix(path, ".ttf") {
 			// Cache fonts for 1 year (they rarely change)
@@ -174,9 +180,21 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	mux := http.NewServeMux()
 	s.mux = mux
 
-	// Serve static files with gzip compression
+	// Serve V1 static files with gzip compression
 	staticFS, _ := fs.Sub(staticFiles, "static")
 	mux.Handle("/", gzipMiddleware(http.FileServer(http.FS(staticFS))))
+
+	// Serve V2 UI — SPA with /app/* fallback to index.html
+	v2FS, _ := fs.Sub(v2Files, "v2dist")
+	v2index, _ := fs.ReadFile(v2FS, "index.html")
+	// Hashed assets — long cache
+	mux.Handle("/assets/", gzipMiddleware(http.FileServer(http.FS(v2FS))))
+	// SPA fallback: any /app/* path serves index.html
+	mux.HandleFunc("/app/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		w.Write(v2index)
+	})
 
 	// WebSocket endpoint for real-time updates
 	mux.HandleFunc("/api/ws", s.wsHub.ServeWS)

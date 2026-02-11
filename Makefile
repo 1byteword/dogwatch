@@ -1,15 +1,21 @@
-.PHONY: all generate build clean test test-unit test-integration test-all test-coverage test-verbose lint
+.PHONY: all generate build clean test test-unit test-integration test-all test-coverage test-verbose lint build-ui-v2
 
 CLANG ?= clang
 GO ?= $(shell which go || echo /usr/local/go/bin/go)
 COVERAGE_DIR ?= coverage
 COVERAGE_FILE ?= $(COVERAGE_DIR)/coverage.out
 
-all: generate build
+all: generate build-ui-v2 build
 
 # Generate Go bindings from BPF C code
 generate:
 	cd internal/probe && $(GO) generate ./...
+
+# Build V2 UI and copy into embed directory
+build-ui-v2:
+	cd ui-v2 && npm ci && npx vite build
+	rm -rf internal/web/v2dist/assets internal/web/v2dist/index.html
+	cp -r ui-v2/dist/* internal/web/v2dist/
 
 # Build the dogwatch binary
 build:

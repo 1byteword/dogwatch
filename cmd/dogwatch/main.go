@@ -2202,7 +2202,7 @@ func importDatadog(data []byte, dashStore *dashboard.Store, alertStore *alerting
 			name = prefix + name
 		}
 
-		savedDash, err := dashStore.Create(name, converted.Dashboard.Layout, false)
+		savedDash, err := dashStore.Create(name, converted.Dashboard.Layout, nil, false)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error saving dashboard: %v\n", err)
 			os.Exit(1)
@@ -2339,7 +2339,7 @@ func importGrafana(data []byte, dashStore *dashboard.Store, alertStore *alerting
 			name = prefix + name
 		}
 
-		savedDash, err := dashStore.Create(name, converted.Dashboard.Layout, false)
+		savedDash, err := dashStore.Create(name, converted.Dashboard.Layout, nil, false)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error saving dashboard: %v\n", err)
 			os.Exit(1)
