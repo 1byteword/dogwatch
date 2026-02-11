@@ -36,4 +36,18 @@ test.describe('V2 route smoke tests', () => {
     await gotoV2(page, '/app/style-guide');
     await expect(page.getByRole('heading', { name: /Buttons/i })).toBeVisible();
   });
+
+  test('invalid route shows 404 page', async ({ page }) => {
+    await gotoV2(page, '/app/this-does-not-exist');
+    await expect(page.getByText('404')).toBeVisible();
+    await expect(page.getByText('Page not found')).toBeVisible();
+    await expect(page.getByRole('link', { name: /Go to Dashboards/i })).toBeVisible();
+  });
+
+  test('404 page links back to dashboards', async ({ page }) => {
+    await gotoV2(page, '/app/nonexistent/route');
+    await page.getByRole('link', { name: /Go to Dashboards/i }).click();
+    await expect(page).toHaveURL(/\/app\/dashboards/);
+    await expect(page.locator('.dashboard-toolbar')).toBeVisible();
+  });
 });
