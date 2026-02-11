@@ -12,6 +12,7 @@ const SERVICES = [
   "frontend-bff",
 ];
 
+const SEC = 1_000;
 const MIN = 60_000;
 const HR = 3_600_000;
 
@@ -551,6 +552,143 @@ const routes: Record<string, () => unknown> = {
 
   "/api/dashboards": () => [],
   "/api/dashboards/default": () => null,
+
+  // ── alerting rules (monitors) ─────────────────────────────────
+
+  "/api/alerting/rules": () => [
+    {
+      id: "rule-1", name: "Checkout P99 Latency", description: "Alert when checkout p99 exceeds 500ms for 5 minutes",
+      type: "threshold", enabled: true, query: "histogram_quantile(0.99, rate(http_request_duration_seconds_bucket{service=\"checkout-api\"}[5m]))",
+      condition: "gt", threshold: 0.5, severity: "critical", for_duration: "5m",
+      notify_channels: ["#incidents-critical", "PagerDuty"], labels: { service: "checkout-api", team: "platform" },
+      created_at: ago(30 * 24 * HR), updated_at: ago(2 * HR), created_by: "alice@example.com",
+    },
+    {
+      id: "rule-2", name: "Error Rate Spike", description: "Alert when 5xx error rate exceeds 5%",
+      type: "threshold", enabled: true, query: "rate(http_requests_total{status=~\"5..\"}[5m]) / rate(http_requests_total[5m]) * 100",
+      condition: "gt", threshold: 5, severity: "critical", for_duration: "3m",
+      notify_channels: ["#incidents-critical", "PagerDuty"], labels: { team: "platform" },
+      created_at: ago(60 * 24 * HR), updated_at: ago(10 * 24 * HR), created_by: "bob@example.com",
+    },
+    {
+      id: "rule-3", name: "Memory Pressure", description: "Container memory usage above 80% of limit",
+      type: "threshold", enabled: true, query: "container_memory_usage_bytes / container_spec_memory_limit_bytes * 100",
+      condition: "gt", threshold: 80, severity: "warning", for_duration: "10m",
+      notify_channels: ["#ops-alerts"], labels: { team: "platform" },
+      created_at: ago(45 * 24 * HR), updated_at: ago(45 * 24 * HR), created_by: "alice@example.com",
+    },
+    {
+      id: "rule-4", name: "Anomalous Latency", description: "Detect unusual latency patterns using z-score",
+      type: "anomaly", enabled: true, query: "http_request_duration_seconds{service=~\".+\"}",
+      condition: "gt", threshold: 3, severity: "warning", for_duration: "5m",
+      notify_channels: ["#ops-alerts"], labels: {},
+      created_at: ago(20 * 24 * HR), updated_at: ago(20 * 24 * HR), created_by: "carol@example.com",
+    },
+    {
+      id: "rule-5", name: "Deploy Error Rate Change", description: "Alert if error rate increases 50% after deploy",
+      type: "change", enabled: true, query: "rate(http_requests_total{status=~\"5..\"}[5m])",
+      condition: "gt", threshold: 50, severity: "warning", for_duration: "10m",
+      notify_channels: ["#deploys"], labels: {},
+      created_at: ago(15 * 24 * HR), updated_at: ago(15 * 24 * HR), created_by: "bob@example.com",
+    },
+    {
+      id: "rule-6", name: "Heartbeat Missing", description: "Alert when service heartbeat metric disappears",
+      type: "absence", enabled: true, query: "up{service=~\".+\"}",
+      condition: "eq", threshold: 0, severity: "critical", for_duration: "2m",
+      notify_channels: ["#incidents-critical", "PagerDuty"], labels: {},
+      created_at: ago(90 * 24 * HR), updated_at: ago(30 * 24 * HR), created_by: "alice@example.com",
+    },
+    {
+      id: "rule-7", name: "Pod Restart Rate", description: "Alert on excessive pod restarts",
+      type: "threshold", enabled: false, query: "increase(kube_pod_container_status_restarts_total[1h])",
+      condition: "gt", threshold: 3, severity: "info", for_duration: "0m",
+      notify_channels: ["#ops-alerts"], labels: { team: "platform" },
+      created_at: ago(10 * 24 * HR), updated_at: ago(5 * 24 * HR), created_by: "dana@example.com",
+    },
+    {
+      id: "rule-8", name: "SLO Budget Burn", description: "Composite: checkout latency SLO burning too fast AND error rate elevated",
+      type: "composite", enabled: true, query: "rule-1 AND rule-2",
+      condition: "gt", threshold: 0, severity: "critical", for_duration: "5m",
+      notify_channels: ["#incidents-critical", "PagerDuty"], labels: { service: "checkout-api" },
+      created_at: ago(7 * 24 * HR), updated_at: ago(7 * 24 * HR), created_by: "alice@example.com",
+    },
+  ],
+
+  // ── query explorer ────────────────────────────────────────────
+
+  "/api/query/metadata": () => ({
+    sources: ["metrics", "logs", "traces", "events"],
+    functions: ["avg", "sum", "count", "min", "max", "p50", "p90", "p95", "p99", "rate", "increase", "histogram_quantile", "topk", "bottomk", "sort", "sort_desc", "absent", "changes", "delta", "deriv", "predict_linear", "stddev", "stdvar"],
+  }),
+
+  "/api/query/saved": () => [
+    { id: "saved-1", name: "Checkout Latency P99", query: "histogram_quantile(0.99, rate(http_request_duration_seconds_bucket{service=\"checkout-api\"}[5m]))", description: "P99 latency for checkout service", created_at: ago(7 * 24 * HR), updated_at: ago(1 * HR) },
+    { id: "saved-2", name: "Error Rate by Service", query: "sum by (service) (rate(http_requests_total{status=~\"5..\"}[5m])) / sum by (service) (rate(http_requests_total[5m])) * 100", description: "5xx error rate per service", created_at: ago(14 * 24 * HR), updated_at: ago(3 * 24 * HR) },
+    { id: "saved-3", name: "Top Memory Consumers", query: "topk(10, container_memory_usage_bytes / 1024 / 1024)", description: "Top 10 containers by memory usage in MB", created_at: ago(30 * 24 * HR), updated_at: ago(10 * 24 * HR) },
+    { id: "saved-4", name: "Request Rate", query: "sum(rate(http_requests_total[5m])) by (service)", description: "Requests per second by service", created_at: ago(21 * 24 * HR), updated_at: ago(21 * 24 * HR) },
+  ],
+
+  "/api/query/execute": () => ({
+    columns: ["service", "value", "timestamp"],
+    rows: [
+      { service: "checkout-api", value: 0.842, timestamp: ago(0) },
+      { service: "frontend-bff", value: 0.045, timestamp: ago(0) },
+      { service: "auth-service", value: 0.312, timestamp: ago(0) },
+      { service: "payment-gateway", value: 0.420, timestamp: ago(0) },
+      { service: "order-worker", value: 1.250, timestamp: ago(0) },
+      { service: "inventory-api", value: 0.028, timestamp: ago(0) },
+    ],
+    count: 6,
+  }),
+
+  // Recording rules
+  "/api/recording-rules": () => [
+    {
+      id: "builtin:request_rate:1m", name: "service:request_rate:1m",
+      expression: 'sum(rate(http_requests_total[1m])) by (service)',
+      interval: 60000000000, labels: { __name__: "service:request_rate:1m" },
+      enabled: true, last_eval: ago(15 * SEC), last_error: "", last_value: 342.8,
+      description: "Requests per second by service (1m rate)", created_at: ago(30 * 24 * 60 * MIN), updated_at: ago(2 * 24 * 60 * MIN), created_by: "system",
+    },
+    {
+      id: "builtin:error_rate:1m", name: "service:error_rate:1m",
+      expression: 'sum(rate(http_requests_total{status=~"5.."}[1m])) by (service) / sum(rate(http_requests_total[1m])) by (service) * 100',
+      interval: 60000000000, labels: { __name__: "service:error_rate:1m" },
+      enabled: true, last_eval: ago(15 * SEC), last_error: "", last_value: 2.4,
+      description: "Error percentage by service (1m rate)", created_at: ago(30 * 24 * 60 * MIN), updated_at: ago(2 * 24 * 60 * MIN), created_by: "system",
+    },
+    {
+      id: "builtin:latency_p99:1m", name: "service:latency_p99:1m",
+      expression: 'histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[1m])) by (service, le))',
+      interval: 60000000000, labels: { __name__: "service:latency_p99:1m" },
+      enabled: true, last_eval: ago(15 * SEC), last_error: "", last_value: 0.487,
+      description: "P99 latency by service (1m rate)", created_at: ago(30 * 24 * 60 * MIN), updated_at: ago(2 * 24 * 60 * MIN), created_by: "system",
+    },
+    {
+      id: "custom:checkout_saturation:5m", name: "checkout:saturation:5m",
+      expression: 'sum(rate(http_requests_total{service="checkout-api"}[5m])) / 500',
+      interval: 300000000000, labels: { __name__: "checkout:saturation:5m", team: "platform" },
+      enabled: true, last_eval: ago(45 * SEC), last_error: "", last_value: 0.68,
+      description: "Checkout API saturation ratio (capacity 500 rps)", created_at: ago(7 * 24 * 60 * MIN), updated_at: ago(3 * 60 * MIN), created_by: "ops@example.com",
+    },
+    {
+      id: "custom:order_throughput:5m", name: "order:throughput:5m",
+      expression: 'sum(rate(orders_processed_total[5m]))',
+      interval: 300000000000, labels: { __name__: "order:throughput:5m" },
+      enabled: false, last_eval: ago(2 * 60 * MIN), last_error: "metric not found: orders_processed_total", last_value: 0,
+      description: "Order processing throughput", created_at: ago(3 * 24 * 60 * MIN), updated_at: ago(60 * MIN), created_by: "dev@example.com",
+    },
+  ],
+
+  "/api/recording-rules-status": () => ({
+    total_rules: 5,
+    enabled_rules: 4,
+    total_evaluations: 18240,
+    successful_evaluations: 18190,
+    failed_evaluations: 50,
+    last_eval_duration: 12000000,
+    avg_eval_duration: 8500000,
+  }),
 };
 
 // --- Pattern matchers for parameterized routes ---
@@ -591,6 +729,24 @@ const patterns: [RegExp, () => unknown][] = [
 
   // /api/dashboards/:id (single dashboard fetch)
   [/^\/api\/dashboards\/[^/]+$/, () => null],
+
+  // /api/recording-rules/:id/history
+  [/^\/api\/recording-rules\/[^/]+\/history$/, () => {
+    const entries = [];
+    for (let i = 0; i < 20; i++) {
+      const success = Math.random() > 0.05;
+      entries.push({
+        id: `eval-${i}`,
+        rule_id: "builtin:request_rate:1m",
+        timestamp: new Date(Date.now() - i * 60 * 1000).toISOString(),
+        value: success ? 300 + Math.random() * 100 : 0,
+        duration_ms: 5 + Math.random() * 15,
+        error: success ? "" : "query timeout",
+        success,
+      });
+    }
+    return entries;
+  }],
 ];
 
 /** Return mock data for the given API path, or undefined if no mock exists. */

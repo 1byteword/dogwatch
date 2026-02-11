@@ -1,7 +1,7 @@
 import { api } from "../../core/api";
 import { relativeTime } from "../../core/time";
 import { mockAlerts } from "./mock";
-import { AlertItem, AlertSilence, WatchRule } from "./types";
+import { AlertItem, AlertRule, AlertSilence, WatchRule } from "./types";
 
 interface AlertingApiAlert {
   id?: string;
@@ -70,6 +70,36 @@ export async function loadSilences(): Promise<AlertSilence[]> {
       startsAt: row.startsAt || row.starts_at || "",
       endsAt: row.endsAt || row.ends_at || "",
       comment: row.comment || ""
+    }));
+  } catch {
+    return [];
+  }
+}
+
+// --- Alert Rules (Monitors) ---
+
+export async function loadAlertRules(): Promise<AlertRule[]> {
+  try {
+    const raw = await api.get<Array<Partial<AlertRule & {
+      for_duration?: string; notify_channels?: string[];
+      created_at?: string; updated_at?: string; created_by?: string;
+    }>>>("/api/alerting/rules");
+    return (raw || []).map((row, idx) => ({
+      id: row.id || `rule-${idx}`,
+      name: row.name || "unnamed",
+      description: row.description || "",
+      type: row.type || "threshold",
+      enabled: row.enabled !== false,
+      query: row.query || "",
+      condition: row.condition || "gt",
+      threshold: Number(row.threshold || 0),
+      severity: row.severity || "warning",
+      forDuration: row.forDuration || row.for_duration || "5m",
+      notifyChannels: row.notifyChannels || row.notify_channels || [],
+      labels: row.labels || {},
+      createdAt: row.createdAt || row.created_at || "",
+      updatedAt: row.updatedAt || row.updated_at || "",
+      createdBy: row.createdBy || row.created_by || "",
     }));
   } catch {
     return [];

@@ -11,6 +11,8 @@ import dogwatchLogo from "../../assets/dogwatch-logo.png";
 const navItems = [
   { href: "/app/dashboards", label: "Dashboards" },
   { href: "/app/detect/alerts", label: "Detect" },
+  { href: "/app/detect/monitors", label: "Monitors" },
+  { href: "/app/explore/query", label: "Explore" },
   { href: "/app/investigate/logs", label: "Investigate" },
   { href: "/app/correlate/timeline", label: "Correlate" },
   { href: "/app/respond/incidents", label: "Respond" },
@@ -18,6 +20,9 @@ const navItems = [
   { href: "/app/improve/kubernetes", label: "Kubernetes" },
   { href: "/app/configure/catalog", label: "Catalog" },
   { href: "/app/configure/notifications", label: "Notify" },
+  { href: "/app/configure/slos", label: "SLOs" },
+  { href: "/app/configure/synthetics", label: "Synthetics" },
+  { href: "/app/configure/recording-rules", label: "Recording Rules" },
   { href: "/app/configure/audit", label: "Audit" },
   { href: "/app/style-guide", label: "Style Guide" }
 ];

@@ -33,3 +33,26 @@ export interface AlertSilence {
   endsAt: string;
   comment: string;
 }
+
+// --- Alert Rules (Monitors) ---
+
+export type RuleType = "threshold" | "anomaly" | "change" | "absence" | "composite";
+export type RuleSeverity = "critical" | "warning" | "info";
+
+export interface AlertRule {
+  id: string;
+  name: string;
+  description: string;
+  type: RuleType;
+  enabled: boolean;
+  query: string;
+  condition: string;
+  threshold: number;
+  severity: RuleSeverity;
+  forDuration: string;
+  notifyChannels: string[];
+  labels: Record<string, string>;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+}
