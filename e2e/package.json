@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "scripts": {
     "test": "playwright test",
-    "test:v2": "playwright test -c playwright.v2.config.ts tests/ui-v2.spec.ts",
+    "test:v2": "playwright test -c playwright.v2.config.ts",
+    "test:v2:update-snapshots": "playwright test -c playwright.v2.config.ts tests/v2/visual.spec.ts --update-snapshots",
     "test:headed": "playwright test --headed",
     "test:debug": "playwright test --debug"
   },
