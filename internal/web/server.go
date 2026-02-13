@@ -192,8 +192,8 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 		w.Header().Set("Cache-Control", "public, max-age=86400")
 		w.Write(data)
 	})
-	// SPA fallback: any /app/* path serves index.html (with gzip)
-	mux.HandleFunc("/app/", func(w http.ResponseWriter, r *http.Request) {
+	// SPA fallback: /login and /app/* paths serve index.html (with gzip)
+	serveSPA := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
@@ -204,7 +204,9 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 			return
 		}
 		w.Write(v2index)
-	})
+	}
+	mux.HandleFunc("/app/", serveSPA)
+	mux.HandleFunc("/login", serveSPA)
 
 	// WebSocket endpoint for real-time updates
 	mux.HandleFunc("/api/ws", s.wsHub.ServeWS)

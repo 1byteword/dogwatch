@@ -1,8 +1,9 @@
 import { expect, test } from '@playwright/test';
-import { gotoV2 } from './helpers';
+import { gotoV2, mockAuth } from './helpers';
 
 test.describe('Dashboard editor', () => {
   test.beforeEach(async ({ page }) => {
+    await mockAuth(page);
     // Block dashboard API so tests use the default in-memory layout (10 widgets)
     // instead of a live backend's saved dashboards
     await page.route('**/api/dashboards**', (route) =>

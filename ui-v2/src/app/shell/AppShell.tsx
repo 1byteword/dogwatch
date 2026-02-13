@@ -1,11 +1,12 @@
-import { A, useNavigate } from "@solidjs/router";
-import { ParentProps, createResource, createSignal } from "solid-js";
+import { A, useLocation, useNavigate } from "@solidjs/router";
+import { ParentProps, Show, createEffect, createResource, createSignal } from "solid-js";
 import { useAutoRefresh } from "../../core/live";
 import { loadPlatformStatus } from "../../core/platform";
 import { Chip } from "../../design/components/Chip";
 import { Input } from "../../design/components/Input";
 import { Button } from "../../design/components/Button";
 import { Badge } from "../../design/components/Badge";
+import { useAuth } from "../../domains/auth/context";
 import dogwatchLogo from "../../assets/dogwatch-logo.png";
 
 const navItems = [
@@ -29,11 +30,20 @@ const navItems = [
 
 export function AppShell(props: ParentProps) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { user, isAuthenticated, loading, logout } = useAuth();
   const [command, setCommand] = createSignal("");
   const [commandNotice, setCommandNotice] = createSignal("");
   const [status, { refetch: refetchStatus }] = createResource(loadPlatformStatus);
 
   useAutoRefresh(() => refetchStatus(), 20000);
+
+  // Auth guard: redirect to /login when not authenticated
+  createEffect(() => {
+    if (!loading() && !isAuthenticated() && location.pathname !== "/login") {
+      navigate("/login", { replace: true });
+    }
+  });
 
   function runCommand() {
     const q = command().trim().toLowerCase();
@@ -63,49 +73,61 @@ export function AppShell(props: ParentProps) {
     setCommandNotice("Unknown command. Try: dashboards, detect, investigate, respond, catalog, notify, audit.");
   }
 
+  // Login page renders without shell chrome
   return (
-    <div class="app-shell">
-      <aside class="app-sidebar">
-        <div class="brand-block">
-          <img src={dogwatchLogo} alt="dogwatch" class="brand-logo" />
-        </div>
-        <nav class="nav-stack" aria-label="Main navigation">
-          {navItems.map((item) => (
-            <A href={item.href} class="nav-item" activeClass="is-active">
-              {item.label}
-            </A>
-          ))}
-        </nav>
-      </aside>
-      <main class="app-main">
-        <header class="topbar">
-          <div class="context-strip">
-            <Chip>prod</Chip>
-            <Chip>last 1h</Chip>
-            <Chip>all services</Chip>
+    <Show when={location.pathname !== "/login"} fallback={props.children}>
+      <div class="app-shell">
+        <aside class="app-sidebar">
+          <div class="brand-block">
+            <img src={dogwatchLogo} alt="dogwatch" class="brand-logo" />
           </div>
-          <div class="topbar-search">
-            <Input
-              placeholder="Command (e.g. detect, audit, seed)"
-              value={command()}
-              onInput={(e) => setCommand(e.currentTarget.value)}
-              onKeyDown={(e) => e.key === "Enter" && runCommand()}
-              aria-label="Command input"
-            />
-            <Button onClick={runCommand} aria-label="Run command">Run</Button>
-          </div>
-          <div class="topbar-note">
-            <Badge tone={status()?.healthy ? "ok" : "error"}>
-              {status()?.healthy ? "api healthy" : "api degraded"}
-            </Badge>
-            <Badge tone="neutral">
-              ready {status()?.okCount || 0}/{status()?.total || 0}
-            </Badge>
-            <span>{commandNotice() || "V2 operations shell"}</span>
-          </div>
-        </header>
-        <section class="page-frame">{props.children}</section>
-      </main>
-    </div>
+          <nav class="nav-stack" aria-label="Main navigation">
+            {navItems.map((item) => (
+              <A href={item.href} class="nav-item" activeClass="is-active">
+                {item.label}
+              </A>
+            ))}
+          </nav>
+        </aside>
+        <main class="app-main">
+          <header class="topbar">
+            <div class="context-strip">
+              <Chip>prod</Chip>
+              <Chip>last 1h</Chip>
+              <Chip>all services</Chip>
+            </div>
+            <div class="topbar-search">
+              <Input
+                placeholder="Command (e.g. detect, audit, seed)"
+                value={command()}
+                onInput={(e) => setCommand(e.currentTarget.value)}
+                onKeyDown={(e) => e.key === "Enter" && runCommand()}
+                aria-label="Command input"
+              />
+              <Button onClick={runCommand} aria-label="Run command">Run</Button>
+            </div>
+            <div class="topbar-note">
+              <Badge tone={status()?.healthy ? "ok" : "error"}>
+                {status()?.healthy ? "api healthy" : "api degraded"}
+              </Badge>
+              <Badge tone="neutral">
+                ready {status()?.okCount || 0}/{status()?.total || 0}
+              </Badge>
+              <span>{commandNotice() || "V2 operations shell"}</span>
+              {user() && (
+                <span class="topbar-user">
+                  <Badge tone="neutral">{user()!.role}</Badge>
+                  <span class="topbar-username">{user()!.name || user()!.email}</span>
+                  <Button variant="default" onClick={logout} aria-label="Sign out">
+                    Sign out
+                  </Button>
+                </span>
+              )}
+            </div>
+          </header>
+          <section class="page-frame">{props.children}</section>
+        </main>
+      </div>
+    </Show>
   );
 }

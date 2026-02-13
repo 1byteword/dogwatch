@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { mockAuth } from './v2/helpers';
 
 async function gotoRoute(page: import('@playwright/test').Page, path: string, heading: RegExp) {
   await page.goto(path);
@@ -7,6 +8,10 @@ async function gotoRoute(page: import('@playwright/test').Page, path: string, he
 }
 
 test.describe('UI V2 smoke', () => {
+  test.beforeEach(async ({ page }) => {
+    await mockAuth(page);
+  });
+
   test('shell command navigation works', async ({ page }) => {
     await page.goto('/app/detect/alerts');
     const command = page.getByPlaceholder(/Command/i);

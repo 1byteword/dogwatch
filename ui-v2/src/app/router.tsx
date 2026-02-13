@@ -1,7 +1,10 @@
 import { lazy } from "solid-js";
 import { Navigate, Route, Router } from "@solidjs/router";
 import { AppShell } from "./shell/AppShell";
+import { AuthProvider } from "../domains/auth/context";
+import type { ParentProps } from "solid-js";
 
+const LoginPage = lazy(() => import("../routes/LoginPage"));
 const DashboardsPage = lazy(() => import("../routes/DashboardsPage"));
 const DetectAlertsPage = lazy(() => import("../routes/DetectAlertsPage"));
 const MonitorsPage = lazy(() => import("../routes/MonitorsPage"));
@@ -20,9 +23,18 @@ const RecordingRulesPage = lazy(() => import("../routes/RecordingRulesPage"));
 const StyleGuidePage = lazy(() => import("../routes/StyleGuidePage"));
 const NotFoundPage = lazy(() => import("../routes/NotFoundPage"));
 
+function AppRoot(props: ParentProps) {
+  return (
+    <AuthProvider>
+      <AppShell>{props.children}</AppShell>
+    </AuthProvider>
+  );
+}
+
 export function AppRouter() {
   return (
-    <Router root={AppShell}>
+    <Router root={AppRoot}>
+      <Route path="/login" component={LoginPage} />
       <Route path="/" component={() => <Navigate href="/app/dashboards" />} />
       <Route path="/app/dashboards" component={DashboardsPage} />
       <Route path="/app/detect/alerts" component={DetectAlertsPage} />
