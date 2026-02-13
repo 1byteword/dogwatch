@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Go checks ────────────────────────────────────────────────────────
+  go-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: make test-unit
+
+  # ── UI typecheck ─────────────────────────────────────────────────────
+  ui-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui-v2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ui-v2/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+
+  # ── Bundle budget ────────────────────────────────────────────────────
+  ui-bundle-budget:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui-v2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ui-v2/package-lock.json
+      - run: npm ci
+      - run: npx vite build
+      - run: bash scripts/check-bundle-size.sh
+
+  # ── E2E tests ────────────────────────────────────────────────────────
+  ui-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Install UI dependencies (Vite dev server)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ui-v2/package-lock.json
+      - run: npm ci
+        working-directory: ui-v2
+
+      # Install E2E dependencies + Playwright browsers
+      - run: npm ci
+        working-directory: e2e
+      - run: npx playwright install --with-deps chromium
+        working-directory: e2e
+
+      # Run V2 E2E suite (Vite auto-starts via webServer config)
+      - run: npx playwright test -c playwright.v2.config.ts
+        working-directory: e2e
+        env:
+          CI: true
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: e2e/playwright-report/
+          retention-days: 7
