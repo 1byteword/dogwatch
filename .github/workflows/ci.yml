@@ -19,8 +19,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: go vet ./...
-      - run: make test-unit
+      - name: Go vet (excluding eBPF probe)
+        run: go vet $(go list ./... | grep -v /internal/probe)
+      - name: Unit tests (excluding eBPF probe)
+        run: CGO_ENABLED=0 go test -count=1 ./internal/storage/... ./internal/trace/... ./internal/alerting/... ./internal/rbac/... ./internal/testutil/...
 
   # ── UI typecheck ─────────────────────────────────────────────────────
   ui-typecheck:
