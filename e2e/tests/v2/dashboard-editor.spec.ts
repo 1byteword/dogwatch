@@ -140,8 +140,8 @@ test.describe('Dashboard editor', () => {
     await expect(widgets.first()).toBeVisible({ timeout: 5000 });
     if (await widgets.count() === 0) return;
 
-    // Click a widget and verify it gets the focused state
-    await widgets.first().click();
+    // Focus the widget via keyboard tab (draggable=true can intercept clicks on CI)
+    await widgets.first().focus();
     await expect(widgets.first()).toHaveClass(/is-focused/, { timeout: 5000 });
   });
 });
