@@ -478,7 +478,10 @@ func TestMigrationReportByIDEndpoint(t *testing.T) {
 		}
 
 		// Verify deletion
-		getResp, _ := http.Get(server.URL + "/api/migration/report/" + reportID)
+		getResp, err := http.Get(server.URL + "/api/migration/report/" + reportID)
+		if err != nil {
+			t.Fatalf("Request failed: %v", err)
+		}
 		defer getResp.Body.Close()
 		if getResp.StatusCode != http.StatusNotFound {
 			t.Error("Report should have been deleted")

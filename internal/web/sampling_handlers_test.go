@@ -339,7 +339,10 @@ func TestSamplingRuleByIDEndpoint(t *testing.T) {
 		}
 
 		// Verify deletion
-		getResp, _ := http.Get(server.URL + "/api/sampling/rules/rule-to-test")
+		getResp, err := http.Get(server.URL + "/api/sampling/rules/rule-to-test")
+		if err != nil {
+			t.Fatalf("Request failed: %v", err)
+		}
 		defer getResp.Body.Close()
 		if getResp.StatusCode != http.StatusNotFound {
 			t.Error("Rule should have been deleted")
