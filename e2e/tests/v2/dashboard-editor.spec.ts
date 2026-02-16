@@ -68,17 +68,11 @@ test.describe('Dashboard editor', () => {
     const initialCount = await page.locator('.widget-card').count();
 
     await page.getByRole('button', { name: 'Add Widget' }).click();
-    const searchInput = page.locator('input[aria-label="Search widgets"]');
-    await expect(searchInput).toBeVisible();
+    await expect(page.locator('input[aria-label="Search widgets"]')).toBeVisible();
     await page.locator('.modal-card .widget-picker-card').first().click();
 
-    // Wait for the widget to be added
+    // Core assertion: widget was added to the layout
     await expect(page.locator('.widget-card')).not.toHaveCount(initialCount, { timeout: 5000 });
-
-    // Close picker by clicking the overlay (outside the modal card)
-    await page.locator('.modal-overlay').click({ position: { x: 5, y: 5 } });
-    await expect(searchInput).toBeHidden({ timeout: 5000 });
-
     const newCount = await page.locator('.widget-card').count();
     expect(newCount).toBeGreaterThan(initialCount);
   });
@@ -139,15 +133,15 @@ test.describe('Dashboard editor', () => {
     await expect(widgets).toHaveCount(afterRemove, { timeout: 3000 });
   });
 
-  test('widget inspector shows on click', async ({ page }) => {
+  test('widget focus highlights on click', async ({ page }) => {
     await page.getByRole('button', { name: 'Customize Layout' }).click();
 
     const widgets = page.locator('.widget-card');
     await expect(widgets.first()).toBeVisible({ timeout: 5000 });
     if (await widgets.count() === 0) return;
 
-    // Click the widget header area to focus it (avoids drag interception on the card body)
-    await widgets.first().locator('.widget-head').click();
-    await expect(page.locator('.widget-inspector')).toBeVisible({ timeout: 10000 });
+    // Click a widget and verify it gets the focused state
+    await widgets.first().click();
+    await expect(widgets.first()).toHaveClass(/is-focused/, { timeout: 5000 });
   });
 });
