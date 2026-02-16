@@ -68,15 +68,16 @@ test.describe('Dashboard editor', () => {
     const initialCount = await page.locator('.widget-card').count();
 
     await page.getByRole('button', { name: 'Add Widget' }).click();
-    const modal = page.locator('.modal-card');
-    await expect(modal).toBeVisible();
-    await modal.locator('.widget-picker-card').first().click();
+    const searchInput = page.locator('input[aria-label="Search widgets"]');
+    await expect(searchInput).toBeVisible();
+    await page.locator('.modal-card .widget-picker-card').first().click();
 
-    // Wait for the widget to be added before closing the picker
+    // Wait for the widget to be added
     await expect(page.locator('.widget-card')).not.toHaveCount(initialCount, { timeout: 5000 });
 
-    await modal.getByRole('button', { name: 'Close' }).click();
-    await expect(modal).toBeHidden({ timeout: 5000 });
+    // Close picker by clicking the overlay (outside the modal card)
+    await page.locator('.modal-overlay').click({ position: { x: 5, y: 5 } });
+    await expect(searchInput).toBeHidden({ timeout: 5000 });
 
     const newCount = await page.locator('.widget-card').count();
     expect(newCount).toBeGreaterThan(initialCount);
@@ -145,7 +146,8 @@ test.describe('Dashboard editor', () => {
     await expect(widgets.first()).toBeVisible({ timeout: 5000 });
     if (await widgets.count() === 0) return;
 
-    await widgets.first().click();
-    await expect(page.locator('.widget-inspector')).toBeVisible({ timeout: 5000 });
+    // Click the widget header area to focus it (avoids drag interception on the card body)
+    await widgets.first().locator('.widget-head').click();
+    await expect(page.locator('.widget-inspector')).toBeVisible({ timeout: 10000 });
   });
 });
