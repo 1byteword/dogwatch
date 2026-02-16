@@ -19,8 +19,13 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Go vet (excluding eBPF probe)
-        run: go vet $(go list ./... | grep -v /internal/probe)
+      - name: Stub eBPF objects (go:embed needs files to exist)
+        run: |
+          for f in bpf http ssl profile dbproto; do
+            touch "internal/probe/${f}_x86_bpfel.o"
+          done
+      - name: Go vet
+        run: go vet ./...
       - name: Unit tests (excluding eBPF probe)
         run: CGO_ENABLED=0 go test -count=1 ./internal/storage/... ./internal/trace/... ./internal/alerting/... ./internal/rbac/... ./internal/testutil/...
 
