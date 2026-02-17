@@ -423,7 +423,7 @@ func (m *TieringManager) exportToWarm(table, tsCol string, before time.Time) (Wa
 		warmDBPath = strings.TrimSuffix(path, ".gz")
 	}
 
-	warmDB, err := sql.Open("sqlite", warmDBPath)
+	warmDB, err := OpenDB(warmDBPath)
 	if err != nil {
 		return WarmFile{}, err
 	}
@@ -597,7 +597,7 @@ func (m *TieringManager) QueryWarm(ctx context.Context, table string, start, end
 		// Note: caller responsible for cleanup
 	}
 
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := OpenDB(dbPath)
 	if err != nil {
 		return nil, err
 	}

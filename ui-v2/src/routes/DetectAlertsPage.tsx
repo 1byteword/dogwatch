@@ -1,8 +1,9 @@
-import { For, Show, createEffect, createMemo, createResource, createSignal } from "solid-js";
+import { ErrorBoundary, For, Show, createEffect, createMemo, createResource, createSignal } from "solid-js";
 import { Badge } from "../design/components/Badge";
 import { Button } from "../design/components/Button";
 import { Input } from "../design/components/Input";
 import { Panel } from "../design/components/Panel";
+import { WidgetErrorFallback } from "../design/components/WidgetErrorFallback";
 import { AlertItem } from "../domains/alerts/types";
 import { loadAlerts } from "../domains/alerts/service";
 import { createNowTicker, useAutoRefresh } from "../core/live";
@@ -186,7 +187,7 @@ export function DetectAlertsPage() {
   }
 
   return (
-    <>
+    <ErrorBoundary fallback={(err, reset) => <WidgetErrorFallback error={err} reset={reset} />}>
       <div class="split-layout">
         <Panel
           title="Alert Feed"
@@ -340,7 +341,7 @@ export function DetectAlertsPage() {
           </div>
         </div>
       </Show>
-    </>
+    </ErrorBoundary>
   );
 }
 

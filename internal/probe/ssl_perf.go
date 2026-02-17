@@ -221,11 +221,13 @@ func ResolveLibraryPath(name string) (string, error) {
 	// For uprobes, we need the path that processes actually load
 	// This means NOT resolving symlinks, as the inode matters
 
-	// Check common paths in order
+	// Check common paths in order (x86_64 and aarch64)
 	paths := []string{
 		"/lib/x86_64-linux-gnu/" + name,
+		"/lib/aarch64-linux-gnu/" + name,
 		"/lib64/" + name,
 		"/usr/lib/x86_64-linux-gnu/" + name,
+		"/usr/lib/aarch64-linux-gnu/" + name,
 		"/usr/lib64/" + name,
 		"/usr/lib/" + name,
 	}
@@ -286,8 +288,10 @@ func GetLibraryInode(path string) (uint64, error) {
 func FindLibraryByInode(targetInode uint64) (string, error) {
 	searchPaths := []string{
 		"/lib/x86_64-linux-gnu",
+		"/lib/aarch64-linux-gnu",
 		"/lib64",
 		"/usr/lib/x86_64-linux-gnu",
+		"/usr/lib/aarch64-linux-gnu",
 		"/usr/lib64",
 		"/usr/lib",
 	}

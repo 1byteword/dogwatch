@@ -2,12 +2,12 @@ package rbac
 
 import (
 	"database/sql"
+	"dogwatch/internal/storage"
 	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
 )
 
 // Store manages RBAC data persistence
@@ -18,7 +18,7 @@ type Store struct {
 
 // NewStore creates a new RBAC store
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := storage.OpenDB(dbPath)
 	if err != nil {
 		return nil, err
 	}

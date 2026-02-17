@@ -2,12 +2,12 @@ package synthetics
 
 import (
 	"database/sql"
+	"dogwatch/internal/storage"
 	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
-	_ "modernc.org/sqlite"
 )
 
 // CheckType represents the type of synthetic check
@@ -90,7 +90,7 @@ type Store struct {
 
 // NewStore creates a new synthetics store
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := storage.OpenDB(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}

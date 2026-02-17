@@ -1,4 +1,5 @@
-import { createSignal } from "solid-js";
+import { ErrorBoundary, createSignal } from "solid-js";
+import { WidgetErrorFallback } from "../design/components/WidgetErrorFallback";
 import { useAuth } from "../domains/auth/context";
 import dogwatchLogo from "../assets/dogwatch-logo.png";
 
@@ -23,6 +24,7 @@ export default function LoginPage() {
   }
 
   return (
+    <ErrorBoundary fallback={(err, reset) => <WidgetErrorFallback error={err} reset={reset} />}>
     <div class="login-page">
       <div class="login-glow login-glow-1" />
       <div class="login-glow login-glow-2" />
@@ -272,5 +274,6 @@ export default function LoginPage() {
         }
       `}</style>
     </div>
+    </ErrorBoundary>
   );
 }

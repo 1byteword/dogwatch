@@ -527,3 +527,182 @@ int trace_db_recvfrom_exit(struct trace_event_raw_sys_exit *ctx)
 
     return 0;
 }
+
+// Helper: read the first iov_base and iov_len from an iovec array pointer.
+// struct iovec { void *iov_base; size_t iov_len; }
+// Returns 0 on success, -1 on failure.
+static __always_inline int read_first_iov(const void *iov_array, char **base_out, __u32 *len_out)
+{
+    // Read iov_base (first field of struct iovec)
+    void *iov_base;
+    if (bpf_probe_read_user(&iov_base, sizeof(iov_base), iov_array) < 0)
+        return -1;
+    // Read iov_len (second field, offset = sizeof(void*))
+    size_t iov_len;
+    if (bpf_probe_read_user(&iov_len, sizeof(iov_len), (const char *)iov_array + sizeof(void *)) < 0)
+        return -1;
+    *base_out = (char *)iov_base;
+    *len_out = (__u32)(iov_len & 0xFFFF);  // Bound for BPF verifier
+    return 0;
+}
+
+// Capture sendmsg for database protocol
+// sendmsg(int fd, const struct msghdr *msg, int flags)
+SEC("tracepoint/syscalls/sys_enter_sendmsg")
+int trace_db_sendmsg_entry(struct trace_event_raw_sys_enter *ctx)
+{
+    const void *msg_ptr = (const void *)ctx->args[1];
+    if (!msg_ptr)
+        return 0;
+
+    // Read msg_iov pointer from msghdr (offset 16 on 64-bit)
+    struct iovec *iov_ptr;
+    if (bpf_probe_read_user(&iov_ptr, sizeof(iov_ptr), (const char *)msg_ptr + 16) < 0)
+        return 0;
+
+    char *buf;
+    __u32 count;
+    if (read_first_iov(iov_ptr, &buf, &count) < 0)
+        return 0;
+
+    if (count < 4)
+        return 0;
+
+    __u8 db_type, event_type;
+    detect_db_protocol(buf, count, &db_type, &event_type);
+
+    if (db_type != DB_TYPE_UNKNOWN) {
+        emit_db_event(buf, count, db_type, event_type);
+    }
+
+    return 0;
+}
+
+// Store buffer for recvmsg (read the first iov from msghdr on entry)
+SEC("tracepoint/syscalls/sys_enter_recvmsg")
+int trace_db_recvmsg_entry(struct trace_event_raw_sys_enter *ctx)
+{
+    const void *msg_ptr = (const void *)ctx->args[1];
+    if (!msg_ptr)
+        return 0;
+
+    // Read msg_iov pointer from msghdr (offset 16 on 64-bit)
+    struct iovec *iov_ptr;
+    if (bpf_probe_read_user(&iov_ptr, sizeof(iov_ptr), (const char *)msg_ptr + 16) < 0)
+        return 0;
+
+    // Read the first iov_base
+    void *iov_base;
+    if (bpf_probe_read_user(&iov_base, sizeof(iov_base), iov_ptr) < 0)
+        return 0;
+
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u64 buf_ptr = (__u64)iov_base;
+    bpf_map_update_elem(&read_buffers, &pid_tgid, &buf_ptr, BPF_ANY);
+
+    return 0;
+}
+
+// Check recvmsg result for database data
+SEC("tracepoint/syscalls/sys_exit_recvmsg")
+int trace_db_recvmsg_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u64 *buf_ptr = bpf_map_lookup_elem(&read_buffers, &pid_tgid);
+    if (!buf_ptr)
+        return 0;
+
+    char *buf = (char *)*buf_ptr;
+    bpf_map_delete_elem(&read_buffers, &pid_tgid);
+
+    long ret = ctx->ret;
+    if (ret <= 0)
+        return 0;
+
+    __u32 count = (__u32)ret & 0xFFFF;
+    if (count < 4)
+        return 0;
+
+    __u8 db_type, event_type;
+    detect_db_protocol(buf, count, &db_type, &event_type);
+
+    if (db_type != DB_TYPE_UNKNOWN) {
+        emit_db_event(buf, count, db_type, event_type);
+    }
+
+    return 0;
+}
+
+// Capture writev for database protocol (scatter/gather write)
+// writev(int fd, const struct iovec *iov, int iovcnt)
+SEC("tracepoint/syscalls/sys_enter_writev")
+int trace_db_writev_entry(struct trace_event_raw_sys_enter *ctx)
+{
+    const void *iov_array = (const void *)ctx->args[1];
+
+    char *buf;
+    __u32 count;
+    if (read_first_iov(iov_array, &buf, &count) < 0)
+        return 0;
+
+    if (count < 4)
+        return 0;
+
+    __u8 db_type, event_type;
+    detect_db_protocol(buf, count, &db_type, &event_type);
+
+    if (db_type != DB_TYPE_UNKNOWN) {
+        emit_db_event(buf, count, db_type, event_type);
+    }
+
+    return 0;
+}
+
+// Store buffer for readv (scatter/gather read)
+// readv(int fd, const struct iovec *iov, int iovcnt)
+SEC("tracepoint/syscalls/sys_enter_readv")
+int trace_db_readv_entry(struct trace_event_raw_sys_enter *ctx)
+{
+    const void *iov_array = (const void *)ctx->args[1];
+
+    // Read the first iov_base
+    void *iov_base;
+    if (bpf_probe_read_user(&iov_base, sizeof(iov_base), iov_array) < 0)
+        return 0;
+
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u64 buf_ptr = (__u64)iov_base;
+    bpf_map_update_elem(&read_buffers, &pid_tgid, &buf_ptr, BPF_ANY);
+
+    return 0;
+}
+
+// Check readv result for database data
+SEC("tracepoint/syscalls/sys_exit_readv")
+int trace_db_readv_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u64 *buf_ptr = bpf_map_lookup_elem(&read_buffers, &pid_tgid);
+    if (!buf_ptr)
+        return 0;
+
+    char *buf = (char *)*buf_ptr;
+    bpf_map_delete_elem(&read_buffers, &pid_tgid);
+
+    long ret = ctx->ret;
+    if (ret <= 0)
+        return 0;
+
+    __u32 count = (__u32)ret & 0xFFFF;
+    if (count < 4)
+        return 0;
+
+    __u8 db_type, event_type;
+    detect_db_protocol(buf, count, &db_type, &event_type);
+
+    if (db_type != DB_TYPE_UNKNOWN) {
+        emit_db_event(buf, count, db_type, event_type);
+    }
+
+    return 0;
+}

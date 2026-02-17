@@ -242,3 +242,184 @@ int trace_recvfrom_exit(struct trace_event_raw_sys_exit *ctx)
 
     return 0;
 }
+
+// Helper: read the first iov_base and iov_len from an iovec array pointer.
+// struct iovec { void *iov_base; size_t iov_len; }
+// Returns 0 on success, -1 on failure.
+static __always_inline int read_first_iov(const void *iov_array, char **base_out, size_t *len_out)
+{
+    // Read iov_base (first field of struct iovec)
+    void *iov_base;
+    if (bpf_probe_read_user(&iov_base, sizeof(iov_base), iov_array) < 0)
+        return -1;
+    // Read iov_len (second field, offset = sizeof(void*))
+    size_t iov_len;
+    if (bpf_probe_read_user(&iov_len, sizeof(iov_len), (const char *)iov_array + sizeof(void *)) < 0)
+        return -1;
+    *base_out = (char *)iov_base;
+    *len_out = iov_len;
+    return 0;
+}
+
+// Capture sendmsg for HTTP
+// sendmsg(int fd, const struct msghdr *msg, int flags)
+// struct msghdr { ..., struct iovec *msg_iov, size_t msg_iovlen, ... }
+// On x86_64: msg_iov is at offset 8 in msghdr (after msg_name + msg_namelen)
+SEC("tracepoint/syscalls/sys_enter_sendmsg")
+int trace_sendmsg_entry(struct trace_event_raw_sys_enter *ctx)
+{
+    // args[1] = pointer to struct msghdr (user_msghdr)
+    const void *msg_ptr = (const void *)ctx->args[1];
+    if (!msg_ptr)
+        return 0;
+
+    // Read msg_iov pointer from msghdr
+    // struct user_msghdr: void *msg_name (8), int msg_namelen (4), pad (4), struct iovec *msg_iov (8)
+    // Offset of msg_iov = 16 on 64-bit
+    struct iovec *iov_ptr;
+    if (bpf_probe_read_user(&iov_ptr, sizeof(iov_ptr), (const char *)msg_ptr + 16) < 0)
+        return 0;
+
+    char *buf;
+    size_t count;
+    if (read_first_iov(iov_ptr, &buf, &count) < 0)
+        return 0;
+
+    if (count < 4 || count > 65535)
+        return 0;
+
+    if (is_http_request(buf, count)) {
+        emit_http_event(buf, count, EVENT_TYPE_REQUEST);
+    } else if (is_http_response(buf, count)) {
+        emit_http_event(buf, count, EVENT_TYPE_RESPONSE);
+    }
+
+    return 0;
+}
+
+// Store buffer for recvmsg (read the first iov from msghdr on entry)
+SEC("tracepoint/syscalls/sys_enter_recvmsg")
+int trace_recvmsg_entry(struct trace_event_raw_sys_enter *ctx)
+{
+    const void *msg_ptr = (const void *)ctx->args[1];
+    if (!msg_ptr)
+        return 0;
+
+    // Read msg_iov pointer from msghdr (offset 16 on 64-bit)
+    struct iovec *iov_ptr;
+    if (bpf_probe_read_user(&iov_ptr, sizeof(iov_ptr), (const char *)msg_ptr + 16) < 0)
+        return 0;
+
+    // Read the first iov_base
+    void *iov_base;
+    if (bpf_probe_read_user(&iov_base, sizeof(iov_base), iov_ptr) < 0)
+        return 0;
+
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u64 buf_ptr = (__u64)iov_base;
+    bpf_map_update_elem(&read_buffers, &pid_tgid, &buf_ptr, BPF_ANY);
+
+    return 0;
+}
+
+// Check recvmsg result for HTTP data
+SEC("tracepoint/syscalls/sys_exit_recvmsg")
+int trace_recvmsg_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u64 *buf_ptr = bpf_map_lookup_elem(&read_buffers, &pid_tgid);
+    if (!buf_ptr)
+        return 0;
+
+    char *buf = (char *)*buf_ptr;
+    bpf_map_delete_elem(&read_buffers, &pid_tgid);
+
+    long ret = ctx->ret;
+    if (ret <= 0)
+        return 0;
+
+    size_t count = (size_t)ret;
+    if (count < 4 || count > 65535)
+        return 0;
+
+    if (is_http_request(buf, count)) {
+        emit_http_event(buf, count, EVENT_TYPE_REQUEST);
+    } else if (is_http_response(buf, count)) {
+        emit_http_event(buf, count, EVENT_TYPE_RESPONSE);
+    }
+
+    return 0;
+}
+
+// Capture writev for HTTP (scatter/gather write)
+// writev(int fd, const struct iovec *iov, int iovcnt)
+SEC("tracepoint/syscalls/sys_enter_writev")
+int trace_writev_entry(struct trace_event_raw_sys_enter *ctx)
+{
+    const void *iov_array = (const void *)ctx->args[1];
+    // iovcnt = ctx->args[2], we only look at the first iov entry
+
+    char *buf;
+    size_t count;
+    if (read_first_iov(iov_array, &buf, &count) < 0)
+        return 0;
+
+    if (count < 4 || count > 65535)
+        return 0;
+
+    if (is_http_request(buf, count)) {
+        emit_http_event(buf, count, EVENT_TYPE_REQUEST);
+    } else if (is_http_response(buf, count)) {
+        emit_http_event(buf, count, EVENT_TYPE_RESPONSE);
+    }
+
+    return 0;
+}
+
+// Store buffer for readv (scatter/gather read)
+// readv(int fd, const struct iovec *iov, int iovcnt)
+SEC("tracepoint/syscalls/sys_enter_readv")
+int trace_readv_entry(struct trace_event_raw_sys_enter *ctx)
+{
+    const void *iov_array = (const void *)ctx->args[1];
+
+    // Read the first iov_base
+    void *iov_base;
+    if (bpf_probe_read_user(&iov_base, sizeof(iov_base), iov_array) < 0)
+        return 0;
+
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u64 buf_ptr = (__u64)iov_base;
+    bpf_map_update_elem(&read_buffers, &pid_tgid, &buf_ptr, BPF_ANY);
+
+    return 0;
+}
+
+// Check readv result for HTTP data
+SEC("tracepoint/syscalls/sys_exit_readv")
+int trace_readv_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u64 *buf_ptr = bpf_map_lookup_elem(&read_buffers, &pid_tgid);
+    if (!buf_ptr)
+        return 0;
+
+    char *buf = (char *)*buf_ptr;
+    bpf_map_delete_elem(&read_buffers, &pid_tgid);
+
+    long ret = ctx->ret;
+    if (ret <= 0)
+        return 0;
+
+    size_t count = (size_t)ret;
+    if (count < 4 || count > 65535)
+        return 0;
+
+    if (is_http_request(buf, count)) {
+        emit_http_event(buf, count, EVENT_TYPE_REQUEST);
+    } else if (is_http_response(buf, count)) {
+        emit_http_event(buf, count, EVENT_TYPE_RESPONSE);
+    }
+
+    return 0;
+}

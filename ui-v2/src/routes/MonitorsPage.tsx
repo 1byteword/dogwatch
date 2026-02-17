@@ -1,4 +1,4 @@
-import { createResource, createSignal, createMemo, Show, For } from "solid-js";
+import { ErrorBoundary, createResource, createSignal, createMemo, Show, For } from "solid-js";
 import { useAutoRefresh } from "../core/live";
 import { loadAlertRules } from "../domains/alerts/service";
 import { AlertRule, RuleType, RuleSeverity } from "../domains/alerts/types";
@@ -6,6 +6,7 @@ import { Panel } from "../design/components/Panel";
 import { Button } from "../design/components/Button";
 import { Badge } from "../design/components/Badge";
 import { Input } from "../design/components/Input";
+import { WidgetErrorFallback } from "../design/components/WidgetErrorFallback";
 
 const RULE_TYPE_LABELS: Record<RuleType, string> = {
   threshold: "Threshold",
@@ -272,7 +273,7 @@ export function MonitorsPage() {
   };
 
   return (
-    <>
+    <ErrorBoundary fallback={(err, reset) => <WidgetErrorFallback error={err} reset={reset} />}>
       <div class="split-layout">
         <Panel title={`Monitors (${allRules().length})`} actions={
           <>
@@ -533,7 +534,7 @@ export function MonitorsPage() {
           </div>
         </div>
       </Show>
-    </>
+    </ErrorBoundary>
   );
 }
 

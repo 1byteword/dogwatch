@@ -3,12 +3,12 @@ package statuspage
 
 import (
 	"database/sql"
+	"dogwatch/internal/storage"
 	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
 )
 
 // ServiceStatus represents the current status of a service
@@ -147,7 +147,7 @@ type Store struct {
 
 // NewStore creates a new status page store
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := storage.OpenDB(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}

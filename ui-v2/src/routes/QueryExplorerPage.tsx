@@ -1,9 +1,10 @@
-import { createResource, createSignal, Show, For } from "solid-js";
+import { ErrorBoundary, createResource, createSignal, Show, For } from "solid-js";
 import { executeQuery, loadSavedQueries } from "../domains/query/service";
 import { QueryResult, SavedQuery } from "../domains/query/types";
 import { Panel } from "../design/components/Panel";
 import { Button } from "../design/components/Button";
 import { Badge } from "../design/components/Badge";
+import { WidgetErrorFallback } from "../design/components/WidgetErrorFallback";
 
 export function QueryExplorerPage() {
   const [query, setQuery] = createSignal("histogram_quantile(0.99, rate(http_request_duration_seconds_bucket{service=\"checkout-api\"}[5m]))");
@@ -48,6 +49,7 @@ export function QueryExplorerPage() {
   }
 
   return (
+    <ErrorBoundary fallback={(err, reset) => <WidgetErrorFallback error={err} reset={reset} />}>
     <div style={{ display: "flex", "flex-direction": "column", gap: "12px", height: "100%" }}>
       <Panel title="Query Explorer" actions={
         <div style={{ display: "flex", gap: "8px", "align-items": "center" }}>
@@ -164,6 +166,7 @@ export function QueryExplorerPage() {
         </div>
       </Show>
     </div>
+    </ErrorBoundary>
   );
 }
 

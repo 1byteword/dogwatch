@@ -1,4 +1,4 @@
-import { createResource, createSignal, createMemo, Show, For } from "solid-js";
+import { ErrorBoundary, createResource, createSignal, createMemo, Show, For } from "solid-js";
 import { useAutoRefresh } from "../core/live";
 import { loadSlos } from "../domains/slo/service";
 import { SloDefinition } from "../domains/slo/types";
@@ -6,6 +6,7 @@ import { Panel } from "../design/components/Panel";
 import { Button } from "../design/components/Button";
 import { Badge } from "../design/components/Badge";
 import { Input } from "../design/components/Input";
+import { WidgetErrorFallback } from "../design/components/WidgetErrorFallback";
 
 const STATUS_TONE: Record<string, "ok" | "warn" | "error"> = {
   met: "ok", at_risk: "warn", breached: "error",
@@ -57,7 +58,7 @@ export function SloManagementPage() {
   }
 
   return (
-    <>
+    <ErrorBoundary fallback={(err, reset) => <WidgetErrorFallback error={err} reset={reset} />}>
       <div class="split-layout">
         <Panel title={`SLOs (${allSlos().length})`} actions={
           <Button variant="primary" onClick={() => { setFormName(""); setFormService(""); setFormTarget(99.9); setFormWindow("30d"); setShowCreate(true); }}>Create SLO</Button>
@@ -165,7 +166,7 @@ export function SloManagementPage() {
           </div>
         </div>
       </Show>
-    </>
+    </ErrorBoundary>
   );
 }
 

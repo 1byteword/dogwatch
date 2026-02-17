@@ -1,7 +1,11 @@
 package alerting
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"log"
+	"net/http"
 	"regexp"
 	"sort"
 	"strings"
@@ -471,9 +475,24 @@ func NewWebhookReceiver(name, url string) *WebhookReceiver {
 
 func (r *WebhookReceiver) Name() string { return r.name }
 func (r *WebhookReceiver) Send(group *AlertGroup) error {
-	// In production, POST to webhook URL with JSON payload
-	log.Printf("[alert-webhook] Would POST to %s: %d alerts in group %s",
-		r.url, len(group.Alerts), group.Key)
+	payload, err := json.Marshal(group)
+	if err != nil {
+		return fmt.Errorf("marshal webhook payload: %w", err)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Post(r.url, "application/json", bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("webhook POST to %s: %w", r.url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("webhook %s returned status %d", r.url, resp.StatusCode)
+	}
+
+	log.Printf("[alert-webhook] POST to %s: %d alerts in group %s (status %d)",
+		r.url, len(group.Alerts), group.Key, resp.StatusCode)
 	return nil
 }
 
@@ -491,9 +510,46 @@ func NewSlackReceiver(name, token, channel string) *SlackReceiver {
 
 func (r *SlackReceiver) Name() string { return r.name }
 func (r *SlackReceiver) Send(group *AlertGroup) error {
-	// In production, use Slack API
-	log.Printf("[alert-slack] Would send to #%s: %d alerts in group %s",
-		r.channel, len(group.Alerts), group.Key)
+	if r.token == "" {
+		log.Printf("[alert-slack] No token configured, skipping #%s: %d alerts", r.channel, len(group.Alerts))
+		return nil
+	}
+
+	// Build Slack message
+	var text strings.Builder
+	text.WriteString(fmt.Sprintf("*Alert Group: %s* (%d alerts)\n", group.Key, len(group.Alerts)))
+	for _, alert := range group.Alerts {
+		status := "FIRING"
+		if alert.State == StateResolved {
+			status = "RESOLVED"
+		}
+		text.WriteString(fmt.Sprintf("• [%s] %s: %.2f\n", status, alert.RuleName, alert.Value))
+	}
+
+	payload, _ := json.Marshal(map[string]string{
+		"channel": r.channel,
+		"text":    text.String(),
+	})
+
+	req, err := http.NewRequest("POST", "https://slack.com/api/chat.postMessage", bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("create slack request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	req.Header.Set("Authorization", "Bearer "+r.token)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("slack API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("slack API returned status %d", resp.StatusCode)
+	}
+
+	log.Printf("[alert-slack] Sent to #%s: %d alerts in group %s", r.channel, len(group.Alerts), group.Key)
 	return nil
 }
 

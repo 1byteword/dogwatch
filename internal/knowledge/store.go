@@ -2,13 +2,13 @@ package knowledge
 
 import (
 	"database/sql"
+	"dogwatch/internal/storage"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
 )
 
 // Store handles persistent storage of knowledge objects
@@ -19,7 +19,7 @@ type Store struct {
 
 // NewStore creates a new knowledge store
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := storage.OpenDB(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}

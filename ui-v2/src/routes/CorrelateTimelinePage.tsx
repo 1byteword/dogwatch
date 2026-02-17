@@ -1,7 +1,8 @@
-import { For, Show, createMemo, createResource, createSignal } from "solid-js";
+import { ErrorBoundary, For, Show, createMemo, createResource, createSignal } from "solid-js";
 import { Badge } from "../design/components/Badge";
 import { Button } from "../design/components/Button";
 import { Panel } from "../design/components/Panel";
+import { WidgetErrorFallback } from "../design/components/WidgetErrorFallback";
 import { loadCatalogServices } from "../domains/catalog/service";
 import { formatDuration, loadDeployIncidentCorrelations, loadServiceTimeline } from "../domains/correlation/service";
 
@@ -39,6 +40,7 @@ export function CorrelateTimelinePage() {
   }
 
   return (
+    <ErrorBoundary fallback={(err, reset) => <WidgetErrorFallback error={err} reset={reset} />}>
     <div class="page-grid">
       <Panel
         title="Deploy -> Incident Correlations"
@@ -111,6 +113,7 @@ export function CorrelateTimelinePage() {
         </Show>
       </Panel>
     </div>
+    </ErrorBoundary>
   );
 }
 

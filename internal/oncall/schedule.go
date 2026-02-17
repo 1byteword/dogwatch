@@ -2,11 +2,11 @@ package oncall
 
 import (
 	"database/sql"
+	"dogwatch/internal/storage"
 	"encoding/json"
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
 )
 
 // Schedule represents an on-call schedule
@@ -131,7 +131,7 @@ type Store struct {
 
 // NewStore creates a new on-call store
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := storage.OpenDB(dbPath)
 	if err != nil {
 		return nil, err
 	}
@@ -185,6 +185,21 @@ func (s *Store) init() error {
 
 	CREATE INDEX IF NOT EXISTS idx_overrides_schedule ON overrides(schedule_id);
 	CREATE INDEX IF NOT EXISTS idx_overrides_time ON overrides(start_time, end_time);
+
+	CREATE TABLE IF NOT EXISTS escalation_states (
+		incident_id TEXT PRIMARY KEY,
+		policy_id TEXT NOT NULL,
+		current_level INTEGER DEFAULT 0,
+		repeat_count INTEGER DEFAULT 0,
+		started_at INTEGER NOT NULL,
+		last_escalation INTEGER NOT NULL,
+		acknowledged INTEGER DEFAULT 0,
+		acked_by TEXT,
+		acked_at INTEGER,
+		resolved INTEGER DEFAULT 0,
+		notifications TEXT
+	);
+	CREATE INDEX IF NOT EXISTS idx_esc_states_resolved ON escalation_states(resolved);
 	`
 
 	_, err := s.db.Exec(schema)
@@ -505,6 +520,101 @@ func (s *Store) ListPolicies() ([]EscalationPolicy, error) {
 	}
 
 	return policies, nil
+}
+
+// SaveEscalationState persists an escalation state to the database.
+func (s *Store) SaveEscalationState(state *EscalationState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	notificationsJSON, _ := json.Marshal(state.Notifications)
+
+	var ackedAt int64
+	if state.AckedAt != nil {
+		ackedAt = state.AckedAt.Unix()
+	}
+	acked := 0
+	if state.Acknowledged {
+		acked = 1
+	}
+	resolved := 0
+	if state.Resolved {
+		resolved = 1
+	}
+
+	_, err := s.db.Exec(`
+		INSERT INTO escalation_states (incident_id, policy_id, current_level, repeat_count,
+			started_at, last_escalation, acknowledged, acked_by, acked_at, resolved, notifications)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(incident_id) DO UPDATE SET
+			current_level = excluded.current_level,
+			repeat_count = excluded.repeat_count,
+			last_escalation = excluded.last_escalation,
+			acknowledged = excluded.acknowledged,
+			acked_by = excluded.acked_by,
+			acked_at = excluded.acked_at,
+			resolved = excluded.resolved,
+			notifications = excluded.notifications
+	`,
+		state.IncidentID, state.PolicyID, state.CurrentLevel, state.RepeatCount,
+		state.StartedAt.Unix(), state.LastEscalation.Unix(),
+		acked, state.AckedBy, ackedAt, resolved,
+		string(notificationsJSON),
+	)
+	return err
+}
+
+// LoadActiveEscalationStates loads all unresolved escalation states from the database.
+func (s *Store) LoadActiveEscalationStates() ([]*EscalationState, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(`
+		SELECT incident_id, policy_id, current_level, repeat_count,
+			started_at, last_escalation, acknowledged, acked_by, acked_at, resolved, notifications
+		FROM escalation_states WHERE resolved = 0
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var states []*EscalationState
+	for rows.Next() {
+		var state EscalationState
+		var startedAt, lastEsc, ackedAt int64
+		var acked, resolved int
+		var notifJSON sql.NullString
+
+		if err := rows.Scan(&state.IncidentID, &state.PolicyID, &state.CurrentLevel,
+			&state.RepeatCount, &startedAt, &lastEsc, &acked, &state.AckedBy,
+			&ackedAt, &resolved, &notifJSON); err != nil {
+			continue
+		}
+
+		state.StartedAt = time.Unix(startedAt, 0)
+		state.LastEscalation = time.Unix(lastEsc, 0)
+		state.Acknowledged = acked == 1
+		state.Resolved = resolved == 1
+		if ackedAt > 0 {
+			t := time.Unix(ackedAt, 0)
+			state.AckedAt = &t
+		}
+		if notifJSON.Valid {
+			json.Unmarshal([]byte(notifJSON.String), &state.Notifications)
+		}
+
+		states = append(states, &state)
+	}
+	return states, nil
+}
+
+// DeleteEscalationState removes a resolved escalation state.
+func (s *Store) DeleteEscalationState(incidentID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(`DELETE FROM escalation_states WHERE incident_id = ?`, incidentID)
+	return err
 }
 
 // Close closes the database

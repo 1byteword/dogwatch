@@ -2,11 +2,11 @@ package deploys
 
 import (
 	"database/sql"
+	"dogwatch/internal/storage"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
-	_ "modernc.org/sqlite"
 )
 
 // Deployment represents a deployment event
@@ -58,7 +58,7 @@ type Store struct {
 
 // NewStore creates a new deployment store
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := storage.OpenDB(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}

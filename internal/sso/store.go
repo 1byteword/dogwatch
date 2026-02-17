@@ -2,12 +2,12 @@ package sso
 
 import (
 	"database/sql"
+	"dogwatch/internal/storage"
 	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
 )
 
 // Store provides SSO data persistence
@@ -47,7 +47,7 @@ type OrgSSOConfig struct {
 
 // NewStore creates a new SSO store
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := storage.OpenDB(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}

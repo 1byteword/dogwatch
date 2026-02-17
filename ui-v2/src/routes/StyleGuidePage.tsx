@@ -1,4 +1,5 @@
-import { createMemo } from "solid-js";
+import { ErrorBoundary, createMemo } from "solid-js";
+import { WidgetErrorFallback } from "../design/components/WidgetErrorFallback";
 import type uPlot from "uplot";
 import { Badge } from "../design/components/Badge";
 import { Button } from "../design/components/Button";
@@ -40,6 +41,7 @@ export function StyleGuidePage() {
   const sparkB = createMemo(() => generateSparklineValues(20));
 
   return (
+    <ErrorBoundary fallback={(err, reset) => <WidgetErrorFallback error={err} reset={reset} />}>
     <div class="page-grid">
       <Panel title="Buttons">
         <div class="row">
@@ -109,6 +111,7 @@ export function StyleGuidePage() {
         </div>
       </Panel>
     </div>
+    </ErrorBoundary>
   );
 }
 

@@ -56,10 +56,16 @@ type httpSpecs struct {
 type httpProgramSpecs struct {
 	TraceReadEntry     *ebpf.ProgramSpec `ebpf:"trace_read_entry"`
 	TraceReadExit      *ebpf.ProgramSpec `ebpf:"trace_read_exit"`
+	TraceReadvEntry    *ebpf.ProgramSpec `ebpf:"trace_readv_entry"`
+	TraceReadvExit     *ebpf.ProgramSpec `ebpf:"trace_readv_exit"`
 	TraceRecvfromEntry *ebpf.ProgramSpec `ebpf:"trace_recvfrom_entry"`
 	TraceRecvfromExit  *ebpf.ProgramSpec `ebpf:"trace_recvfrom_exit"`
+	TraceRecvmsgEntry  *ebpf.ProgramSpec `ebpf:"trace_recvmsg_entry"`
+	TraceRecvmsgExit   *ebpf.ProgramSpec `ebpf:"trace_recvmsg_exit"`
+	TraceSendmsgEntry  *ebpf.ProgramSpec `ebpf:"trace_sendmsg_entry"`
 	TraceSendtoEntry   *ebpf.ProgramSpec `ebpf:"trace_sendto_entry"`
 	TraceWriteEntry    *ebpf.ProgramSpec `ebpf:"trace_write_entry"`
+	TraceWritevEntry   *ebpf.ProgramSpec `ebpf:"trace_writev_entry"`
 }
 
 // httpMapSpecs contains maps before they are loaded into the kernel.
@@ -119,20 +125,32 @@ type httpVariables struct {
 type httpPrograms struct {
 	TraceReadEntry     *ebpf.Program `ebpf:"trace_read_entry"`
 	TraceReadExit      *ebpf.Program `ebpf:"trace_read_exit"`
+	TraceReadvEntry    *ebpf.Program `ebpf:"trace_readv_entry"`
+	TraceReadvExit     *ebpf.Program `ebpf:"trace_readv_exit"`
 	TraceRecvfromEntry *ebpf.Program `ebpf:"trace_recvfrom_entry"`
 	TraceRecvfromExit  *ebpf.Program `ebpf:"trace_recvfrom_exit"`
+	TraceRecvmsgEntry  *ebpf.Program `ebpf:"trace_recvmsg_entry"`
+	TraceRecvmsgExit   *ebpf.Program `ebpf:"trace_recvmsg_exit"`
+	TraceSendmsgEntry  *ebpf.Program `ebpf:"trace_sendmsg_entry"`
 	TraceSendtoEntry   *ebpf.Program `ebpf:"trace_sendto_entry"`
 	TraceWriteEntry    *ebpf.Program `ebpf:"trace_write_entry"`
+	TraceWritevEntry   *ebpf.Program `ebpf:"trace_writev_entry"`
 }
 
 func (p *httpPrograms) Close() error {
 	return _HttpClose(
 		p.TraceReadEntry,
 		p.TraceReadExit,
+		p.TraceReadvEntry,
+		p.TraceReadvExit,
 		p.TraceRecvfromEntry,
 		p.TraceRecvfromExit,
+		p.TraceRecvmsgEntry,
+		p.TraceRecvmsgExit,
+		p.TraceSendmsgEntry,
 		p.TraceSendtoEntry,
 		p.TraceWriteEntry,
+		p.TraceWritevEntry,
 	)
 }
 

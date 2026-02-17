@@ -1,7 +1,8 @@
-import { For, Show, createMemo, createResource, createSignal } from "solid-js";
+import { ErrorBoundary, For, Show, createMemo, createResource, createSignal } from "solid-js";
 import { Badge } from "../design/components/Badge";
 import { Button } from "../design/components/Button";
 import { Panel } from "../design/components/Panel";
+import { WidgetErrorFallback } from "../design/components/WidgetErrorFallback";
 import { createNowTicker, useAutoRefresh } from "../core/live";
 import { relativeTime } from "../core/time";
 import {
@@ -63,6 +64,7 @@ export function ImproveKubernetesPage() {
   }
 
   return (
+    <ErrorBoundary fallback={(err, reset) => <WidgetErrorFallback error={err} reset={reset} />}>
     <div class="page-grid">
       <Panel
         title="Cluster Summary"
@@ -164,6 +166,7 @@ export function ImproveKubernetesPage() {
         </Show>
       </Panel>
     </div>
+    </ErrorBoundary>
   );
 }
 

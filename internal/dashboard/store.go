@@ -2,12 +2,12 @@ package dashboard
 
 import (
 	"database/sql"
+	"dogwatch/internal/storage"
 	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
-	_ "modernc.org/sqlite"
 )
 
 // WidgetPosition represents a widget's position and size in the grid
@@ -64,7 +64,7 @@ type Store struct {
 
 // NewStore creates a new dashboard store
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := storage.OpenDB(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -239,22 +239,21 @@ func (s *Store) GetFolderTree() ([]FolderTree, error) {
 		}
 	}
 
-	// Build tree structure
-	var rootFolders []FolderTree
+	// Build tree: first attach children to parents, then collect roots.
+	// Two passes needed to avoid copying parent before children are attached.
 	for _, f := range folders {
-		ft := folderMap[f.ID]
 		if f.ParentID != nil {
 			if parent, ok := folderMap[*f.ParentID]; ok {
-				parent.Children = append(parent.Children, *ft)
+				parent.Children = append(parent.Children, *folderMap[f.ID])
 			}
-		} else {
-			rootFolders = append(rootFolders, *ft)
 		}
 	}
 
-	// Add root-level dashboards as a virtual "root" entry
-	if len(rootDashboards) > 0 || len(rootFolders) == 0 {
-		// Return folders first, then we'll include dashboards separately
+	var rootFolders []FolderTree
+	for _, f := range folders {
+		if f.ParentID == nil {
+			rootFolders = append(rootFolders, *folderMap[f.ID])
+		}
 	}
 
 	return rootFolders, nil

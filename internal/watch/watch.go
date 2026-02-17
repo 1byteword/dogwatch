@@ -2,12 +2,12 @@ package watch
 
 import (
 	"database/sql"
+	"dogwatch/internal/storage"
 	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
 )
 
 // State represents the current state of a watch
@@ -116,7 +116,7 @@ type Store struct {
 
 // NewStore creates a new watch store
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := storage.OpenDB(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}

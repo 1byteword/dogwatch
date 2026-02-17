@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -30,12 +29,140 @@ func NewSQLMetricsStore(db *sql.DB) *SQLMetricsStore {
 }
 
 // ScanRange retrieves time series data matching the selector.
+// When series/label_index tables are available, uses SQL-level filtering
+// instead of reading all rows and post-filtering in Go.
 func (s *SQLMetricsStore) ScanRange(ctx context.Context, metric string, labels map[string]string, matchers []*LabelMatcher, start, end time.Time) ([]Series, error) {
 	if s.db == nil {
 		return nil, fmt.Errorf("database not configured")
 	}
 
-	// Build query
+	// Try indexed path first if we have equality matchers we can push down
+	eqMatchers := extractEqualityMatchers(matchers)
+	if len(eqMatchers) > 0 && s.hasLabelIndex() {
+		return s.scanRangeIndexed(ctx, metric, eqMatchers, matchers, start, end)
+	}
+
+	return s.scanRangeFull(ctx, metric, matchers, start, end)
+}
+
+// hasLabelIndex checks if the label_index table exists.
+func (s *SQLMetricsStore) hasLabelIndex() bool {
+	var n int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='label_index'").Scan(&n)
+	return err == nil && n > 0
+}
+
+// extractEqualityMatchers returns matchers that can be pushed down to SQL.
+func extractEqualityMatchers(matchers []*LabelMatcher) []*LabelMatcher {
+	var eq []*LabelMatcher
+	for _, m := range matchers {
+		if m.Type == MatchEqual && m.Name != "__name__" {
+			eq = append(eq, m)
+		}
+	}
+	return eq
+}
+
+// scanRangeIndexed uses the label_index to pre-filter at the SQL level.
+func (s *SQLMetricsStore) scanRangeIndexed(ctx context.Context, metric string, eqMatchers, allMatchers []*LabelMatcher, start, end time.Time) ([]Series, error) {
+	// Build a query that JOINs through label_index to find matching series IDs,
+	// then only reads metric rows for those series.
+	//
+	// For N equality matchers, we intersect series that match ALL of them:
+	//   SELECT series_id FROM label_index WHERE (key='k1' AND value='v1')
+	//   INTERSECT
+	//   SELECT series_id FROM label_index WHERE (key='k2' AND value='v2')
+	var intersectParts []string
+	var args []interface{}
+
+	for _, m := range eqMatchers {
+		intersectParts = append(intersectParts,
+			"SELECT series_id FROM label_index WHERE label_key = ? AND label_value = ?")
+		args = append(args, m.Name, m.Value)
+	}
+
+	seriesQuery := strings.Join(intersectParts, " INTERSECT ")
+
+	// Also filter by metric name via the series table
+	query := `SELECT m.timestamp, m.name, m.value, m.tags
+		FROM metrics m
+		INNER JOIN series s ON m.series_id = s.id
+		WHERE m.series_id IN (` + seriesQuery + `)
+		AND m.timestamp >= ? AND m.timestamp <= ?`
+	args = append(args, start, end)
+
+	if metric != "" {
+		query += " AND s.name = ?"
+		args = append(args, metric)
+	}
+
+	query += " ORDER BY m.name, m.timestamp"
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		// Fall back to full scan if indexed query fails (e.g. old schema)
+		return s.scanRangeFull(ctx, metric, allMatchers, start, end)
+	}
+	defer rows.Close()
+
+	seriesMap := make(map[string]*Series)
+	// Non-equality matchers still need Go-level filtering
+	remainingMatchers := filterOutEquality(allMatchers, eqMatchers)
+
+	for rows.Next() {
+		var ts time.Time
+		var name string
+		var value float64
+		var tagsJSON sql.NullString
+
+		if err := rows.Scan(&ts, &name, &value, &tagsJSON); err != nil {
+			continue
+		}
+
+		tags := make(map[string]string)
+		tags["__name__"] = name
+		if tagsJSON.Valid && tagsJSON.String != "" {
+			json.Unmarshal([]byte(tagsJSON.String), &tags)
+			tags["__name__"] = name
+		}
+
+		// Apply remaining non-equality matchers in Go
+		if !matchLabels(tags, remainingMatchers) {
+			continue
+		}
+
+		key := labelKey(tags)
+		series, ok := seriesMap[key]
+		if !ok {
+			series = &Series{Labels: tags}
+			seriesMap[key] = series
+		}
+		series.Samples = append(series.Samples, Sample{Timestamp: ts, Value: value})
+	}
+
+	result := make([]Series, 0, len(seriesMap))
+	for _, series := range seriesMap {
+		result = append(result, *series)
+	}
+	return result, nil
+}
+
+func filterOutEquality(all, eq []*LabelMatcher) []*LabelMatcher {
+	eqSet := make(map[*LabelMatcher]bool, len(eq))
+	for _, m := range eq {
+		eqSet[m] = true
+	}
+	var remaining []*LabelMatcher
+	for _, m := range all {
+		if !eqSet[m] {
+			remaining = append(remaining, m)
+		}
+	}
+	return remaining
+}
+
+// scanRangeFull is the original full-scan path for backward compatibility.
+func (s *SQLMetricsStore) scanRangeFull(ctx context.Context, metric string, matchers []*LabelMatcher, start, end time.Time) ([]Series, error) {
 	query := `SELECT timestamp, name, value, tags FROM metrics WHERE timestamp >= ? AND timestamp <= ?`
 	args := []interface{}{start, end}
 
@@ -52,7 +179,6 @@ func (s *SQLMetricsStore) ScanRange(ctx context.Context, metric string, labels m
 	}
 	defer rows.Close()
 
-	// Group samples by labels
 	seriesMap := make(map[string]*Series)
 
 	for rows.Next() {
@@ -65,7 +191,6 @@ func (s *SQLMetricsStore) ScanRange(ctx context.Context, metric string, labels m
 			continue
 		}
 
-		// Parse tags
 		tags := make(map[string]string)
 		tags["__name__"] = name
 		if tagsJSON.Valid && tagsJSON.String != "" {
@@ -73,12 +198,10 @@ func (s *SQLMetricsStore) ScanRange(ctx context.Context, metric string, labels m
 			tags["__name__"] = name
 		}
 
-		// Apply label matchers
 		if !matchLabels(tags, matchers) {
 			continue
 		}
 
-		// Create series key
 		key := labelKey(tags)
 		series, ok := seriesMap[key]
 		if !ok {
@@ -92,7 +215,6 @@ func (s *SQLMetricsStore) ScanRange(ctx context.Context, metric string, labels m
 		})
 	}
 
-	// Convert map to slice
 	result := make([]Series, 0, len(seriesMap))
 	for _, series := range seriesMap {
 		result = append(result, *series)
@@ -130,6 +252,34 @@ func (s *SQLMetricsStore) ListLabels(ctx context.Context, metric string) ([]stri
 		return nil, nil
 	}
 
+	// Try indexed path first
+	if s.hasLabelIndex() {
+		var query string
+		var args []interface{}
+		if metric != "" {
+			query = `SELECT DISTINCT li.label_key FROM label_index li
+				INNER JOIN series s ON li.series_id = s.id WHERE s.name = ?`
+			args = append(args, metric)
+		} else {
+			query = `SELECT DISTINCT label_key FROM label_index`
+		}
+
+		rows, err := s.db.QueryContext(ctx, query, args...)
+		if err == nil {
+			defer rows.Close()
+			result := []string{"__name__"}
+			for rows.Next() {
+				var key string
+				if rows.Scan(&key) == nil {
+					result = append(result, key)
+				}
+			}
+			sort.Strings(result)
+			return result, nil
+		}
+	}
+
+	// Fallback: scan JSON tags
 	labelSet := make(map[string]bool)
 	labelSet["__name__"] = true
 
@@ -184,6 +334,36 @@ func (s *SQLMetricsStore) ListLabelValues(ctx context.Context, label string, met
 		return s.ListMetrics(ctx)
 	}
 
+	// Try indexed path first
+	if s.hasLabelIndex() {
+		var query string
+		var args []interface{}
+		if metric != "" {
+			query = `SELECT DISTINCT li.label_value FROM label_index li
+				INNER JOIN series s ON li.series_id = s.id
+				WHERE li.label_key = ? AND s.name = ?`
+			args = append(args, label, metric)
+		} else {
+			query = `SELECT DISTINCT label_value FROM label_index WHERE label_key = ?`
+			args = append(args, label)
+		}
+
+		rows, err := s.db.QueryContext(ctx, query, args...)
+		if err == nil {
+			defer rows.Close()
+			var result []string
+			for rows.Next() {
+				var val string
+				if rows.Scan(&val) == nil {
+					result = append(result, val)
+				}
+			}
+			sort.Strings(result)
+			return result, nil
+		}
+	}
+
+	// Fallback: scan JSON tags
 	valueSet := make(map[string]bool)
 
 	query := "SELECT tags FROM metrics"
@@ -229,26 +409,8 @@ func (s *SQLMetricsStore) ListLabelValues(ctx context.Context, label string, met
 
 func matchLabels(labels map[string]string, matchers []*LabelMatcher) bool {
 	for _, m := range matchers {
-		val := labels[m.Name]
-		switch m.Type {
-		case MatchEqual:
-			if val != m.Value {
-				return false
-			}
-		case MatchNotEqual:
-			if val == m.Value {
-				return false
-			}
-		case MatchRegexp:
-			matched, _ := regexp.MatchString("^(?:"+m.Value+")$", val)
-			if !matched {
-				return false
-			}
-		case MatchNotRegexp:
-			matched, _ := regexp.MatchString("^(?:"+m.Value+")$", val)
-			if matched {
-				return false
-			}
+		if !m.Matches(labels[m.Name]) {
+			return false
 		}
 	}
 	return true

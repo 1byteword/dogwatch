@@ -14,6 +14,7 @@ import (
 )
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall" -target amd64 dbproto ../../bpf/dbproto.c -- -I../../bpf
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall" -target arm64 dbproto ../../bpf/dbproto.c -- -I../../bpf
 
 const (
 	DBTypeUnknown  = 0
@@ -73,6 +74,9 @@ type DBProbe struct {
 
 	// Prepared statement tracking
 	preparedStmts *PreparedStatementCache
+
+	// FD tracker for filtering non-network FDs (optional, set via SetFDTracker)
+	fdTracker *FDTracker
 }
 
 type queryInfo struct {
@@ -91,7 +95,7 @@ func NewDBProbe() (*DBProbe, error) {
 
 	p := &DBProbe{
 		objs:          objs,
-		links:         make([]link.Link, 0, 6),
+		links:         make([]link.Link, 0, 12),
 		eventsChan:    make(chan DBEvent, 200),
 		queries:       make(map[string]queryInfo),
 		preparedStmts: NewPreparedStatementCache(),
@@ -145,6 +149,54 @@ func NewDBProbe() (*DBProbe, error) {
 	}
 	p.links = append(p.links, tpRecvfromExit)
 
+	// Attach tracepoint for sys_enter_sendmsg (used by Go net package, etc.)
+	tpSendmsg, err := link.Tracepoint("syscalls", "sys_enter_sendmsg", objs.TraceDbSendmsgEntry, nil)
+	if err != nil {
+		p.Close()
+		return nil, fmt.Errorf("attaching tracepoint sys_enter_sendmsg: %w", err)
+	}
+	p.links = append(p.links, tpSendmsg)
+
+	// Attach tracepoint for sys_enter_recvmsg
+	tpRecvmsgEnter, err := link.Tracepoint("syscalls", "sys_enter_recvmsg", objs.TraceDbRecvmsgEntry, nil)
+	if err != nil {
+		p.Close()
+		return nil, fmt.Errorf("attaching tracepoint sys_enter_recvmsg: %w", err)
+	}
+	p.links = append(p.links, tpRecvmsgEnter)
+
+	// Attach tracepoint for sys_exit_recvmsg
+	tpRecvmsgExit, err := link.Tracepoint("syscalls", "sys_exit_recvmsg", objs.TraceDbRecvmsgExit, nil)
+	if err != nil {
+		p.Close()
+		return nil, fmt.Errorf("attaching tracepoint sys_exit_recvmsg: %w", err)
+	}
+	p.links = append(p.links, tpRecvmsgExit)
+
+	// Attach tracepoint for sys_enter_writev (scatter/gather I/O)
+	tpWritev, err := link.Tracepoint("syscalls", "sys_enter_writev", objs.TraceDbWritevEntry, nil)
+	if err != nil {
+		p.Close()
+		return nil, fmt.Errorf("attaching tracepoint sys_enter_writev: %w", err)
+	}
+	p.links = append(p.links, tpWritev)
+
+	// Attach tracepoint for sys_enter_readv
+	tpReadvEnter, err := link.Tracepoint("syscalls", "sys_enter_readv", objs.TraceDbReadvEntry, nil)
+	if err != nil {
+		p.Close()
+		return nil, fmt.Errorf("attaching tracepoint sys_enter_readv: %w", err)
+	}
+	p.links = append(p.links, tpReadvEnter)
+
+	// Attach tracepoint for sys_exit_readv
+	tpReadvExit, err := link.Tracepoint("syscalls", "sys_exit_readv", objs.TraceDbReadvExit, nil)
+	if err != nil {
+		p.Close()
+		return nil, fmt.Errorf("attaching tracepoint sys_exit_readv: %w", err)
+	}
+	p.links = append(p.links, tpReadvExit)
+
 	// Open ring buffer reader
 	rd, err := ringbuf.NewReader(objs.DbEvents)
 	if err != nil {
@@ -154,6 +206,13 @@ func NewDBProbe() (*DBProbe, error) {
 	p.reader = rd
 
 	return p, nil
+}
+
+// SetFDTracker sets the FD tracker for filtering non-network FDs.
+// When set, the DB probe can use it to skip parsing payloads from
+// non-network file descriptors, reducing CPU usage on file I/O.
+func (p *DBProbe) SetFDTracker(t *FDTracker) {
+	p.fdTracker = t
 }
 
 // Events returns a channel that receives database events

@@ -16,6 +16,7 @@ import (
 )
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall" -target amd64 profile ../../bpf/profile.c -- -I../../bpf
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall" -target arm64 profile ../../bpf/profile.c -- -I../../bpf
 
 const (
 	maxStackDepth = 32

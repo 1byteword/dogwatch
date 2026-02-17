@@ -1,15 +1,16 @@
 package custommetrics
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"dogwatch/internal/storage"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 	"sync"
 	"time"
-
-	_ "modernc.org/sqlite"
 )
 
 // MetricType represents the type of metric
@@ -82,7 +83,7 @@ type Store struct {
 
 // NewStore creates a new custom metrics store
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := storage.OpenDB(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -122,12 +123,32 @@ func NewStore(dbPath string) (*Store, error) {
 		last_value REAL,
 		last_seen DATETIME
 	);
+
+	CREATE TABLE IF NOT EXISTS series (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		fingerprint TEXT NOT NULL UNIQUE,
+		tags_json TEXT NOT NULL DEFAULT '{}'
+	);
+	CREATE INDEX IF NOT EXISTS idx_series_name ON series(name);
+
+	CREATE TABLE IF NOT EXISTS label_index (
+		series_id INTEGER NOT NULL,
+		label_key TEXT NOT NULL,
+		label_value TEXT NOT NULL,
+		UNIQUE(series_id, label_key)
+	);
+	CREATE INDEX IF NOT EXISTS idx_label_kv ON label_index(label_key, label_value);
 	`
 
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("create schema: %w", err)
 	}
+
+	// Add series_id column to metrics if missing (migration)
+	db.Exec("ALTER TABLE metrics ADD COLUMN series_id INTEGER REFERENCES series(id)")
+	db.Exec("CREATE INDEX IF NOT EXISTS idx_metrics_series_time ON metrics(series_id, timestamp DESC)")
 
 	return &Store{
 		db:       db,
@@ -157,6 +178,65 @@ func (s *Store) SetDataShapingHook(hook DataShapingHook) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.shapingHook = hook
+}
+
+// seriesFingerprint returns a stable hash for a metric name + tag set.
+func seriesFingerprint(name string, tags map[string]string) string {
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		if k == "__name__" {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	h := sha256.New()
+	h.Write([]byte(name))
+	for _, k := range keys {
+		h.Write([]byte{0})
+		h.Write([]byte(k))
+		h.Write([]byte{0})
+		h.Write([]byte(tags[k]))
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// internSeries returns the series ID for a name+tags combination,
+// creating the series and label index entries if they don't exist yet.
+func (s *Store) internSeries(tx *sql.Tx, name string, tags map[string]string) (int64, error) {
+	fp := seriesFingerprint(name, tags)
+
+	var id int64
+	err := tx.QueryRow("SELECT id FROM series WHERE fingerprint = ?", fp).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+
+	tagsJSON, _ := json.Marshal(tags)
+	res, err := tx.Exec("INSERT OR IGNORE INTO series (name, fingerprint, tags_json) VALUES (?, ?, ?)",
+		name, fp, string(tagsJSON))
+	if err != nil {
+		return 0, err
+	}
+
+	id, _ = res.LastInsertId()
+	if id == 0 {
+		// INSERT OR IGNORE hit a conflict; re-read the ID
+		tx.QueryRow("SELECT id FROM series WHERE fingerprint = ?", fp).Scan(&id)
+		return id, nil
+	}
+
+	// Populate the label index for this new series
+	for k, v := range tags {
+		if k == "__name__" {
+			continue
+		}
+		tx.Exec("INSERT OR IGNORE INTO label_index (series_id, label_key, label_value) VALUES (?, ?, ?)",
+			id, k, v)
+	}
+
+	return id, nil
 }
 
 // tagsToKey creates a unique key for a metric + tags combination
@@ -223,10 +303,25 @@ func (s *Store) recordPoint(dp DataPoint) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_, err := s.db.Exec(`
-		INSERT INTO metrics (timestamp, name, type, value, tags)
-		VALUES (?, ?, ?, ?, ?)`,
-		dp.Timestamp, dp.Name, dp.Type, dp.Value, string(tagsJSON),
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Intern the series for indexed lookups
+	var seriesID *int64
+	if len(dp.Tags) > 0 {
+		sid, err := s.internSeries(tx, dp.Name, dp.Tags)
+		if err == nil && sid > 0 {
+			seriesID = &sid
+		}
+	}
+
+	_, err = tx.Exec(`
+		INSERT INTO metrics (timestamp, name, type, value, tags, series_id)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		dp.Timestamp, dp.Name, dp.Type, dp.Value, string(tagsJSON), seriesID,
 	)
 	if err != nil {
 		return err
@@ -240,13 +335,16 @@ func (s *Store) recordPoint(dp DataPoint) error {
 	sort.Strings(tagKeys)
 	tagKeysJSON, _ := json.Marshal(tagKeys)
 
-	_, err = s.db.Exec(`
+	_, err = tx.Exec(`
 		INSERT OR REPLACE INTO metric_info (name, type, tag_keys, last_value, last_seen)
 		VALUES (?, ?, ?, ?, ?)`,
 		dp.Name, dp.Type, string(tagKeysJSON), dp.Value, dp.Timestamp,
 	)
+	if err != nil {
+		return err
+	}
 
-	return err
+	return tx.Commit()
 }
 
 // RecordBatch stores multiple data points efficiently
@@ -268,8 +366,8 @@ func (s *Store) RecordBatch(points []DataPoint) error {
 	defer tx.Rollback()
 
 	stmt, err := tx.Prepare(`
-		INSERT INTO metrics (timestamp, name, type, value, tags)
-		VALUES (?, ?, ?, ?, ?)`)
+		INSERT INTO metrics (timestamp, name, type, value, tags, series_id)
+		VALUES (?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -293,7 +391,16 @@ func (s *Store) RecordBatch(points []DataPoint) error {
 			tagsJSON, _ = json.Marshal(dp.Tags)
 		}
 
-		_, err = stmt.Exec(dp.Timestamp, dp.Name, dp.Type, dp.Value, string(tagsJSON))
+		// Intern the series
+		var seriesID *int64
+		if len(dp.Tags) > 0 {
+			sid, err := s.internSeries(tx, dp.Name, dp.Tags)
+			if err == nil && sid > 0 {
+				seriesID = &sid
+			}
+		}
+
+		_, err = stmt.Exec(dp.Timestamp, dp.Name, dp.Type, dp.Value, string(tagsJSON), seriesID)
 		if err != nil {
 			return err
 		}

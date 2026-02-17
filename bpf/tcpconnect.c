@@ -6,21 +6,27 @@
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_endian.h>
 
-#define AF_INET 2
+#define AF_INET  2
+#define AF_INET6 10
 
 char LICENSE[] SEC("license") = "GPL";
 
 // Event structure sent to userspace
 // Note: Field order matters for alignment - 8-byte fields first
+// Addresses use 128-bit fields to hold both IPv4 and IPv6.
+// For IPv4, the address is stored in the first 4 bytes (saddr_v6[0..3])
+// and the remaining bytes are zero.
 struct event {
     __u64 ts_ns;
     __u32 pid;
     __u32 uid;
-    __u32 saddr;
-    __u32 daddr;
+    __u8  saddr_v6[16];
+    __u8  daddr_v6[16];
     __u16 sport;
     __u16 dport;
-    char comm[16];
+    __u16 family;     // AF_INET or AF_INET6
+    __u8  pad[2];     // Explicit padding to 4-byte alignment before comm
+    char  comm[16];
 };
 
 // Ring buffer to send events to userspace
@@ -61,19 +67,37 @@ int kretprobe_tcp_connect(struct pt_regs *ctx)
     struct sock *sk = *skp;
     bpf_map_delete_elem(&sockets, &pid_tgid);
 
+    // Check address family
+    __u16 family;
+    BPF_CORE_READ_INTO(&family, sk, __sk_common.skc_family);
+    if (family != AF_INET && family != AF_INET6) {
+        return 0;
+    }
+
     // Read socket info
     struct event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
     if (!e) {
         return 0;
     }
 
+    // Zero out the struct so unused address bytes are clean
+    __builtin_memset(e, 0, sizeof(*e));
+
     e->pid = pid_tgid >> 32;
     e->uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
     e->ts_ns = bpf_ktime_get_ns();
+    e->family = family;
 
-    // Read addresses from socket
-    BPF_CORE_READ_INTO(&e->saddr, sk, __sk_common.skc_rcv_saddr);
-    BPF_CORE_READ_INTO(&e->daddr, sk, __sk_common.skc_daddr);
+    if (family == AF_INET) {
+        // IPv4: store 4-byte addresses at the start of the 16-byte fields
+        BPF_CORE_READ_INTO(&e->saddr_v6[0], sk, __sk_common.skc_rcv_saddr);
+        BPF_CORE_READ_INTO(&e->daddr_v6[0], sk, __sk_common.skc_daddr);
+    } else {
+        // IPv6: read full 16-byte addresses
+        BPF_CORE_READ_INTO(&e->saddr_v6, sk, __sk_common.skc_v6_rcv_saddr);
+        BPF_CORE_READ_INTO(&e->daddr_v6, sk, __sk_common.skc_v6_daddr);
+    }
+
     BPF_CORE_READ_INTO(&e->sport, sk, __sk_common.skc_num);
     __u16 dport;
     BPF_CORE_READ_INTO(&dport, sk, __sk_common.skc_dport);
@@ -98,8 +122,8 @@ int kretprobe_inet_csk_accept(struct pt_regs *ctx)
     __u16 family;
     BPF_CORE_READ_INTO(&family, sk, __sk_common.skc_family);
 
-    // Only handle IPv4 for now
-    if (family != AF_INET) {
+    // Handle both IPv4 and IPv6
+    if (family != AF_INET && family != AF_INET6) {
         return 0;
     }
 
@@ -108,14 +132,24 @@ int kretprobe_inet_csk_accept(struct pt_regs *ctx)
         return 0;
     }
 
+    // Zero out the struct so unused address bytes are clean
+    __builtin_memset(e, 0, sizeof(*e));
+
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     e->pid = pid_tgid >> 32;
     e->uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
     e->ts_ns = bpf_ktime_get_ns();
+    e->family = family;
 
     // For accepts, local is "dest" and remote is "source" (incoming)
-    BPF_CORE_READ_INTO(&e->daddr, sk, __sk_common.skc_rcv_saddr);
-    BPF_CORE_READ_INTO(&e->saddr, sk, __sk_common.skc_daddr);
+    if (family == AF_INET) {
+        BPF_CORE_READ_INTO(&e->daddr_v6[0], sk, __sk_common.skc_rcv_saddr);
+        BPF_CORE_READ_INTO(&e->saddr_v6[0], sk, __sk_common.skc_daddr);
+    } else {
+        BPF_CORE_READ_INTO(&e->daddr_v6, sk, __sk_common.skc_v6_rcv_saddr);
+        BPF_CORE_READ_INTO(&e->saddr_v6, sk, __sk_common.skc_v6_daddr);
+    }
+
     __u16 sport;
     BPF_CORE_READ_INTO(&sport, sk, __sk_common.skc_dport);
     e->sport = bpf_ntohs(sport);

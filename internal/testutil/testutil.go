@@ -3,6 +3,7 @@ package testutil
 
 import (
 	"database/sql"
+	"dogwatch/internal/storage"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	_ "modernc.org/sqlite"
 )
 
 // TestDB wraps a SQLite database for testing purposes.
@@ -31,7 +31,7 @@ func NewTestDB(t *testing.T) *TestDB {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := storage.OpenDB(dbPath)
 	if err != nil {
 		t.Fatalf("failed to open test database: %v", err)
 	}

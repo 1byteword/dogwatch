@@ -2,11 +2,11 @@ package alerting
 
 import (
 	"database/sql"
+	"dogwatch/internal/storage"
 	"encoding/json"
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
 )
 
 // RuleType defines the type of alert rule
@@ -166,7 +166,7 @@ type Store struct {
 
 // NewStore creates a new alerting store
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := storage.OpenDB(dbPath)
 	if err != nil {
 		return nil, err
 	}

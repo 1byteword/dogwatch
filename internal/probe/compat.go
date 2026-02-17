@@ -296,6 +296,7 @@ type ProbeCapabilities struct {
 	CanUseSSLProbe    bool
 	CanUseDBProbe     bool
 	CanUseProfiler    bool
+	CanUseFDTracking  bool // FD-to-socket tracking via /proc
 	UseRingBuffer     bool // false = use perf buffer
 	MissingFeatures   []string
 	Warnings          []string
@@ -340,6 +341,13 @@ func CheckProbeCapabilities() *ProbeCapabilities {
 
 	// DB probe is similar to HTTP
 	caps.CanUseDBProbe = caps.CanUseHTTPProbe
+
+	// FD tracking requires /proc filesystem access (always available on Linux)
+	if _, err := os.Stat("/proc/net/tcp"); err == nil {
+		caps.CanUseFDTracking = true
+	} else {
+		caps.Warnings = append(caps.Warnings, "/proc/net/tcp not available, FD tracking disabled")
+	}
 
 	// Profiler needs perf event + stack trace
 	if f.HasPerfEvent && f.HasStackTrace {
@@ -420,6 +428,7 @@ func CompatibilityReport() string {
 	sb.WriteString(fmt.Sprintf("  SSL/TLS Probe: %v\n", caps.CanUseSSLProbe))
 	sb.WriteString(fmt.Sprintf("  Database Probe: %v\n", caps.CanUseDBProbe))
 	sb.WriteString(fmt.Sprintf("  CPU Profiler: %v\n", caps.CanUseProfiler))
+	sb.WriteString(fmt.Sprintf("  FD-to-Socket Tracking: %v\n", caps.CanUseFDTracking))
 	sb.WriteString(fmt.Sprintf("  Using Ring Buffer: %v\n", caps.UseRingBuffer))
 	sb.WriteString("\n")
 

@@ -2,11 +2,11 @@ package datashaping
 
 import (
 	"database/sql"
+	"dogwatch/internal/storage"
 	"encoding/json"
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
 )
 
 // Store persists data shaping rules
@@ -18,7 +18,7 @@ type Store struct {
 
 // NewStore creates a new data shaping store
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := storage.OpenDB(dbPath)
 	if err != nil {
 		return nil, err
 	}

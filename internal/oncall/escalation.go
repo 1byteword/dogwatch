@@ -83,8 +83,21 @@ func (e *EscalationEngine) SetOnEscalate(fn func(incidentID string, fromLevel, t
 	e.onEscalate = fn
 }
 
-// Start starts the escalation engine background loop
+// Start starts the escalation engine background loop and restores persisted state.
 func (e *EscalationEngine) Start() {
+	// Restore active escalation states from the database
+	states, err := e.store.LoadActiveEscalationStates()
+	if err != nil {
+		log.Printf("[oncall] Failed to load escalation states: %v", err)
+	} else if len(states) > 0 {
+		e.mu.Lock()
+		for _, state := range states {
+			e.states[state.IncidentID] = state
+		}
+		e.mu.Unlock()
+		log.Printf("[oncall] Restored %d active escalation states", len(states))
+	}
+
 	e.wg.Add(1)
 	go e.runLoop()
 }
@@ -194,6 +207,11 @@ func (e *EscalationEngine) escalateTo(state *EscalationState, policy *Escalation
 		e.onEscalate(state.IncidentID, oldLevel, rule.Level)
 	}
 
+	// Persist escalation state change
+	if err := e.store.SaveEscalationState(state); err != nil {
+		log.Printf("[oncall] Failed to persist escalation state for %s: %v", state.IncidentID, err)
+	}
+
 	log.Printf("[oncall] Escalated incident %s from level %d to %d", state.IncidentID, oldLevel, rule.Level)
 }
 
@@ -287,6 +305,11 @@ func (e *EscalationEngine) TriggerIncident(incidentID, policyID string) error {
 	// Immediately notify first level
 	e.notifyLevel(state, policy, &policy.Rules[0])
 
+	// Persist state
+	if err := e.store.SaveEscalationState(state); err != nil {
+		log.Printf("[oncall] Failed to persist escalation state for %s: %v", incidentID, err)
+	}
+
 	log.Printf("[oncall] Triggered escalation for incident %s using policy %s", incidentID, policyID)
 	return nil
 }
@@ -317,6 +340,11 @@ func (e *EscalationEngine) AcknowledgeIncident(incidentID, userID string) error 
 	state.AckedBy = userID
 	state.AckedAt = &now
 
+	// Persist state
+	if err := e.store.SaveEscalationState(state); err != nil {
+		log.Printf("[oncall] Failed to persist ack state for %s: %v", incidentID, err)
+	}
+
 	log.Printf("[oncall] Incident %s acknowledged by %s", incidentID, userID)
 	return nil
 }
@@ -332,6 +360,11 @@ func (e *EscalationEngine) ResolveIncident(incidentID string) error {
 	}
 
 	state.Resolved = true
+
+	// Persist resolved state
+	if err := e.store.SaveEscalationState(state); err != nil {
+		log.Printf("[oncall] Failed to persist resolve state for %s: %v", incidentID, err)
+	}
 
 	log.Printf("[oncall] Incident %s resolved", incidentID)
 	return nil

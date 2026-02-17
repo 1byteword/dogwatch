@@ -4,12 +4,12 @@ package profile
 
 import (
 	"database/sql"
+	"dogwatch/internal/storage"
 	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
 )
 
 // Sample represents a recorded profile sample with timing information.
@@ -40,7 +40,7 @@ type Store struct {
 
 // NewStore creates a new profile store.
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := storage.OpenDB(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("opening profile db: %w", err)
 	}

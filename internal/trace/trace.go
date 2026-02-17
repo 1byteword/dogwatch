@@ -3,13 +3,13 @@ package trace
 import (
 	"context"
 	"database/sql"
+	"dogwatch/internal/storage"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
 )
 
 // Span represents a single operation in a trace
@@ -58,7 +58,7 @@ type Store struct {
 
 // NewStore creates a new trace store
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := storage.OpenDB(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("opening trace db: %w", err)
 	}
@@ -132,19 +132,18 @@ func (s *Store) createTables() error {
 }
 
 func (s *Store) runMigrations() {
-	// Add process_id column if it doesn't exist
+	// Add columns if they don't exist (ignore errors for already-existing columns)
 	migrations := []string{
 		`ALTER TABLE spans ADD COLUMN process_id INTEGER`,
 		`ALTER TABLE spans ADD COLUMN hostname TEXT`,
 		`ALTER TABLE spans ADD COLUMN container_id TEXT`,
+		`ALTER TABLE traces ADD COLUMN end_time TEXT`,
 	}
 
 	for _, m := range migrations {
-		// Ignore errors - column may already exist
 		s.db.Exec(m)
 	}
 
-	// Create index if not exists (safe to run multiple times)
 	s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_spans_process_id ON spans(process_id)`)
 }
 
@@ -184,8 +183,67 @@ func (s *Store) RecordSpan(span Span) error {
 		return err
 	}
 
-	// Update trace summary
-	return s.updateTraceSummary(span.TraceID)
+	// Update trace summary incrementally (1 SELECT + 1 UPSERT instead of 5-6 queries)
+	return s.updateTraceSummaryIncremental(span)
+}
+
+// RecordSpans stores multiple spans in a single transaction.
+// This is significantly faster than calling RecordSpan in a loop.
+func (s *Store) RecordSpans(spans []Span) error {
+	if len(spans) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	spanStmt, err := tx.Prepare(`
+		INSERT OR REPLACE INTO spans
+		(trace_id, span_id, parent_span_id, name, service_name, kind, start_time, end_time, duration_ms, status, status_message, attributes, process_id, hostname, container_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare span stmt: %w", err)
+	}
+	defer spanStmt.Close()
+
+	// Group spans by trace for summary updates
+	traceSpans := make(map[string][]Span)
+
+	for i := range spans {
+		extractProcessMetadata(&spans[i])
+		attrs, _ := json.Marshal(spans[i].Attributes)
+
+		_, err := spanStmt.Exec(
+			spans[i].TraceID, spans[i].SpanID, spans[i].ParentSpanID,
+			spans[i].Name, spans[i].ServiceName, spans[i].Kind,
+			spans[i].StartTime.UTC().Format(time.RFC3339Nano),
+			spans[i].EndTime.UTC().Format(time.RFC3339Nano),
+			spans[i].DurationMs, spans[i].Status, spans[i].StatusMsg,
+			string(attrs),
+			nullableUint32(spans[i].ProcessID),
+			nullableString(spans[i].Hostname),
+			nullableString(spans[i].ContainerID),
+		)
+		if err != nil {
+			return fmt.Errorf("insert span: %w", err)
+		}
+		traceSpans[spans[i].TraceID] = append(traceSpans[spans[i].TraceID], spans[i])
+	}
+
+	// Update trace summaries per unique trace
+	for traceID, tSpans := range traceSpans {
+		if err := s.updateTraceSummaryBatch(tx, traceID, tSpans); err != nil {
+			return fmt.Errorf("update trace summary: %w", err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 // extractProcessMetadata extracts process-level metadata from span attributes
@@ -234,76 +292,143 @@ func nullableString(s string) interface{} {
 	return s
 }
 
-func (s *Store) updateTraceSummary(traceID string) error {
-	// Get trace stats
-	var rootSpanID, serviceName, name, status sql.NullString
-	var startTime string
-	var durationMs float64
-	var spanCount int
+// updateTraceSummaryIncremental updates the trace summary using only the incoming
+// span's data. This reduces from 5-6 queries to 1 SELECT + 1 UPSERT per span.
+func (s *Store) updateTraceSummaryIncremental(span Span) error {
+	isRoot := span.ParentSpanID == ""
+	startTimeStr := span.StartTime.UTC().Format(time.RFC3339Nano)
+	endTimeStr := span.EndTime.UTC().Format(time.RFC3339Nano)
 
-	row := s.db.QueryRow(`
-		SELECT span_id, service_name, name, start_time, duration_ms, status
-		FROM spans
-		WHERE trace_id = ? AND (parent_span_id IS NULL OR parent_span_id = '')
-		ORDER BY start_time ASC LIMIT 1
-	`, traceID)
-	row.Scan(&rootSpanID, &serviceName, &name, &startTime, &durationMs, &status)
-
-	// If no root span, use earliest span
-	if !rootSpanID.Valid {
-		row = s.db.QueryRow(`
-			SELECT span_id, service_name, name, start_time, duration_ms, status
-			FROM spans WHERE trace_id = ? ORDER BY start_time ASC LIMIT 1
-		`, traceID)
-		row.Scan(&rootSpanID, &serviceName, &name, &startTime, &durationMs, &status)
-	}
-
-	// Count spans
-	s.db.QueryRow(`SELECT COUNT(*) FROM spans WHERE trace_id = ?`, traceID).Scan(&spanCount)
-
-	// Get total duration (from earliest start to latest end)
-	var totalDuration float64
-	s.db.QueryRow(`
-		SELECT (julianday(MAX(end_time)) - julianday(MIN(start_time))) * 86400000
-		FROM spans WHERE trace_id = ?
-	`, traceID).Scan(&totalDuration)
-
-	// Get unique services
-	rows, _ := s.db.Query(`SELECT DISTINCT service_name FROM spans WHERE trace_id = ?`, traceID)
-	var services []string
-	for rows.Next() {
-		var svc string
-		rows.Scan(&svc)
-		services = append(services, svc)
-	}
-	rows.Close()
+	// Merge services list (single PK lookup on existing trace)
+	services := s.mergeServices(span.TraceID, span.ServiceName)
 	servicesJSON, _ := json.Marshal(services)
 
-	// Upsert trace
+	// For root spans, pass data to update trace identity fields
+	rootSpanID := ""
+	svcName := ""
+	spanName := ""
+	if isRoot {
+		rootSpanID = span.SpanID
+		svcName = span.ServiceName
+		spanName = span.Name
+	}
+
 	_, err := s.db.Exec(`
-		INSERT INTO traces (trace_id, root_span_id, service_name, name, start_time, duration_ms, span_count, status, services)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO traces (trace_id, root_span_id, service_name, name, start_time, end_time, duration_ms, span_count, status, services)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
 		ON CONFLICT(trace_id) DO UPDATE SET
-			root_span_id = excluded.root_span_id,
-			service_name = excluded.service_name,
-			name = excluded.name,
-			start_time = excluded.start_time,
-			duration_ms = excluded.duration_ms,
-			span_count = excluded.span_count,
-			status = excluded.status,
+			root_span_id = CASE WHEN excluded.root_span_id != '' THEN excluded.root_span_id ELSE traces.root_span_id END,
+			service_name = CASE WHEN excluded.root_span_id != '' THEN excluded.service_name ELSE traces.service_name END,
+			name = CASE WHEN excluded.root_span_id != '' THEN excluded.name ELSE traces.name END,
+			start_time = MIN(traces.start_time, excluded.start_time),
+			end_time = MAX(COALESCE(traces.end_time, traces.start_time), excluded.end_time),
+			duration_ms = (julianday(MAX(COALESCE(traces.end_time, traces.start_time), excluded.end_time)) - julianday(MIN(traces.start_time, excluded.start_time))) * 86400000,
+			span_count = traces.span_count + 1,
+			status = CASE WHEN excluded.status = 'ERROR' THEN 'ERROR'
+			              WHEN excluded.root_span_id != '' THEN excluded.status
+			              ELSE traces.status END,
 			services = excluded.services
 	`,
-		traceID,
-		rootSpanID.String,
-		serviceName.String,
-		name.String,
-		startTime,
-		totalDuration,
-		spanCount,
-		status.String,
+		span.TraceID, rootSpanID, svcName, spanName,
+		startTimeStr, endTimeStr, span.DurationMs, span.Status,
 		string(servicesJSON),
 	)
 	return err
+}
+
+// updateTraceSummaryBatch updates the trace summary for a batch of spans in a single transaction.
+func (s *Store) updateTraceSummaryBatch(tx *sql.Tx, traceID string, spans []Span) error {
+	// Merge services from existing trace + all new spans
+	var existingServicesJSON sql.NullString
+	tx.QueryRow(`SELECT services FROM traces WHERE trace_id = ?`, traceID).Scan(&existingServicesJSON)
+
+	svcSet := make(map[string]bool)
+	if existingServicesJSON.Valid {
+		var existing []string
+		json.Unmarshal([]byte(existingServicesJSON.String), &existing)
+		for _, svc := range existing {
+			svcSet[svc] = true
+		}
+	}
+
+	// Find root span, earliest start, latest end from batch
+	var rootSpanID, svcName, spanName, spanStatus string
+	var minStart, maxEnd time.Time
+	spanCount := len(spans)
+	hasError := false
+
+	for i, sp := range spans {
+		svcSet[sp.ServiceName] = true
+		if sp.ParentSpanID == "" {
+			rootSpanID = sp.SpanID
+			svcName = sp.ServiceName
+			spanName = sp.Name
+			spanStatus = sp.Status
+		}
+		if sp.Status == "ERROR" {
+			hasError = true
+		}
+		if i == 0 || sp.StartTime.Before(minStart) {
+			minStart = sp.StartTime
+		}
+		if i == 0 || sp.EndTime.After(maxEnd) {
+			maxEnd = sp.EndTime
+		}
+	}
+
+	services := make([]string, 0, len(svcSet))
+	for svc := range svcSet {
+		services = append(services, svc)
+	}
+	servicesJSON, _ := json.Marshal(services)
+
+	status := spanStatus
+	if hasError {
+		status = "ERROR"
+	}
+
+	startTimeStr := minStart.UTC().Format(time.RFC3339Nano)
+	endTimeStr := maxEnd.UTC().Format(time.RFC3339Nano)
+
+	_, err := tx.Exec(`
+		INSERT INTO traces (trace_id, root_span_id, service_name, name, start_time, end_time, duration_ms, span_count, status, services)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(trace_id) DO UPDATE SET
+			root_span_id = CASE WHEN excluded.root_span_id != '' THEN excluded.root_span_id ELSE traces.root_span_id END,
+			service_name = CASE WHEN excluded.root_span_id != '' THEN excluded.service_name ELSE traces.service_name END,
+			name = CASE WHEN excluded.root_span_id != '' THEN excluded.name ELSE traces.name END,
+			start_time = MIN(traces.start_time, excluded.start_time),
+			end_time = MAX(COALESCE(traces.end_time, traces.start_time), excluded.end_time),
+			duration_ms = (julianday(MAX(COALESCE(traces.end_time, traces.start_time), excluded.end_time)) - julianday(MIN(traces.start_time, excluded.start_time))) * 86400000,
+			span_count = traces.span_count + excluded.span_count,
+			status = CASE WHEN excluded.status = 'ERROR' THEN 'ERROR'
+			              WHEN excluded.root_span_id != '' THEN excluded.status
+			              ELSE traces.status END,
+			services = excluded.services
+	`,
+		traceID, rootSpanID, svcName, spanName,
+		startTimeStr, endTimeStr,
+		maxEnd.Sub(minStart).Seconds()*1000,
+		spanCount, status, string(servicesJSON),
+	)
+	return err
+}
+
+// mergeServices merges a new service name into the existing services list for a trace.
+func (s *Store) mergeServices(traceID, serviceName string) []string {
+	var existingJSON sql.NullString
+	s.db.QueryRow(`SELECT services FROM traces WHERE trace_id = ?`, traceID).Scan(&existingJSON)
+
+	var services []string
+	if existingJSON.Valid {
+		json.Unmarshal([]byte(existingJSON.String), &services)
+	}
+	for _, svc := range services {
+		if svc == serviceName {
+			return services
+		}
+	}
+	return append(services, serviceName)
 }
 
 // ListTraces returns recent traces

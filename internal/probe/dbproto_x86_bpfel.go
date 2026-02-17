@@ -56,10 +56,16 @@ type dbprotoSpecs struct {
 type dbprotoProgramSpecs struct {
 	TraceDbReadEntry     *ebpf.ProgramSpec `ebpf:"trace_db_read_entry"`
 	TraceDbReadExit      *ebpf.ProgramSpec `ebpf:"trace_db_read_exit"`
+	TraceDbReadvEntry    *ebpf.ProgramSpec `ebpf:"trace_db_readv_entry"`
+	TraceDbReadvExit     *ebpf.ProgramSpec `ebpf:"trace_db_readv_exit"`
 	TraceDbRecvfromEntry *ebpf.ProgramSpec `ebpf:"trace_db_recvfrom_entry"`
 	TraceDbRecvfromExit  *ebpf.ProgramSpec `ebpf:"trace_db_recvfrom_exit"`
+	TraceDbRecvmsgEntry  *ebpf.ProgramSpec `ebpf:"trace_db_recvmsg_entry"`
+	TraceDbRecvmsgExit   *ebpf.ProgramSpec `ebpf:"trace_db_recvmsg_exit"`
+	TraceDbSendmsgEntry  *ebpf.ProgramSpec `ebpf:"trace_db_sendmsg_entry"`
 	TraceDbSendtoEntry   *ebpf.ProgramSpec `ebpf:"trace_db_sendto_entry"`
 	TraceDbWriteEntry    *ebpf.ProgramSpec `ebpf:"trace_db_write_entry"`
+	TraceDbWritevEntry   *ebpf.ProgramSpec `ebpf:"trace_db_writev_entry"`
 }
 
 // dbprotoMapSpecs contains maps before they are loaded into the kernel.
@@ -119,20 +125,32 @@ type dbprotoVariables struct {
 type dbprotoPrograms struct {
 	TraceDbReadEntry     *ebpf.Program `ebpf:"trace_db_read_entry"`
 	TraceDbReadExit      *ebpf.Program `ebpf:"trace_db_read_exit"`
+	TraceDbReadvEntry    *ebpf.Program `ebpf:"trace_db_readv_entry"`
+	TraceDbReadvExit     *ebpf.Program `ebpf:"trace_db_readv_exit"`
 	TraceDbRecvfromEntry *ebpf.Program `ebpf:"trace_db_recvfrom_entry"`
 	TraceDbRecvfromExit  *ebpf.Program `ebpf:"trace_db_recvfrom_exit"`
+	TraceDbRecvmsgEntry  *ebpf.Program `ebpf:"trace_db_recvmsg_entry"`
+	TraceDbRecvmsgExit   *ebpf.Program `ebpf:"trace_db_recvmsg_exit"`
+	TraceDbSendmsgEntry  *ebpf.Program `ebpf:"trace_db_sendmsg_entry"`
 	TraceDbSendtoEntry   *ebpf.Program `ebpf:"trace_db_sendto_entry"`
 	TraceDbWriteEntry    *ebpf.Program `ebpf:"trace_db_write_entry"`
+	TraceDbWritevEntry   *ebpf.Program `ebpf:"trace_db_writev_entry"`
 }
 
 func (p *dbprotoPrograms) Close() error {
 	return _DbprotoClose(
 		p.TraceDbReadEntry,
 		p.TraceDbReadExit,
+		p.TraceDbReadvEntry,
+		p.TraceDbReadvExit,
 		p.TraceDbRecvfromEntry,
 		p.TraceDbRecvfromExit,
+		p.TraceDbRecvmsgEntry,
+		p.TraceDbRecvmsgExit,
+		p.TraceDbSendmsgEntry,
 		p.TraceDbSendtoEntry,
 		p.TraceDbWriteEntry,
+		p.TraceDbWritevEntry,
 	)
 }
 

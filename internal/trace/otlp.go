@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -100,24 +101,30 @@ func (r *OTLPReceiver) HandleTraces(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	spanCount := 0
+	// Collect all spans into a batch for a single transaction
+	var batch []Span
 	for _, rs := range otlpReq.ResourceSpans {
 		serviceName := extractServiceName(rs.Resource.Attributes)
 
 		for _, ss := range rs.ScopeSpans {
 			for _, s := range ss.Spans {
-				span := convertSpan(s, serviceName)
-				if err := r.store.RecordSpan(span); err != nil {
-					// Log but continue
-					continue
-				}
-				spanCount++
-
-				// Call the span callback for entity synthesis
-				if r.spanCallback != nil {
-					r.spanCallback(span)
-				}
+				batch = append(batch, convertSpan(s, serviceName))
 			}
+		}
+	}
+
+	// Write all spans in one transaction (vs N individual inserts)
+	if len(batch) > 0 {
+		if err := r.store.RecordSpans(batch); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to record spans: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Fire callbacks after successful storage
+	if r.spanCallback != nil {
+		for i := range batch {
+			r.spanCallback(batch[i])
 		}
 	}
 
@@ -211,8 +218,7 @@ func convertSpan(s span, serviceName string) Span {
 }
 
 func parseNanoTime(s string) int64 {
-	var n int64
-	fmt.Sscanf(s, "%d", &n)
+	n, _ := strconv.ParseInt(s, 10, 64)
 	return n
 }
 

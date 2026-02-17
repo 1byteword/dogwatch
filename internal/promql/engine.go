@@ -56,7 +56,10 @@ func (e *Engine) QueryRange(ctx context.Context, query string, start, end time.T
 		return nil, err
 	}
 
-	evaluator := NewEvaluator(e.store)
+	// Wrap the store with a prefetch cache so ScanRange is called once per
+	// unique (metric, matchers) pair instead of once per step.
+	cached := newPrefetchStore(e.store, start, end)
+	evaluator := NewEvaluator(cached)
 
 	// For range queries, we evaluate at each step and collect the results
 	seriesMap := make(map[string]*Series)
@@ -113,6 +116,70 @@ func (e *Engine) QueryRange(ctx context.Context, query string, start, end time.T
 		ResultType: "matrix",
 		Result:     matrix,
 	}, nil
+}
+
+// prefetchStore wraps a MetricsStore and caches ScanRange results.
+// On the first call for a given (metric, matchers) key, it fetches data for the
+// full query range [fullStart, fullEnd]. Subsequent calls return from cache,
+// filtered to the requested time window. This turns O(steps) DB queries into O(1).
+type prefetchStore struct {
+	inner     MetricsStore
+	fullStart time.Time
+	fullEnd   time.Time
+	cache     map[string][]Series
+}
+
+func newPrefetchStore(inner MetricsStore, fullStart, fullEnd time.Time) *prefetchStore {
+	return &prefetchStore{
+		inner:     inner,
+		fullStart: fullStart,
+		fullEnd:   fullEnd,
+		cache:     make(map[string][]Series),
+	}
+}
+
+func (s *prefetchStore) ScanRange(ctx context.Context, metric string, labels map[string]string, matchers []*LabelMatcher, start, end time.Time) ([]Series, error) {
+	key := metric
+	for _, m := range matchers {
+		key += "|" + m.String()
+	}
+
+	if _, ok := s.cache[key]; !ok {
+		// First call — fetch for the full query range
+		result, err := s.inner.ScanRange(ctx, metric, labels, matchers, s.fullStart, s.fullEnd)
+		if err != nil {
+			return nil, err
+		}
+		s.cache[key] = result
+	}
+
+	// Filter cached data to the requested [start, end] window
+	cached := s.cache[key]
+	filtered := make([]Series, 0, len(cached))
+	for _, series := range cached {
+		var samples []Sample
+		for _, sample := range series.Samples {
+			if !sample.Timestamp.Before(start) && !sample.Timestamp.After(end) {
+				samples = append(samples, sample)
+			}
+		}
+		if len(samples) > 0 {
+			filtered = append(filtered, Series{Labels: series.Labels, Samples: samples})
+		}
+	}
+	return filtered, nil
+}
+
+func (s *prefetchStore) ListMetrics(ctx context.Context) ([]string, error) {
+	return s.inner.ListMetrics(ctx)
+}
+
+func (s *prefetchStore) ListLabels(ctx context.Context, metric string) ([]string, error) {
+	return s.inner.ListLabels(ctx, metric)
+}
+
+func (s *prefetchStore) ListLabelValues(ctx context.Context, label string, metric string) ([]string, error) {
+	return s.inner.ListLabelValues(ctx, label, metric)
 }
 
 // Series returns series matching the label selectors.

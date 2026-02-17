@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -63,6 +64,8 @@ import (
 	"dogwatch/internal/usage"
 	"dogwatch/internal/watch"
 	"dogwatch/internal/web"
+
+	dogwatchRuntime "dogwatch/internal/runtime"
 )
 
 func main() {
@@ -92,6 +95,10 @@ func main() {
 	clusterAdvertise := flag.String("cluster-advertise", "", "Address to advertise to other nodes")
 	clusterKey := flag.String("cluster-key", "", "Encryption key for gossip (16/24/32 bytes for AES)")
 
+	// TLS flags
+	tlsCert := flag.String("tls-cert", "", "Path to TLS certificate file (enables HTTPS)")
+	tlsKey := flag.String("tls-key", "", "Path to TLS private key file")
+
 	// OTLP flags
 	otlpEnabled := flag.Bool("otlp", true, "Enable OTLP receivers")
 	otlpGRPCPort := flag.Int("otlp-grpc-port", 4317, "OTLP gRPC port")
@@ -114,6 +121,12 @@ func main() {
 	}
 	defer tcpProbe.Close()
 
+	// Wire up FD-to-socket tracking for network-aware tracing
+	fdTracker := tcpProbe.FDTracker()
+	if fdTracker != nil {
+		fmt.Println("  FD-to-socket tracking enabled")
+	}
+
 	// Start HTTP probe (plain HTTP)
 	fmt.Println("Starting HTTP probe...")
 	httpProbe, err := probe.NewHTTPProbe()
@@ -122,6 +135,9 @@ func main() {
 		httpProbe = nil
 	} else {
 		defer httpProbe.Close()
+		if fdTracker != nil {
+			httpProbe.SetFDTracker(fdTracker)
+		}
 	}
 
 	// SSL probe (HTTPS) - Using tracefs-based attachment (V2)
@@ -155,6 +171,9 @@ func main() {
 		dbProbe = nil
 	} else {
 		defer dbProbe.Close()
+		if fdTracker != nil {
+			dbProbe.SetFDTracker(fdTracker)
+		}
 		fmt.Println("  Database probe monitoring MySQL, PostgreSQL, Redis")
 	}
 
@@ -215,6 +234,11 @@ func main() {
 		web.SetTimeSeriesOptimizer(timeSeriesOptimizer)
 		fmt.Printf("Time-series optimizer: http://localhost:%d/api/timeseries/stats\n", *webPort)
 	}
+
+	// Initialize memory manager for load shedding under pressure
+	memoryManager := dogwatchRuntime.NewMemoryManager(dogwatchRuntime.DefaultMemoryConfig())
+	memoryManager.Start()
+	defer memoryManager.Stop()
 
 	// Initialize Write-Ahead Log for data durability
 	walConfig := storage.WALConfig{
@@ -887,8 +911,12 @@ func main() {
 	var webServer *web.Server
 	if !*noWeb {
 		webServer = web.New(agg, *webPort)
+		webServer.SetMemoryManager(memoryManager)
 		if profileProbe != nil {
 			webServer.SetProfiler(profileProbe)
+		}
+		if fdTracker != nil {
+			webServer.SetFDTracker(&fdTrackerAdapter{fdTracker})
 		}
 		if store != nil {
 			webServer.SetStore(store)
@@ -1291,9 +1319,16 @@ func main() {
 		fmt.Printf("  DataDog:    http://localhost:%d/api/datadog/v1/series\n", *webPort)
 
 		go func() {
-			fmt.Printf("Web UI available at http://localhost:%d\n", *webPort)
-			if err := webServer.Start(); err != nil && err != http.ErrServerClosed {
-				log.Printf("Web server error: %v", err)
+			if *tlsCert != "" && *tlsKey != "" {
+				fmt.Printf("Web UI available at https://localhost:%d (TLS enabled)\n", *webPort)
+				if err := webServer.StartTLS(*tlsCert, *tlsKey); err != nil && err != http.ErrServerClosed {
+					log.Printf("Web server error: %v", err)
+				}
+			} else {
+				fmt.Printf("Web UI available at http://localhost:%d\n", *webPort)
+				if err := webServer.Start(); err != nil && err != http.ErrServerClosed {
+					log.Printf("Web server error: %v", err)
+				}
 			}
 		}()
 	}
@@ -1406,10 +1441,14 @@ func main() {
 			agg.RecordConnection(event.Comm, event.PID, event.DAddr.String(), event.DPort)
 
 			if *verbose {
-				src := fmt.Sprintf("%s:%d", event.SAddr, event.SPort)
-				dst := fmt.Sprintf("%s:%d", event.DAddr, event.DPort)
-				fmt.Printf("[TCP] %-8d %-16s %-21s → %-21s\n",
-					event.PID, truncate(event.Comm, 16), src, dst)
+				src := net.JoinHostPort(event.SAddr.String(), fmt.Sprintf("%d", event.SPort))
+				dst := net.JoinHostPort(event.DAddr.String(), fmt.Sprintf("%d", event.DPort))
+				proto := "4"
+				if event.Family == 10 {
+					proto = "6"
+				}
+				fmt.Printf("[TCPv%s] %-8d %-16s %-41s → %-41s\n",
+					proto, event.PID, truncate(event.Comm, 16), src, dst)
 			}
 
 		case event, ok := <-getHTTPEvents(httpProbe):
@@ -1595,6 +1634,19 @@ func generateSecurePassword() string {
 		}
 	}
 	return string(b)
+}
+
+// fdTrackerAdapter wraps probe.FDTracker to implement web.FDTrackerProvider
+type fdTrackerAdapter struct {
+	tracker *probe.FDTracker
+}
+
+func (a *fdTrackerAdapter) Stats() interface{} {
+	return a.tracker.Stats()
+}
+
+func (a *fdTrackerAdapter) DumpSockets() interface{} {
+	return a.tracker.DumpSockets()
 }
 
 // costUsageProvider adapts stores to the costintel.UsageProvider interface

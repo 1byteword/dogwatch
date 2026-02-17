@@ -1,8 +1,9 @@
-import { For, Show, createEffect, createMemo, createResource, createSignal } from "solid-js";
+import { ErrorBoundary, For, Show, createEffect, createMemo, createResource, createSignal } from "solid-js";
 import { Badge } from "../design/components/Badge";
 import { Button } from "../design/components/Button";
 import { Input } from "../design/components/Input";
 import { Panel } from "../design/components/Panel";
+import { WidgetErrorFallback } from "../design/components/WidgetErrorFallback";
 import { createNowTicker, useAutoRefresh } from "../core/live";
 import { relativeTime } from "../core/time";
 import { loadLogs, loadLogServices } from "../domains/logs/service";
@@ -46,6 +47,7 @@ export function InvestigateLogsPage() {
   }
 
   return (
+    <ErrorBoundary fallback={(err, reset) => <WidgetErrorFallback error={err} reset={reset} />}>
     <div class="page-grid">
       <Panel
         title="Logs Explorer"
@@ -120,6 +122,7 @@ export function InvestigateLogsPage() {
         </ul>
       </Panel>
     </div>
+    </ErrorBoundary>
   );
 }
 

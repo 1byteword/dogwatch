@@ -3,6 +3,7 @@ package promql
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -73,10 +74,34 @@ type LabelMatcher struct {
 	Type  LabelMatchType
 	Name  string
 	Value string
+	re    *regexp.Regexp // compiled regex, lazily initialized
 }
 
 func (m *LabelMatcher) String() string {
 	return fmt.Sprintf("%s%s%q", m.Name, m.Type, m.Value)
+}
+
+// Matches returns whether the given label value matches this matcher.
+// Regex matchers are compiled once and cached for reuse.
+func (m *LabelMatcher) Matches(val string) bool {
+	switch m.Type {
+	case MatchEqual:
+		return val == m.Value
+	case MatchNotEqual:
+		return val != m.Value
+	case MatchRegexp:
+		return m.compiledRe().MatchString(val)
+	case MatchNotRegexp:
+		return !m.compiledRe().MatchString(val)
+	}
+	return true
+}
+
+func (m *LabelMatcher) compiledRe() *regexp.Regexp {
+	if m.re == nil {
+		m.re, _ = regexp.Compile("^(?:" + m.Value + ")$")
+	}
+	return m.re
 }
 
 // VectorSelector represents a metric selector with optional label matchers.

@@ -1,4 +1,4 @@
-import { createResource, createSignal, createMemo, Show, For } from "solid-js";
+import { ErrorBoundary, createResource, createSignal, createMemo, Show, For } from "solid-js";
 import { useAutoRefresh } from "../core/live";
 import { loadSyntheticChecks, loadSyntheticFailures } from "../domains/slo/service";
 import { SyntheticCheck, SyntheticFailure } from "../domains/slo/types";
@@ -6,6 +6,7 @@ import { Panel } from "../design/components/Panel";
 import { Button } from "../design/components/Button";
 import { Badge } from "../design/components/Badge";
 import { Input } from "../design/components/Input";
+import { WidgetErrorFallback } from "../design/components/WidgetErrorFallback";
 
 const STATUS_TONE: Record<string, "ok" | "warn" | "error"> = {
   passing: "ok", degraded: "warn", failing: "error",
@@ -61,7 +62,7 @@ export function SyntheticsManagementPage() {
   }
 
   return (
-    <>
+    <ErrorBoundary fallback={(err, reset) => <WidgetErrorFallback error={err} reset={reset} />}>
       <div class="split-layout">
         <Panel title={`Synthetic Checks (${allChecks().length})`} actions={
           <Button variant="primary" onClick={() => { setFormName(""); setFormUrl(""); setFormType("http"); setFormInterval(60); setShowCreate(true); }}>Create Check</Button>
@@ -182,7 +183,7 @@ export function SyntheticsManagementPage() {
           </div>
         </div>
       </Show>
-    </>
+    </ErrorBoundary>
   );
 }
 

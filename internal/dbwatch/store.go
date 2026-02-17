@@ -2,12 +2,12 @@ package dbwatch
 
 import (
 	"database/sql"
+	"dogwatch/internal/storage"
 	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
 )
 
 // DBType represents a database type
@@ -78,7 +78,7 @@ type recentDBStats struct {
 
 // NewStore creates a new database watch store
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := storage.OpenDB(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("opening db: %w", err)
 	}

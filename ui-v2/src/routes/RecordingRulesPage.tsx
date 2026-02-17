@@ -1,4 +1,4 @@
-import { createResource, createSignal, createMemo, Show, For } from "solid-js";
+import { ErrorBoundary, createResource, createSignal, createMemo, Show, For } from "solid-js";
 import { useAutoRefresh } from "../core/live";
 import { loadRecordingRules, loadRecordingRuleHistory, loadRecordingRulesStatus } from "../domains/recording/service";
 import type { RecordingRule, EvaluationHistory } from "../domains/recording/types";
@@ -6,6 +6,7 @@ import { Panel } from "../design/components/Panel";
 import { Button } from "../design/components/Button";
 import { Badge } from "../design/components/Badge";
 import { Input } from "../design/components/Input";
+import { WidgetErrorFallback } from "../design/components/WidgetErrorFallback";
 
 function formatInterval(ns: number): string {
   const sec = ns / 1e9;
@@ -139,7 +140,7 @@ export function RecordingRulesPage() {
   const st = () => status() || { total_rules: 0, enabled_rules: 0, total_evaluations: 0, successful_evaluations: 0, failed_evaluations: 0, last_eval_duration: 0, avg_eval_duration: 0 };
 
   return (
-    <>
+    <ErrorBoundary fallback={(err, reset) => <WidgetErrorFallback error={err} reset={reset} />}>
       {/* Status bar */}
       <div style={{ display: "flex", gap: "12px", "margin-bottom": "12px", "flex-wrap": "wrap" }}>
         <Badge tone="neutral">{st().total_rules} rules</Badge>
@@ -323,7 +324,7 @@ export function RecordingRulesPage() {
           </div>
         </div>
       </Show>
-    </>
+    </ErrorBoundary>
   );
 }
 

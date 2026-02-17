@@ -1,8 +1,9 @@
-import { For, Show, createEffect, createMemo, createResource, createSignal } from "solid-js";
+import { ErrorBoundary, For, Show, createEffect, createMemo, createResource, createSignal } from "solid-js";
 import { Badge } from "../design/components/Badge";
 import { Button } from "../design/components/Button";
 import { Input } from "../design/components/Input";
 import { Panel } from "../design/components/Panel";
+import { WidgetErrorFallback } from "../design/components/WidgetErrorFallback";
 import { createNowTicker, useAutoRefresh } from "../core/live";
 import { relativeTime } from "../core/time";
 import { createCatalogService } from "../core/actions";
@@ -165,6 +166,7 @@ export function ConfigureCatalogPage() {
   }
 
   return (
+    <ErrorBoundary fallback={(err, reset) => <WidgetErrorFallback error={err} reset={reset} />}>
     <div class="page-grid">
       <Panel
         title="Service Catalog"
@@ -352,6 +354,7 @@ export function ConfigureCatalogPage() {
         </div>
       </Show>
     </div>
+    </ErrorBoundary>
   );
 }
 

@@ -56,6 +56,7 @@ import (
 )
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall" -target amd64 ssl ../../bpf/ssl.c -- -I../../bpf
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall" -target arm64 ssl ../../bpf/ssl.c -- -I../../bpf
 
 const (
 	SSLEventTypeRequest  = 1
@@ -103,6 +104,7 @@ type SSLProbe struct {
 
 // Common OpenSSL library paths (order matters - check /lib first as that's where apps link)
 var sslLibPaths = []string{
+	// x86_64 paths
 	"/lib/x86_64-linux-gnu/libssl.so.3",
 	"/lib/x86_64-linux-gnu/libssl.so.1.1",
 	"/lib64/libssl.so.3",
@@ -110,6 +112,13 @@ var sslLibPaths = []string{
 	"/usr/lib/x86_64-linux-gnu/libssl.so.3",
 	"/usr/lib/x86_64-linux-gnu/libssl.so.1.1",
 	"/usr/lib/x86_64-linux-gnu/libssl.so",
+	// aarch64/arm64 paths
+	"/lib/aarch64-linux-gnu/libssl.so.3",
+	"/lib/aarch64-linux-gnu/libssl.so.1.1",
+	"/usr/lib/aarch64-linux-gnu/libssl.so.3",
+	"/usr/lib/aarch64-linux-gnu/libssl.so.1.1",
+	"/usr/lib/aarch64-linux-gnu/libssl.so",
+	// Generic paths
 	"/usr/lib/libssl.so.3",
 	"/usr/lib/libssl.so.1.1",
 	"/usr/lib/libssl.so",

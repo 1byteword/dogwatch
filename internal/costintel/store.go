@@ -2,11 +2,11 @@ package costintel
 
 import (
 	"database/sql"
+	"dogwatch/internal/storage"
 	"encoding/json"
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
 )
 
 // Store persists cost estimates over time for trending
@@ -57,7 +57,7 @@ type CostSummary struct {
 
 // NewStore creates a new cost intelligence store
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := storage.OpenDB(dbPath)
 	if err != nil {
 		return nil, err
 	}

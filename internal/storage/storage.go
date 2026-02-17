@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"sync"
 	"time"
-
-	_ "modernc.org/sqlite"
 )
 
 // Store handles persistent storage of metrics
@@ -48,7 +46,7 @@ type ConnectionMetricPoint struct {
 
 // New creates a new storage instance
 func New(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := OpenDB(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}

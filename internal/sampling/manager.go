@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"dogwatch/internal/trace"
+	"dogwatch/internal/storage"
 
-	_ "modernc.org/sqlite"
 )
 
 // Manager coordinates multiple sampling strategies
@@ -39,7 +39,7 @@ type Manager struct {
 
 // NewManager creates a new sampling manager
 func NewManager(dbPath string, traceStore *trace.Store) (*Manager, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := storage.OpenDB(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("opening sampling db: %w", err)
 	}

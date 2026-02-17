@@ -16,6 +16,7 @@ import (
 )
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall" -target amd64 http ../../bpf/http.c -- -I../../bpf
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall" -target arm64 http ../../bpf/http.c -- -I../../bpf
 
 const (
 	EventTypeRequest  = 1
@@ -67,6 +68,9 @@ type HTTPProbe struct {
 	// Request tracking for latency calculation
 	requests   map[string]time.Time // key: pid:tid
 	requestsMu sync.RWMutex
+
+	// FD tracker for filtering non-network FDs (optional, set via SetFDTracker)
+	fdTracker *FDTracker
 }
 
 // NewHTTPProbe creates and loads the HTTP eBPF probe
@@ -78,7 +82,7 @@ func NewHTTPProbe() (*HTTPProbe, error) {
 
 	p := &HTTPProbe{
 		objs:       objs,
-		links:      make([]link.Link, 0, 4),
+		links:      make([]link.Link, 0, 12),
 		eventsChan: make(chan HTTPEvent, 100),
 		requests:   make(map[string]time.Time),
 	}
@@ -131,6 +135,54 @@ func NewHTTPProbe() (*HTTPProbe, error) {
 	}
 	p.links = append(p.links, tpRecvfromExit)
 
+	// Attach tracepoint for sys_enter_sendmsg (used by Go net package, etc.)
+	tpSendmsg, err := link.Tracepoint("syscalls", "sys_enter_sendmsg", objs.TraceSendmsgEntry, nil)
+	if err != nil {
+		p.Close()
+		return nil, fmt.Errorf("attaching tracepoint sys_enter_sendmsg: %w", err)
+	}
+	p.links = append(p.links, tpSendmsg)
+
+	// Attach tracepoint for sys_enter_recvmsg
+	tpRecvmsgEnter, err := link.Tracepoint("syscalls", "sys_enter_recvmsg", objs.TraceRecvmsgEntry, nil)
+	if err != nil {
+		p.Close()
+		return nil, fmt.Errorf("attaching tracepoint sys_enter_recvmsg: %w", err)
+	}
+	p.links = append(p.links, tpRecvmsgEnter)
+
+	// Attach tracepoint for sys_exit_recvmsg
+	tpRecvmsgExit, err := link.Tracepoint("syscalls", "sys_exit_recvmsg", objs.TraceRecvmsgExit, nil)
+	if err != nil {
+		p.Close()
+		return nil, fmt.Errorf("attaching tracepoint sys_exit_recvmsg: %w", err)
+	}
+	p.links = append(p.links, tpRecvmsgExit)
+
+	// Attach tracepoint for sys_enter_writev (scatter/gather I/O)
+	tpWritev, err := link.Tracepoint("syscalls", "sys_enter_writev", objs.TraceWritevEntry, nil)
+	if err != nil {
+		p.Close()
+		return nil, fmt.Errorf("attaching tracepoint sys_enter_writev: %w", err)
+	}
+	p.links = append(p.links, tpWritev)
+
+	// Attach tracepoint for sys_enter_readv
+	tpReadvEnter, err := link.Tracepoint("syscalls", "sys_enter_readv", objs.TraceReadvEntry, nil)
+	if err != nil {
+		p.Close()
+		return nil, fmt.Errorf("attaching tracepoint sys_enter_readv: %w", err)
+	}
+	p.links = append(p.links, tpReadvEnter)
+
+	// Attach tracepoint for sys_exit_readv
+	tpReadvExit, err := link.Tracepoint("syscalls", "sys_exit_readv", objs.TraceReadvExit, nil)
+	if err != nil {
+		p.Close()
+		return nil, fmt.Errorf("attaching tracepoint sys_exit_readv: %w", err)
+	}
+	p.links = append(p.links, tpReadvExit)
+
 	// Open ring buffer reader
 	rd, err := ringbuf.NewReader(objs.HttpEvents)
 	if err != nil {
@@ -140,6 +192,13 @@ func NewHTTPProbe() (*HTTPProbe, error) {
 	p.reader = rd
 
 	return p, nil
+}
+
+// SetFDTracker sets the FD tracker for filtering non-network FDs.
+// When set, the HTTP probe can enrich events with socket metadata
+// from the FD tracker, associating HTTP traffic with specific connections.
+func (p *HTTPProbe) SetFDTracker(t *FDTracker) {
+	p.fdTracker = t
 }
 
 // Events returns a channel that receives HTTP events

@@ -2,13 +2,13 @@ package incidents
 
 import (
 	"database/sql"
+	"dogwatch/internal/storage"
 	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
-	_ "modernc.org/sqlite"
 )
 
 // Severity levels
@@ -33,6 +33,7 @@ const (
 // Incident represents a paging incident
 type Incident struct {
 	ID          string            `json:"id"`
+	DedupKey    string            `json:"dedup_key,omitempty"`   // Deduplication key — same key merges incidents
 	Title       string            `json:"title"`
 	Description string            `json:"description"`
 	Severity    Severity          `json:"severity"`
@@ -136,7 +137,7 @@ type Store struct {
 
 // NewStore creates a new incident store
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := storage.OpenDB(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -208,6 +209,13 @@ func NewStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("create schema: %w", err)
 	}
 
+	// Migration: add dedup_key column if it doesn't exist
+	db.Exec(`ALTER TABLE incidents ADD COLUMN dedup_key TEXT`)
+	// Partial unique index: only enforce uniqueness for non-resolved incidents
+	// so the same dedup_key can be reused after resolution
+	db.Exec(`DROP INDEX IF EXISTS idx_incident_dedup`)
+	db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_incident_dedup_active ON incidents(dedup_key) WHERE dedup_key IS NOT NULL AND dedup_key != '' AND status != 'resolved'`)
+
 	return &Store{db: db}, nil
 }
 
@@ -221,6 +229,10 @@ func (s *Store) CreateIncident(inc *Incident) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	return s.createIncidentLocked(inc)
+}
+
+func (s *Store) createIncidentLocked(inc *Incident) error {
 	if inc.ID == "" {
 		inc.ID = uuid.New().String()
 	}
@@ -244,14 +256,69 @@ func (s *Store) CreateIncident(inc *Incident) error {
 	tagsJSON, _ := json.Marshal(inc.Tags)
 	timelineJSON, _ := json.Marshal(inc.Timeline)
 
+	var dedupKey interface{}
+	if inc.DedupKey != "" {
+		dedupKey = inc.DedupKey
+	}
+
 	_, err := s.db.Exec(`
-		INSERT INTO incidents (id, title, description, severity, status, service, service_id, source, source_id,
+		INSERT INTO incidents (id, dedup_key, title, description, severity, status, service, service_id, source, source_id,
 			created_at, updated_at, assigned_to, escalation_level, tags, timeline)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		inc.ID, inc.Title, inc.Description, inc.Severity, inc.Status, inc.Service, inc.ServiceID, inc.Source, inc.SourceID,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		inc.ID, dedupKey, inc.Title, inc.Description, inc.Severity, inc.Status, inc.Service, inc.ServiceID, inc.Source, inc.SourceID,
 		inc.CreatedAt, inc.UpdatedAt, inc.AssignedTo, inc.EscLevel, string(tagsJSON), string(timelineJSON),
 	)
 	return err
+}
+
+// CreateOrDedup creates a new incident or returns the existing one if a matching
+// dedup_key already exists for an active (non-resolved) incident.
+// Returns the incident and true if an existing incident was found.
+func (s *Store) CreateOrDedup(inc *Incident) (*Incident, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Check for existing active incident with same dedup_key
+	if inc.DedupKey != "" {
+		var existingID string
+		err := s.db.QueryRow(`
+			SELECT id FROM incidents
+			WHERE dedup_key = ? AND status != ?
+			LIMIT 1`,
+			inc.DedupKey, StatusResolved,
+		).Scan(&existingID)
+
+		if err == nil {
+			// Found existing — update timeline and bump updated_at
+			now := time.Now()
+			var timelineJSON string
+			s.db.QueryRow(`SELECT timeline FROM incidents WHERE id = ?`, existingID).Scan(&timelineJSON)
+
+			var timeline []TimelineEvent
+			json.Unmarshal([]byte(timelineJSON), &timeline)
+			timeline = append(timeline, TimelineEvent{
+				Timestamp: now,
+				Type:      "dedup",
+				Message:   fmt.Sprintf("Duplicate alert suppressed (source: %s/%s)", inc.Source, inc.SourceID),
+			})
+			newTimelineJSON, _ := json.Marshal(timeline)
+			s.db.Exec(`UPDATE incidents SET updated_at = ?, timeline = ? WHERE id = ?`,
+				now, string(newTimelineJSON), existingID)
+
+			// Read existing incident inline (we already hold the lock)
+			existing, getErr := s.scanIncidentByID(existingID)
+			if getErr != nil {
+				return nil, false, getErr
+			}
+			return existing, true, nil
+		}
+	}
+
+	// No existing incident — create new
+	if err := s.createIncidentLocked(inc); err != nil {
+		return nil, false, err
+	}
+	return inc, false, nil
 }
 
 // GetIncident retrieves an incident by ID
@@ -825,6 +892,16 @@ func (s *Store) GetNotificationLogs(incidentID string) ([]NotificationLog, error
 }
 
 // Helper functions
+
+// scanIncidentByID reads an incident by ID without taking a lock (caller must hold lock).
+func (s *Store) scanIncidentByID(id string) (*Incident, error) {
+	row := s.db.QueryRow(`
+		SELECT id, title, description, severity, status, service, service_id, source, source_id,
+			created_at, updated_at, acked_at, acked_by, resolved_at, resolved_by,
+			assigned_to, escalation_level, tags, timeline
+		FROM incidents WHERE id = ?`, id)
+	return s.scanIncident(row)
+}
 
 func (s *Store) scanIncident(row *sql.Row) (*Incident, error) {
 	var inc Incident

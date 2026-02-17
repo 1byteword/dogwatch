@@ -34,6 +34,7 @@ import (
 	"dogwatch/internal/metrics"
 	"dogwatch/internal/oncall"
 	"dogwatch/internal/query"
+	"dogwatch/internal/runtime"
 	"dogwatch/internal/slo"
 	"dogwatch/internal/statuspage"
 	"dogwatch/internal/storage"
@@ -51,6 +52,12 @@ var v2Files embed.FS
 type FlameGraphProvider interface {
 	GetFlameGraph() (interface{}, error)
 	ClearSamples() error
+}
+
+// FDTrackerProvider provides FD-to-socket tracking stats and debug info
+type FDTrackerProvider interface {
+	Stats() interface{}
+	DumpSockets() interface{}
 }
 
 // Server serves the web dashboard
@@ -84,6 +91,7 @@ type Server struct {
 	oncallEscalation    *oncall.EscalationEngine
 	alertManager        *alerting.AlertManager
 	profiler            FlameGraphProvider
+	fdTracker           FDTrackerProvider
 	statusPageStore     *statuspage.Store
 	statusPageHandlers  *StatusPageHandlers
 	catalogStore        *catalog.Store
@@ -95,6 +103,7 @@ type Server struct {
 	bubbleupHandlers    *BubbleUpHandlers
 	myServicesHandlers  *MyServicesHandlers
 	wsHub               *Hub
+	memoryManager       *runtime.MemoryManager
 	server              *http.Server
 	mux                 *http.ServeMux
 	mu                  sync.RWMutex
@@ -220,6 +229,8 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	mux.HandleFunc("/api/processes", s.handleProcesses)
 	mux.HandleFunc("/api/flamegraph", s.handleFlameGraph)
 	mux.HandleFunc("/api/flamegraph/clear", s.handleFlameGraphClear)
+	mux.HandleFunc("/api/fdtrack/stats", s.handleFDTrackStats)
+	mux.HandleFunc("/api/fdtrack/sockets", s.handleFDTrackSockets)
 	mux.HandleFunc("/api/history/system", s.handleHistorySystem)
 	mux.HandleFunc("/api/history/connections", s.handleHistoryConnections)
 	mux.HandleFunc("/api/history/info", s.handleHistoryInfo)
@@ -449,17 +460,29 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	mux.HandleFunc("/readyz", s.handleReadyz)
 	mux.HandleFunc("/livez", s.handleLivez)
 
+	// Apply body size limit middleware (10MB default, 100MB for ingest endpoints)
+	bodyLimited := BodyLimitMiddleware(10*1024*1024, 100*1024*1024)(mux)
+
+	// Apply global auth middleware (enforces auth on all /api/* routes)
+	authed := AuthMiddleware(rbacMiddleware)(bodyLimited)
+
 	// Apply security middleware (headers + CSRF protection)
 	securityConfig := DefaultSecurityConfig()
-	securedHandler := SecurityMiddleware(securityConfig)(mux)
+	securedHandler := SecurityMiddleware(securityConfig)(authed)
 
 	// Apply rate limiting middleware
 	rateLimitConfig := DefaultRateLimitConfig()
 	rateLimitedHandler := RateLimitMiddleware(rateLimitConfig)(securedHandler)
 
+	// Apply memory pressure middleware (load shedding under OOM pressure)
+	var finalHandler http.Handler = rateLimitedHandler
+	if s.memoryManager != nil {
+		finalHandler = MemoryMiddleware(s.memoryManager)(rateLimitedHandler)
+	}
+
 	s.server = &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
-		Handler: rateLimitedHandler,
+		Handler: finalHandler,
 	}
 
 	// Start periodic WebSocket broadcasts for real-time updates
@@ -664,9 +687,20 @@ func (s *Server) SetProfiler(p FlameGraphProvider) {
 	s.profiler = p
 }
 
+// SetFDTracker sets the FD-to-socket tracker for debug/stats endpoints
+func (s *Server) SetFDTracker(t FDTrackerProvider) {
+	s.fdTracker = t
+}
+
 // SetStore sets the storage backend
 func (s *Server) SetStore(st *storage.Store) {
 	s.store = st
+}
+
+// SetMemoryManager sets the memory manager for load shedding
+func (s *Server) SetMemoryManager(mm *runtime.MemoryManager) {
+	s.memoryManager = mm
+	SetMemoryManager(mm)
 }
 
 // initStatusPages initializes the status page store and handlers
@@ -1161,6 +1195,11 @@ func (s *Server) Start() error {
 	return s.server.ListenAndServe()
 }
 
+// StartTLS begins serving HTTPS with the given certificate and key files.
+func (s *Server) StartTLS(certFile, keyFile string) error {
+	return s.server.ListenAndServeTLS(certFile, keyFile)
+}
+
 // Stop gracefully shuts down the server
 func (s *Server) Stop() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1557,6 +1596,24 @@ func (s *Server) handleFlameGraphClear(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "cleared"})
+}
+
+func (s *Server) handleFDTrackStats(w http.ResponseWriter, r *http.Request) {
+	if s.fdTracker == nil {
+		http.Error(w, "FD tracker not available", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.fdTracker.Stats())
+}
+
+func (s *Server) handleFDTrackSockets(w http.ResponseWriter, r *http.Request) {
+	if s.fdTracker == nil {
+		http.Error(w, "FD tracker not available", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.fdTracker.DumpSockets())
 }
 
 func (s *Server) handleHistorySystem(w http.ResponseWriter, r *http.Request) {
@@ -3908,7 +3965,10 @@ func (s *Server) handleIncidentResolve(w http.ResponseWriter, r *http.Request, i
 		User       string `json:"user"`
 		Resolution string `json:"resolution"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
 	if req.User == "" {
 		req.User = "api"
 	}

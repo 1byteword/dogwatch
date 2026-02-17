@@ -1,4 +1,5 @@
-import { For, Show, createMemo, createResource, createSignal } from "solid-js";
+import { ErrorBoundary, For, Show, createMemo, createResource, createSignal } from "solid-js";
+import { WidgetErrorFallback } from "../design/components/WidgetErrorFallback";
 import { Badge } from "../design/components/Badge";
 import { Button } from "../design/components/Button";
 import { Panel } from "../design/components/Panel";
@@ -33,6 +34,7 @@ export function ConfigureAuditPage() {
   }
 
   return (
+    <ErrorBoundary fallback={(err, reset) => <WidgetErrorFallback error={err} reset={reset} />}>
     <div class="page-grid">
       <Panel
         title="Audit Summary"
@@ -94,6 +96,7 @@ export function ConfigureAuditPage() {
         </Show>
       </Panel>
     </div>
+    </ErrorBoundary>
   );
 }
 
