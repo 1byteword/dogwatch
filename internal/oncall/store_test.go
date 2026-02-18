@@ -176,24 +176,26 @@ func TestUpdateSchedule(t *testing.T) {
 func TestDeleteSchedule(t *testing.T) {
 	s := tempStore(t)
 
-	// Create schedule with inline overrides (stored in the schedules table JSON column).
-	// Note: DeleteSchedule deletes the schedule row first, then cleans up the
-	// overrides table. With foreign_keys enabled, deleting a schedule that has
-	// rows in the overrides table would violate the FK constraint because the
-	// production code deletes in parent-first order. We test the basic delete
-	// path here (no separate-table overrides) which is the common case.
-	sched := &Schedule{
-		ID:       "sched-del",
-		Name:     "ToDelete",
-		Timezone: "UTC",
-		Overrides: []Override{
-			{ID: "inline-ov", UserID: "u1", UserName: "Alice"},
-		},
-	}
+	sched := &Schedule{ID: "sched-del", Name: "ToDelete", Timezone: "UTC"}
 	if err := s.CreateSchedule(sched); err != nil {
 		t.Fatalf("CreateSchedule: %v", err)
 	}
 
+	// Add an override in the separate overrides table (FK references schedules)
+	override := &Override{
+		ID:        "ov-del",
+		UserID:    "u1",
+		UserName:  "Alice",
+		StartTime: time.Now().Add(-time.Hour),
+		EndTime:   time.Now().Add(time.Hour),
+		Reason:    "test",
+		CreatedBy: "admin",
+	}
+	if err := s.CreateOverride("sched-del", override); err != nil {
+		t.Fatalf("CreateOverride: %v", err)
+	}
+
+	// DeleteSchedule should remove overrides first, then the schedule
 	if err := s.DeleteSchedule("sched-del"); err != nil {
 		t.Fatalf("DeleteSchedule: %v", err)
 	}
@@ -201,6 +203,19 @@ func TestDeleteSchedule(t *testing.T) {
 	_, err := s.GetSchedule("sched-del")
 	if err == nil {
 		t.Errorf("GetSchedule after delete should return error")
+	}
+
+	// Verify overrides are also gone by re-creating and checking
+	sched2 := &Schedule{ID: "sched-del", Name: "Recreated", Timezone: "UTC"}
+	if err := s.CreateSchedule(sched2); err != nil {
+		t.Fatalf("CreateSchedule re-create: %v", err)
+	}
+	got, err := s.GetSchedule("sched-del")
+	if err != nil {
+		t.Fatalf("GetSchedule re-created: %v", err)
+	}
+	if len(got.Overrides) != 0 {
+		t.Errorf("expected 0 overrides after delete+recreate, got %d", len(got.Overrides))
 	}
 }
 

@@ -283,17 +283,18 @@ func (s *Store) UpdateSchedule(sched *Schedule) error {
 	return err
 }
 
-// DeleteSchedule removes a schedule
+// DeleteSchedule removes a schedule and its associated overrides
 func (s *Store) DeleteSchedule(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_, err := s.db.Exec("DELETE FROM schedules WHERE id = ?", id)
+	// Delete child overrides first to avoid FK constraint violation
+	_, err := s.db.Exec("DELETE FROM overrides WHERE schedule_id = ?", id)
 	if err != nil {
 		return err
 	}
 
-	_, err = s.db.Exec("DELETE FROM overrides WHERE schedule_id = ?", id)
+	_, err = s.db.Exec("DELETE FROM schedules WHERE id = ?", id)
 	return err
 }
 
