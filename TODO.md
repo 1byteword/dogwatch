@@ -313,6 +313,97 @@ The things that make platform teams say "this person has actually run software i
 
 ---
 
+## Security Model & Supply Chain
+
+Don't treat security as a checklist. Position dogwatch as **more secure by design** than the alternatives: data never leaves your servers (unlike Datadog), the kernel enforces probe safety (unlike userspace agents), minimum capabilities instead of full root, auth-by-default with RBAC.
+
+### Root Privilege Minimization
+
+- [ ] Support running with minimum Linux capabilities instead of full root:
+  - `CAP_BPF`, `CAP_PERFMON`, `CAP_SYS_PTRACE`, `CAP_NET_ADMIN`, `CAP_DAC_READ_SEARCH`
+- [ ] Document exactly which capabilities are needed and why
+- [ ] `dogwatch capabilities` subcommand: prints minimum required caps for current config
+  - "You're using SSL probes → need CAP_SYS_PTRACE; disable them → drop it"
+- [ ] First thing a security team will push back on — have the answer ready
+
+### Supply Chain Security
+
+- [ ] Sign releases with cosign or GPG
+- [ ] Publish SBOMs (Software Bill of Materials) with each release
+- [ ] SLSA provenance attestations via GitHub Actions (native support, essentially free)
+- [ ] SHA256 checksums for every artifact (automatic with GoReleaser)
+- [ ] Install script should verify checksum before running anything
+
+### SECURITY.md & Vulnerability Disclosure
+
+- [ ] Create `SECURITY.md` in repo root (GitHub surfaces it in Security tab automatically)
+- [ ] Clear process for reporting vulnerabilities (email address is fine)
+- [ ] State response time target: "we aim to respond within 72 hours"
+- [ ] Enable GitHub private vulnerability reporting (costs nothing)
+
+### eBPF Probe Audit Transparency
+
+- [ ] Document explicitly: what data eBPF probes collect, what gets stored, what gets dropped, what never leaves kernel
+- [ ] Be specific: "we read the first 256 bytes of write() syscalls to parse HTTP headers; we do not capture request bodies beyond this buffer"
+- [ ] Security teams will review the eBPF C code — make it easy for them
+- [ ] The eBPF verifier is an advantage: kernel guarantees programs can't crash, access arbitrary memory, or loop infinitely — **safer than any userspace agent**
+
+### Data Sensitivity & Redaction
+
+- [ ] Automatic scrubbing of sensitive HTTP headers by default: `Authorization`, `Cookie`, `Set-Cookie`, `X-API-Key`
+- [ ] SQL query parameterization: replace literal values with `?`
+- [ ] Defaults must be secure — let people loosen them, not the other way around
+- [ ] Regulated industries (healthcare, finance) will reject the tool outright without this
+- [ ] Configurable redaction rules for custom patterns
+
+### Network Exposure
+
+- [ ] Bind to localhost by default, not `0.0.0.0` — require explicit opt-in for network access
+- [ ] TLS support everywhere: UI, OTLP ingestion, gossip traffic (flags already exist for UI)
+- [ ] Document gossip encryption: what's encrypted (payload? metadata?), what authentication exists
+- [ ] Can any node join the cluster if they know the port, or do they need the encryption key?
+
+### Auth-by-Default
+
+- [ ] API must be authenticated by default, not optionally
+- [ ] Unauthenticated dogwatch on `0.0.0.0` = information disclosure of entire infrastructure topology, service names, endpoints, DB queries, error traces
+- [ ] Ship with auth required; `--no-auth` flag for explicit local-dev opt-out
+- [ ] RBAC already exists — just make it the default, not optional
+
+### Audit Logging
+
+- [ ] Log security-relevant events: login, alert create/modify, incident ack, API key create/revoke, failed auth attempts
+- [ ] Store separately from operational logs with own retention policy
+- [ ] Audit store already exists (`internal/audit/`) — make sure it covers auth events
+- [ ] Security teams will ask "who changed this alert at 3am" and the answer must be yes
+
+### Container & Kubernetes Security Posture
+
+- [ ] Docker image: non-root user with specific capabilities mounted
+- [ ] Helm chart SecurityContext: drop all capabilities, add back only what's needed
+- [ ] Include Pod Security Standards label
+- [ ] Document exactly why each capability is needed and what degrades if removed
+- [ ] `privileged: true` with no nuance = rejected by security teams
+
+### Dependency Auditing
+
+- [ ] Run `govulncheck` in CI on every commit
+- [ ] Pin dependencies
+- [ ] Audit eBPF toolchain (libbpf version, clang version) — directly affects kernel code
+- [ ] Document the BPF bytecode build process so auditors can verify bytecode matches C source
+
+### Security Model Documentation
+
+- [ ] Dedicated "Security Model" page in docs
+- [ ] Walk through: trust boundaries, data flow, threat model
+- [ ] Frame the eBPF verifier advantage aggressively:
+  - Datadog's agent is a full Go binary — if it has a bug, it can corrupt memory or be exploited
+  - eBPF programs literally cannot do these things — the kernel rejects unsafe programs before they load
+  - dogwatch's kernel instrumentation is safer than traditional agents because the kernel enforces safety, not application code
+- [ ] The fact that this page exists puts you ahead of 90% of open source projects
+
+---
+
 ## V2 Frontend Rebuild (Datadog-Competitive)
 
 Tracks the V2 UI/Product rebuild decisions and execution plan.
