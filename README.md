@@ -1,448 +1,150 @@
 <p align="center">
-  <img src="dogwatch-landing-page/assets/dogwatch-logo.png" alt="dogwatch logo" width="420">
+  <img src="dogwatch-landing-page/assets/dogwatch-logo.png" alt="dogwatch" width="360">
 </p>
 
-# dogwatch
+<h3 align="center">eBPF-powered observability in a single binary</h3>
 
-**eBPF-powered observability platform for Linux.** A Datadog/Grafana/PagerDuty alternative in a single binary.
-
-[![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://go.dev)
-[![Linux](https://img.shields.io/badge/Linux-5.8+-FCC624?style=flat&logo=linux&logoColor=black)](https://kernel.org)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│  🐕 dogwatch - full-stack observability: metrics, traces, logs, incidents   │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
-
-## Features
-
-### Infrastructure Monitoring
-| Feature | Description |
-|---------|-------------|
-| **TCP Connection Tracking** | See every connection with process name, PID, destination |
-| **HTTP Tracing** | Auto-discover endpoints, request counts, error rates, latency |
-| **System Metrics** | CPU, memory, disk I/O, network throughput, load average |
-| **Container Metrics** | Docker container CPU, memory, network, block I/O via Unix socket |
-| **Process Profiling** | CPU flame graphs for performance analysis |
-
-### Alerting & Incidents
-| Feature | Description |
-|---------|-------------|
-| **Watch Alerts** | Threshold-based alerting on any metric (CPU > 80%, error rate > 5%) |
-| **Incident Management** | PagerDuty-like incident lifecycle (triggered → acked → resolved) |
-| **On-Call Schedules** | Weekly/daily rotations with override support |
-| **Escalation Policies** | Multi-level escalation with configurable delays |
-| **Slack & Webhooks** | Notify via Slack or custom webhooks |
-
-### Reliability
-| Feature | Description |
-|---------|-------------|
-| **SLOs** | Define Service Level Objectives with error budgets |
-| **Error Budget Tracking** | Real-time budget consumption and burn rate |
-| **Synthetic Checks** | HTTP endpoint monitoring with success rate tracking |
-| **Auto-Incident Creation** | SLO breaches and watch alerts auto-create incidents |
-
-### Observability
-| Feature | Description |
-|---------|-------------|
-| **Distributed Tracing** | OpenTelemetry (OTLP) trace ingestion and visualization |
-| **Log Management** | Full-text search with automatic pattern detection |
-| **Custom Metrics** | OTLP and StatsD protocol support |
-| **Deployment Markers** | Track deployments with before/after metric correlation |
-
-### Dashboard
-| Feature | Description |
-|---------|-------------|
-| **Real-time Web UI** | Draggable, resizable GridStack widgets |
-| **Persistent Layouts** | Save and restore dashboard configurations |
-| **Dark Theme** | Easy on the eyes, built for NOCs |
-
-### Federation
-| Feature | Description |
-|---------|-------------|
-| **Gossip-based Clustering** | P2P node discovery using HashiCorp memberlist |
-| **CRDT State Sync** | Conflict-free replicated data types for consistency |
-| **Edge-First Architecture** | Each node fully functional, share only aggregates |
-| **Cluster-wide Incidents** | Incidents broadcast and synchronized across nodes |
-| **Encrypted Gossip** | Optional AES-128/192/256 encryption for gossip traffic |
+<p align="center">
+  <a href="https://go.dev"><img src="https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go" alt="Go"></a>
+  <a href="https://kernel.org"><img src="https://img.shields.io/badge/Linux-5.8+-FCC624?style=flat&logo=linux&logoColor=black" alt="Linux"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT"></a>
+</p>
 
 ---
 
+Drop dogwatch on any Linux server. In 60 seconds you get distributed tracing, metrics, logs, alerting, and incidents — without touching a line of application code.
+
+No agents. No SDKs. No YAML files. One binary, root, done.
+
 ## Quick Start
 
-### Install
-
 ```bash
-# One-line install
 curl -fsSL https://raw.githubusercontent.com/1byteword/dogwatch/main/install.sh | sudo bash
-```
-
-### Run
-
-```bash
 sudo dogwatch
 # Open http://localhost:9999
 ```
 
----
+## What It Does
+
+dogwatch uses eBPF to hook into kernel functions and automatically discover your infrastructure:
+
+- **Traces every HTTP request** — inbound and outbound, with latency, status codes, and endpoints
+- **Parses database protocols** — MySQL, PostgreSQL, and Redis queries captured at the wire level
+- **Builds a service map** — auto-discovers which services talk to which, no config required
+- **Captures CPU profiles** — flame graphs with profile-to-trace linking
+- **Collects system metrics** — CPU, memory, disk, network, containers
+- **Manages incidents** — alerting, on-call schedules, escalation policies, SLO tracking
+- **Ingests OpenTelemetry** — OTLP gRPC (`:4317`) and HTTP (`:4318`) receivers built in
+
+Everything stores in SQLite. No Postgres, no Redis, no Kafka. Just the binary and a data directory.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              dogwatch                                        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-│  │   eBPF      │  │   OTLP      │  │  Docker     │  │  HTTP       │        │
-│  │   Probes    │  │  Receiver   │  │  Collector  │  │  Synthetics │        │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘        │
-│         │                │                │                │               │
-│         ▼                ▼                ▼                ▼               │
-│  ┌─────────────────────────────────────────────────────────────────┐       │
-│  │                      Aggregator & Storage                        │       │
-│  │   (SQLite: metrics, traces, logs, incidents, SLOs, watches)     │       │
-│  └─────────────────────────────────────────────────────────────────┘       │
-│         │                                                                   │
-│         ▼                                                                   │
-│  ┌─────────────────────────────────────────────────────────────────┐       │
-│  │                         Evaluation Engines                       │       │
-│  │   Watch Engine │ SLO Calculator │ Pager │ Synthetic Runner      │       │
-│  └─────────────────────────────────────────────────────────────────┘       │
-│         │                                                                   │
-│         ▼                                                                   │
-│  ┌─────────────────────────────────────────────────────────────────┐       │
-│  │                      Web UI & REST API                           │       │
-│  │                      http://localhost:9999                       │       │
-│  └─────────────────────────────────────────────────────────────────┘       │
-└─────────────────────────────────────────────────────────────────────────────┘
+dogwatch (single binary)
+├── eBPF probes          Kernel-level tracing (TCP, HTTP, SSL, DB protocols)
+├── OTLP receiver        OpenTelemetry gRPC + HTTP ingestion
+├── Aggregator           Metrics computation, percentiles, rates
+├── SQLite storage       Metrics, traces, logs, incidents, SLOs
+├── Evaluation engines   Alerts, SLOs, recording rules, escalations
+├── PromQL engine        Grafana-compatible query API
+└── Web UI               SolidJS dashboard on :9999
 ```
 
----
+## How the eBPF Tracing Works
 
-## API Reference
+| Probe | What it captures |
+|-------|-----------------|
+| `kprobe/tcp_connect` | Outbound TCP connections |
+| `kretprobe/inet_csk_accept` | Inbound TCP connections |
+| `tracepoint/syscalls/sys_enter_write` | HTTP requests, DB queries |
+| `tracepoint/syscalls/sys_exit_read` | HTTP responses, DB results |
+| `perf_event` (49Hz) | CPU stack samples for flame graphs |
+| `uprobe/SSL_write`, `SSL_read` | HTTPS/TLS traffic (OpenSSL) |
 
-### Incidents
+Zero instrumentation. Zero config. eBPF sees everything from the kernel.
 
-```bash
-# List incidents
-curl http://localhost:9999/api/incidents
+## CLI Usage
 
-# Create incident
-curl -X POST http://localhost:9999/api/incidents \
-  -H "Content-Type: application/json" \
-  -d '{"title": "Database down", "severity": "critical", "service": "postgres"}'
-
-# Acknowledge
-curl -X POST http://localhost:9999/api/incidents/{id}/ack \
-  -d '{"user": "alice"}'
-
-# Resolve
-curl -X POST http://localhost:9999/api/incidents/{id}/resolve \
-  -d '{"user": "alice", "resolution": "Restarted service"}'
-
-# Get stats (MTTA, MTTR)
-curl http://localhost:9999/api/incidents/stats
 ```
-
-### On-Call & Escalation
-
-```bash
-# Create on-call schedule
-curl -X POST http://localhost:9999/api/oncall \
-  -d '{"name": "Primary", "rotations": [{"type": "weekly", "users": ["alice", "bob"]}]}'
-
-# Who's on-call now?
-curl http://localhost:9999/api/oncall/current
-
-# Create escalation policy
-curl -X POST http://localhost:9999/api/escalation \
-  -d '{"name": "Default", "rules": [{"level": 0, "delay_minutes": 5, "notify_channels": ["slack"]}]}'
-```
-
-### SLOs
-
-```bash
-# Create SLO
-curl -X POST http://localhost:9999/api/slos \
-  -d '{"name": "API Availability", "target": 99.9, "window": "30d", "source": {"type": "synthetics", "id": "check-id"}}'
-
-# Get SLO status
-curl http://localhost:9999/api/slos/{id}/status
-
-# Get historical snapshots
-curl http://localhost:9999/api/slos/{id}/history
-```
-
-### Watches (Alerts)
-
-```bash
-# Create watch
-curl -X POST http://localhost:9999/api/watches \
-  -d '{"name": "High CPU", "metric": "cpu", "operator": ">", "threshold": 80, "duration": "5m"}'
-
-# Create notification channel
-curl -X POST http://localhost:9999/api/watches/channels \
-  -d '{"name": "Slack Ops", "type": "slack", "config": {"webhook_url": "https://hooks.slack.com/..."}}'
-```
-
-### Synthetic Checks
-
-```bash
-# Create HTTP check
-curl -X POST http://localhost:9999/api/synthetics/checks \
-  -d '{"name": "Homepage", "url": "https://example.com", "interval": "1m", "timeout": "10s"}'
-
-# Get check results
-curl http://localhost:9999/api/synthetics/checks/{id}/results
-```
-
-### Deployments
-
-```bash
-# Record deployment
-curl -X POST http://localhost:9999/api/deploys \
-  -d '{"service": "api", "version": "v1.2.3", "environment": "prod", "user": "deploy-bot"}'
-
-# Get deployment impact (before/after metrics)
-curl http://localhost:9999/api/deploys/{id}/impact?window=30m
-```
-
-### Logs
-
-```bash
-# Search logs (FTS5)
-curl "http://localhost:9999/api/logs?q=error+timeout&limit=100"
-
-# Get log patterns
-curl http://localhost:9999/api/logs/patterns
-```
-
-### Traces (OTLP)
-
-```bash
-# Send traces via OTLP HTTP
-curl -X POST http://localhost:9999/v1/traces \
-  -H "Content-Type: application/x-protobuf" \
-  --data-binary @trace.pb
-
-# Query traces
-curl http://localhost:9999/api/traces?service=api&limit=50
-```
-
-### Custom Metrics
-
-```bash
-# Push metrics (simple JSON)
-curl -X POST http://localhost:9999/api/metrics/push \
-  -d '[{"name": "orders.count", "value": 42, "tags": {"region": "us-east"}}]'
-
-# Query metrics
-curl "http://localhost:9999/api/metrics/query?name=orders.count&since=1h"
-
-# OTLP metrics endpoint
-POST http://localhost:9999/v1/metrics
-```
-
-### Containers
-
-```bash
-# List containers with metrics
-curl http://localhost:9999/api/containers
-
-# Get container summary
-curl http://localhost:9999/api/containers/summary
-```
-
----
-
-## Configuration
-
-### CLI Flags
-
-```bash
 sudo dogwatch [flags]
 
-Flags:
-  -port int       Web UI port (default 9999)
-  -data string    Data directory for SQLite databases (default "./data")
-  -i int          Stats refresh interval in seconds (default 5)
-  -v              Verbose mode - show individual events
-  -no-web         Disable web UI, CLI only
+  -port int          Web UI port (default 9999)
+  -data string       Data directory (default /var/lib/dogwatch)
+  -v                 Verbose mode — show individual events
+  -no-web            Disable web UI, terminal only
+  -tls-cert string   TLS certificate file (enables HTTPS)
+  -tls-key string    TLS private key file
+  -otlp              Enable OTLP receivers (default true)
+  -otlp-grpc-port    OTLP gRPC port (default 4317)
+  -otlp-http-port    OTLP HTTP port (default 4318)
 ```
 
-### Environment Variables
+### Subcommands
 
 ```bash
-SLACK_WEBHOOK_URL=https://hooks.slack.com/...   # Default Slack webhook for alerts
+# Run built-in analysis scripts
+dogwatch run mysql/slow_queries
+dogwatch run redis/hotkeys
+
+# Migrate dashboards and alerts from other platforms
+dogwatch migrate --from datadog --api-key $DD_API_KEY
+dogwatch migrate --from grafana --url http://grafana:3000
 ```
 
----
+### Federation
+
+```bash
+# Start a cluster (gossip-based, no coordinator)
+sudo dogwatch --cluster --cluster-port 7946
+sudo dogwatch --cluster --cluster-seeds 10.0.1.10:7946
+
+# Each node is fully functional standalone.
+# Federation adds cluster-wide incident sync and aggregated metrics.
+```
 
 ## Requirements
 
-| Requirement | Version |
-|-------------|---------|
-| Linux Kernel | 5.8+ (BPF ring buffers) |
-| Architecture | x86_64 (ARM64 coming soon) |
-| Privileges | Root (for eBPF) |
-| Docker | Optional (for container metrics) |
-
-Check your kernel:
-```bash
-uname -r  # Should be >= 5.8
-```
-
----
+- **Linux** kernel 5.8+ (for BPF ring buffers)
+- **x86_64** or **ARM64**
+- **Root** privileges (required for eBPF)
+- Docker optional (for container metrics)
 
 ## Building from Source
 
 ```bash
 git clone https://github.com/1byteword/dogwatch.git
 cd dogwatch
-go build ./cmd/dogwatch
+make all        # builds UI + Go binary
 sudo ./dogwatch
 ```
 
-Regenerate BPF bindings (requires clang, libbpf):
+To rebuild just the Go binary:
+
+```bash
+CGO_ENABLED=0 go build -o dogwatch ./cmd/dogwatch
+```
+
+To regenerate eBPF bindings (requires clang + libbpf):
+
 ```bash
 go generate ./internal/probe/...
-go build ./cmd/dogwatch
 ```
 
----
+## vs. Datadog / Grafana / New Relic
 
-## How It Works
-
-### eBPF Probes
-
-dogwatch uses eBPF to hook into kernel functions with minimal overhead:
-
-| Probe | Purpose |
-|-------|---------|
-| `kprobe/tcp_connect` | Outbound TCP connections |
-| `kretprobe/inet_csk_accept` | Inbound connections |
-| `tracepoint/syscalls/sys_enter_write` | HTTP request data |
-| `tracepoint/syscalls/sys_exit_read` | HTTP response data |
-
-### Data Flow
-
-1. **eBPF probes** capture events in-kernel
-2. **Ring buffers** efficiently transfer to userspace
-3. **Aggregator** computes metrics (counts, latencies, percentiles)
-4. **SQLite** persists historical data (24h retention)
-5. **Evaluation engines** check watches, SLOs, escalations
-6. **Web UI** displays real-time dashboards
-
----
-
-## Comparison
-
-| Feature | dogwatch | Datadog | Grafana + Prometheus |
-|---------|----------|---------|----------------------|
-| Single binary | Yes | No | No |
-| Zero config | Yes | No | No |
-| eBPF-native | Yes | Agent | No |
-| Incidents/Paging | Yes | Yes | Requires OnCall |
-| SLOs | Yes | Yes | Plugin |
-| P2P Federation | Yes | No (central) | No (central) |
-| Cost | Free | $$$$ | Free* |
-
----
-
-## Multi-Node Federation
-
-dogwatch supports gossip-based P2P federation using HashiCorp memberlist. Each node is fully functional standalone - federation adds cluster-wide visibility.
-
-### Starting a Cluster
-
-```bash
-# First node (seed node)
-sudo dogwatch --cluster --cluster-port 7946
-
-# Additional nodes join the cluster
-sudo dogwatch --cluster --cluster-port 7946 --cluster-seeds 192.168.1.10:7946
-
-# With custom node name and advertise address
-sudo dogwatch --cluster \
-  --cluster-name node-west-1 \
-  --cluster-port 7946 \
-  --cluster-advertise 10.0.1.50:7946 \
-  --cluster-seeds 10.0.1.10:7946,10.0.1.20:7946
-
-# With encryption (16/24/32 bytes for AES-128/192/256)
-sudo dogwatch --cluster \
-  --cluster-key "supersecretkey16"
-```
-
-### Federation CLI Flags
-
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--cluster` | Enable multi-node federation | false |
-| `--cluster-name` | Node name in cluster | hostname |
-| `--cluster-bind` | Bind address for gossip | 0.0.0.0 |
-| `--cluster-port` | Port for gossip protocol | 7946 |
-| `--cluster-seeds` | Comma-separated seed node addresses | |
-| `--cluster-advertise` | Address to advertise to other nodes | |
-| `--cluster-key` | Encryption key for gossip | |
-
-### Federation API
-
-```bash
-# Get cluster status
-curl http://localhost:9999/api/cluster
-
-# List all cluster nodes
-curl http://localhost:9999/api/cluster/nodes
-
-# Join additional nodes dynamically
-curl -X POST http://localhost:9999/api/cluster/join \
-  -d '{"addresses": ["192.168.1.20:7946"]}'
-
-# Get cluster-wide incidents
-curl http://localhost:9999/api/cluster/incidents
-
-# Get aggregated cluster metrics
-curl http://localhost:9999/api/cluster/metrics
-```
-
-### How Federation Works
-
-1. **Gossip Protocol**: Nodes discover and communicate via UDP gossip (memberlist)
-2. **CRDT State**: Shared state uses conflict-free replicated data types (LWW semantics)
-3. **Edge-First**: Each node is fully functional - federation shares only aggregates
-4. **Incident Sync**: Incidents are broadcast and synchronized across the cluster
-5. **Node Metrics**: CPU, memory, and error rates are shared between nodes
-6. **Graceful Degradation**: If federation fails, nodes continue working independently
-
----
-
-## Roadmap
-
-- [ ] ARM64 support
-- [ ] HTTPS/TLS interception (via eBPF SSL probes)
-- [ ] Kubernetes integration
-- [ ] PagerDuty/Opsgenie integration
-- [ ] Prometheus remote write
-- [x] Multi-node federation
-
----
+| | dogwatch | Datadog | Grafana stack |
+|---|---|---|---|
+| Setup | 1 binary, 60 seconds | Agent + config + SaaS | Prometheus + Grafana + Loki + Tempo + Alertmanager |
+| Instrumentation | None (eBPF) | SDK per language | SDK per language |
+| Data stays on your server | Yes | No | Yes |
+| Cost | Free | Per host + per GB | Free (self-hosted) |
+| Dependencies | None | SaaS | 5+ services |
 
 ## License
 
 MIT
 
----
-
 ## Contributing
 
-PRs welcome! See [issues](https://github.com/1byteword/dogwatch/issues) for ideas.
-
-```
-        ╱|、
-       (˚ˎ 。7
-        |、˜〵
-       じしˍ,)ノ   woof! happy monitoring!
-```
+PRs welcome. See the [issues](https://github.com/1byteword/dogwatch/issues) page.

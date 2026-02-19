@@ -96,7 +96,6 @@ type Store struct {
 	db *sql.DB
 }
 
-// NewStore creates a new SLO store
 func NewStore(dbPath string) (*Store, error) {
 	db, err := storage.OpenDB(dbPath)
 	if err != nil {
@@ -141,7 +140,6 @@ func NewStore(dbPath string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
-// Close closes the database
 func (s *Store) Close() error {
 	return s.db.Close()
 }

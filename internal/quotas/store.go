@@ -20,7 +20,6 @@ type Store struct {
 	cacheMu    sync.RWMutex
 }
 
-// NewStore creates a new quota store
 func NewStore(dbPath string) (*Store, error) {
 	db, err := storage.OpenDB(dbPath)
 	if err != nil {
@@ -190,7 +189,6 @@ func (s *Store) refreshCache() error {
 	return nil
 }
 
-// Close closes the store
 func (s *Store) Close() error {
 	return s.db.Close()
 }

@@ -164,7 +164,6 @@ type Store struct {
 	mu sync.RWMutex
 }
 
-// NewStore creates a new alerting store
 func NewStore(dbPath string) (*Store, error) {
 	db, err := storage.OpenDB(dbPath)
 	if err != nil {
@@ -582,7 +581,6 @@ func (s *Store) ListActiveSilences() ([]Silence, error) {
 	return silences, nil
 }
 
-// Close closes the database
 func (s *Store) Close() error {
 	return s.db.Close()
 }

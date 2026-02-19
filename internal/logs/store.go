@@ -84,7 +84,6 @@ type Store struct {
 	patternDetector *PatternDetector
 }
 
-// NewStore creates a new log store
 func NewStore(dbPath string) (*Store, error) {
 	db, err := storage.OpenDB(dbPath)
 	if err != nil {
@@ -151,7 +150,6 @@ func NewStore(dbPath string) (*Store, error) {
 	}, nil
 }
 
-// Close closes the database
 func (s *Store) Close() error {
 	return s.db.Close()
 }

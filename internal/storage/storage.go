@@ -334,7 +334,6 @@ func (s *Store) GetSystemMetricsByTimeRange(start, end time.Time) ([]SystemMetri
 	return points, nil
 }
 
-// Close closes the database connection
 func (s *Store) Close() error {
 	return s.db.Close()
 }

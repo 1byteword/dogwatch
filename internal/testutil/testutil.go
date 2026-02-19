@@ -51,7 +51,6 @@ func NewTestDB(t *testing.T) *TestDB {
 	return tdb
 }
 
-// Close closes the database connection.
 func (tdb *TestDB) Close() error {
 	if tdb.closed {
 		return nil

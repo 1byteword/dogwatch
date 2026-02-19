@@ -50,12 +50,11 @@ type Hub struct {
 	stopBroadcasts chan struct{}
 }
 
-// NewHub creates a new WebSocket hub
 func NewHub() *Hub {
 	return &Hub{
 		clients:    make(map[*Client]bool),
 		topics:     make(map[string]map[*Client]bool),
-		broadcast:  make(chan *Message, 256),
+		broadcast:  make(chan *Message, wsBroadcastBuffer),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 	}
@@ -184,6 +183,15 @@ type wsConn struct {
 	closed bool
 	mu     sync.Mutex
 }
+
+// WebSocket tuning
+const (
+	wsBroadcastBuffer = 256           // outbound broadcast queue depth
+	wsClientBuffer    = 256           // per-client send queue depth
+	wsPingInterval    = 30 * time.Second
+	wsStatsInterval   = 2 * time.Second  // system stats push frequency
+	wsMapInterval     = 10 * time.Second // service map push frequency
+)
 
 // WebSocket frame opcodes
 const (
@@ -325,7 +333,7 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	client := &Client{
 		hub:       h,
 		conn:      wsConn,
-		send:      make(chan []byte, 256),
+		send:      make(chan []byte, wsClientBuffer),
 		topics:    make(map[string]bool),
 		createdAt: time.Now(),
 	}
@@ -368,7 +376,7 @@ func (c *Client) readPump() {
 }
 
 func (c *Client) writePump() {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(wsPingInterval)
 	defer func() {
 		ticker.Stop()
 		c.conn.close()
@@ -486,9 +494,8 @@ func (h *Hub) BroadcastAnomaly(anomaly interface{}) {
 func (h *Hub) StartPeriodicBroadcasts(getStats func() interface{}, getServiceMap func() interface{}) {
 	h.stopBroadcasts = make(chan struct{})
 
-	// System stats every 2 seconds
 	go func() {
-		ticker := time.NewTicker(2 * time.Second)
+		ticker := time.NewTicker(wsStatsInterval)
 		defer ticker.Stop()
 		for {
 			select {
@@ -502,9 +509,8 @@ func (h *Hub) StartPeriodicBroadcasts(getStats func() interface{}, getServiceMap
 		}
 	}()
 
-	// Service map every 10 seconds
 	go func() {
-		ticker := time.NewTicker(10 * time.Second)
+		ticker := time.NewTicker(wsMapInterval)
 		defer ticker.Stop()
 		for {
 			select {

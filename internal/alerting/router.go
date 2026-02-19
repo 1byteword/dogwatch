@@ -61,7 +61,6 @@ type RouterConfig struct {
 	Routes          []Route       `json:"routes"`
 }
 
-// NewRouter creates a new alert router
 func NewRouter(store *Store) *Router {
 	return &Router{
 		store:      store,
@@ -80,7 +79,6 @@ func (r *Router) RegisterReceiver(recv Receiver) {
 	r.receivers[recv.Name()] = recv
 }
 
-// SetRoutes sets the routing configuration
 func (r *Router) SetRoutes(routes []Route) {
 	r.routeMu.Lock()
 	defer r.routeMu.Unlock()
@@ -94,7 +92,6 @@ func (r *Router) Start() {
 	log.Println("[alerting] Router started")
 }
 
-// Stop stops the router
 func (r *Router) Stop() {
 	close(r.stopCh)
 	r.wg.Wait()

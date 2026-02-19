@@ -129,7 +129,6 @@ type Store struct {
 	mu sync.RWMutex
 }
 
-// NewStore creates a new on-call store
 func NewStore(dbPath string) (*Store, error) {
 	db, err := storage.OpenDB(dbPath)
 	if err != nil {
@@ -618,7 +617,6 @@ func (s *Store) DeleteEscalationState(incidentID string) error {
 	return err
 }
 
-// Close closes the database
 func (s *Store) Close() error {
 	return s.db.Close()
 }

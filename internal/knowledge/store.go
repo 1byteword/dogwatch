@@ -17,7 +17,6 @@ type Store struct {
 	mu sync.RWMutex
 }
 
-// NewStore creates a new knowledge store
 func NewStore(dbPath string) (*Store, error) {
 	db, err := storage.OpenDB(dbPath)
 	if err != nil {
@@ -342,7 +341,6 @@ func (s *Store) GetAllLookups() ([]*KnowledgeObject, error) {
 	return s.List(ListFilters{Type: TypeLookup})
 }
 
-// Close closes the database connection
 func (s *Store) Close() error {
 	return s.db.Close()
 }

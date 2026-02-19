@@ -45,7 +45,6 @@ type ManagerStats struct {
 	AverageEvalDuration time.Duration `json:"avg_eval_duration"`
 }
 
-// DefaultRules returns the built-in recording rules
 func DefaultRules() []RecordingRule {
 	return []RecordingRule{
 		{

@@ -150,8 +150,6 @@ func main() {
 		defer sslProbeV2.Close()
 		fmt.Printf("  HTTPS/SSL probe V2 running (library: %s)\n", sslProbeV2.SSLLibPath())
 	}
-	var sslProbe *probe.SSLProbe = nil // Keep old probe nil for now
-
 	// Start CPU profiler for flame graph
 	fmt.Println("Starting CPU profiler...")
 	profileProbe, err := probe.NewProfileProbe()
@@ -1379,8 +1377,6 @@ func main() {
 		}()
 	}
 
-	// SSL probe is disabled for MVP - see comments above
-	_ = sslProbe         // silence unused variable warning
 	_ = statsdReceiver   // StatsD receiver runs in background
 	_ = otlpServer       // OTLP server runs in background
 	_ = dbwatchStore     // dbwatch store used in event loop

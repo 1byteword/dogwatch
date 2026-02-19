@@ -16,7 +16,6 @@ type Store struct {
 	mu    sync.RWMutex
 }
 
-// NewStore creates a new pattern store
 func NewStore(dbPath string, config MinerConfig) (*Store, error) {
 	db, err := storage.OpenDB(dbPath)
 	if err != nil {
@@ -124,7 +123,6 @@ func (s *Store) loadPatterns() error {
 	return nil
 }
 
-// Close closes the store
 func (s *Store) Close() error {
 	// Save patterns before closing
 	s.savePatterns()

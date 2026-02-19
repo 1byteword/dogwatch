@@ -45,7 +45,6 @@ type OrgSSOConfig struct {
 	UpdatedAt       time.Time       `json:"updated_at"`
 }
 
-// NewStore creates a new SSO store
 func NewStore(dbPath string) (*Store, error) {
 	db, err := storage.OpenDB(dbPath)
 	if err != nil {
@@ -115,12 +114,10 @@ func (s *Store) init() error {
 	return err
 }
 
-// Close closes the database
 func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-// CreateLinkedAccount creates a new linked account
 func (s *Store) CreateLinkedAccount(account *LinkedAccount) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

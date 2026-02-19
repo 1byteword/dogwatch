@@ -218,7 +218,6 @@ func (s *Service) UpdateChannel(channel *Channel) error {
 	return s.store.UpdateChannel(channel)
 }
 
-// Close closes the notification service
 func (s *Service) Close() error {
 	return s.store.Close()
 }

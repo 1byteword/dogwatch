@@ -90,7 +90,6 @@ type ChangeSet struct {
 	After  map[string]interface{} `json:"after,omitempty"`
 }
 
-// NewStore creates a new audit store
 func NewStore(dbPath string) (*Store, error) {
 	db, err := storage.OpenDB(dbPath)
 	if err != nil {
@@ -266,7 +265,6 @@ func (s *Store) DB() *sql.DB {
 	return s.db
 }
 
-// Close closes the database
 func (s *Store) Close() error {
 	return s.db.Close()
 }

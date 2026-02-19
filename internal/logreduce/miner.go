@@ -40,7 +40,6 @@ func DefaultMinerConfig() MinerConfig {
 	}
 }
 
-// NewMiner creates a new pattern miner
 func NewMiner(config MinerConfig) *Miner {
 	if config.SimilarityThreshold == 0 {
 		config.SimilarityThreshold = 0.5

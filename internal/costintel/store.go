@@ -55,7 +55,6 @@ type CostSummary struct {
 	ProjectedAnnual map[string]float64 `json:"projected_annual"`
 }
 
-// NewStore creates a new cost intelligence store
 func NewStore(dbPath string) (*Store, error) {
 	db, err := storage.OpenDB(dbPath)
 	if err != nil {
@@ -346,7 +345,6 @@ func (s *Store) Cleanup(maxAge time.Duration) (int64, error) {
 	return result.RowsAffected()
 }
 
-// Close closes the database connection
 func (s *Store) Close() error {
 	return s.db.Close()
 }

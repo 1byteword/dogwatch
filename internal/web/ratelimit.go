@@ -47,7 +47,6 @@ func DefaultRateLimitConfig() *RateLimitConfig {
 	}
 }
 
-// NewRateLimiter creates a new rate limiter
 func NewRateLimiter(config *RateLimitConfig) *RateLimiter {
 	if config == nil {
 		config = DefaultRateLimitConfig()

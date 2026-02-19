@@ -33,7 +33,6 @@ type ResultValue struct {
 	Labels map[string]string
 }
 
-// NewEvaluator creates a new recording rule evaluator
 func NewEvaluator(executor *query.Executor, metricsStore *custommetrics.Store) *Evaluator {
 	return &Evaluator{
 		executor:     executor,

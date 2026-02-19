@@ -540,7 +540,6 @@ type HistoricalStats struct {
 	AdaptiveStats  SamplerStats `json:"adaptive_stats,omitempty"`
 }
 
-// Close closes the database connection
 func (m *Manager) Close() error {
 	m.Stop()
 	return m.db.Close()

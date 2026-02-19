@@ -169,7 +169,6 @@ func mapSeverityToSyslog(severity string) int {
 	}
 }
 
-// Close closes the exporter
 func (e *SyslogExporter) Close() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -300,7 +299,6 @@ func (e *FileExporter) rotate() error {
 	return e.openFile()
 }
 
-// Close closes the exporter
 func (e *FileExporter) Close() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -431,7 +429,6 @@ func (e *HTTPExporter) Export(events []FormattedEvent) error {
 	return nil
 }
 
-// Close closes the exporter
 func (e *HTTPExporter) Close() error {
 	e.closed = true
 	return nil

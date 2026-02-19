@@ -15,7 +15,6 @@ type Store struct {
 	db *sql.DB
 }
 
-// NewStore creates a new compliance store
 func NewStore(dbPath string) (*Store, error) {
 	db, err := storage.OpenDB(dbPath)
 	if err != nil {
@@ -30,7 +29,6 @@ func NewStore(dbPath string) (*Store, error) {
 	return store, nil
 }
 
-// Close closes the store
 func (s *Store) Close() error {
 	return s.db.Close()
 }

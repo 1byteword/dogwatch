@@ -76,7 +76,6 @@ type recentDBStats struct {
 	lastUpdate time.Time
 }
 
-// NewStore creates a new database watch store
 func NewStore(dbPath string) (*Store, error) {
 	db, err := storage.OpenDB(dbPath)
 	if err != nil {
@@ -534,7 +533,6 @@ func (s *Store) cleanup() {
 	s.db.Exec(`DELETE FROM db_query_stats WHERE last_seen < ?`, statsCutoff)
 }
 
-// Close closes the database
 func (s *Store) Close() error {
 	return s.db.Close()
 }

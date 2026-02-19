@@ -126,7 +126,6 @@ type TimelineEntry struct {
 	Actor       string    `json:"actor,omitempty"`
 }
 
-// NewStore creates a new security store
 func NewStore(dbPath string) (*Store, error) {
 	db, err := storage.OpenDB(dbPath)
 	if err != nil {
@@ -147,7 +146,6 @@ func NewStore(dbPath string) (*Store, error) {
 	return store, nil
 }
 
-// Close closes the database connection
 func (s *Store) Close() error {
 	return s.db.Close()
 }

@@ -45,6 +45,14 @@ import (
 	"github.com/google/uuid"
 )
 
+// HTTP server timeouts
+const (
+	httpReadTimeout  = 30 * time.Second
+	httpWriteTimeout = 60 * time.Second
+	httpIdleTimeout  = 120 * time.Second
+	shutdownTimeout  = 5 * time.Second
+)
+
 //go:embed all:v2dist
 var v2Files embed.FS
 
@@ -488,9 +496,9 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 	s.server = &http.Server{
 		Addr:         fmt.Sprintf(":%d", port),
 		Handler:      finalHandler,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		ReadTimeout:  httpReadTimeout,
+		WriteTimeout: httpWriteTimeout,
+		IdleTimeout:  httpIdleTimeout,
 	}
 
 	// Start periodic WebSocket broadcasts for real-time updates
@@ -1219,7 +1227,7 @@ func (s *Server) Stop() error {
 	}
 
 	// Graceful HTTP shutdown with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	return s.server.Shutdown(ctx)
 }

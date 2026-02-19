@@ -38,7 +38,6 @@ type Store struct {
 	mu sync.RWMutex
 }
 
-// NewStore creates a new profile store.
 func NewStore(dbPath string) (*Store, error) {
 	db, err := storage.OpenDB(dbPath)
 	if err != nil {
@@ -507,7 +506,6 @@ func (s *Store) cleanup() {
 	s.db.Exec(`DELETE FROM profile_samples WHERE timestamp < ?`, cutoff)
 }
 
-// Close closes the store.
 func (s *Store) Close() error {
 	return s.db.Close()
 }

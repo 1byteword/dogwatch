@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+const csrfTokenBytes = 32 // 256-bit CSRF secret/token entropy
+
 // SecurityConfig holds security middleware configuration
 type SecurityConfig struct {
 	// Content Security Policy
@@ -40,7 +42,7 @@ type SecurityConfig struct {
 
 // DefaultSecurityConfig returns sensible security defaults
 func DefaultSecurityConfig() *SecurityConfig {
-	secret := make([]byte, 32)
+	secret := make([]byte, csrfTokenBytes)
 	rand.Read(secret)
 
 	return &SecurityConfig{
@@ -87,7 +89,6 @@ type CSRFTokenStore struct {
 	ttl    time.Duration
 }
 
-// NewCSRFTokenStore creates a new token store
 func NewCSRFTokenStore(ttl time.Duration) *CSRFTokenStore {
 	store := &CSRFTokenStore{
 		tokens: make(map[string]time.Time),
@@ -99,7 +100,7 @@ func NewCSRFTokenStore(ttl time.Duration) *CSRFTokenStore {
 
 // Generate creates a new CSRF token
 func (s *CSRFTokenStore) Generate() string {
-	b := make([]byte, 32)
+	b := make([]byte, csrfTokenBytes)
 	rand.Read(b)
 	token := base64.URLEncoding.EncodeToString(b)
 

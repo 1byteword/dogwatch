@@ -271,7 +271,6 @@ type Stats struct {
 	LowConfidence      int                  `json:"low_confidence"`
 }
 
-// NewStore creates a new PII store
 func NewStore(dbPath string) (*Store, error) {
 	db, err := storage.OpenDB(dbPath)
 	if err != nil {
@@ -526,7 +525,6 @@ func (s *Store) Cleanup(maxAge time.Duration) (int64, error) {
 	return result.RowsAffected()
 }
 
-// Close closes the database
 func (s *Store) Close() error {
 	return s.db.Close()
 }

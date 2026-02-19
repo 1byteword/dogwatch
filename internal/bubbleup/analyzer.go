@@ -23,7 +23,6 @@ type Analyzer struct {
 	maxResults int
 }
 
-// NewAnalyzer creates a new BubbleUp analyzer
 func NewAnalyzer(traceStore *trace.Store) *Analyzer {
 	return &Analyzer{
 		traceStore: traceStore,
@@ -168,7 +167,6 @@ func (a *Analyzer) GetResult(id string) (*AnalysisResult, bool) {
 	return r, ok
 }
 
-// ListResults returns recent analysis results
 func (a *Analyzer) ListResults(limit int) []*AnalysisResult {
 	a.resultsMu.RLock()
 	defer a.resultsMu.RUnlock()

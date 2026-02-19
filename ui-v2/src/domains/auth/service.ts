@@ -27,6 +27,12 @@ export async function getMe(): Promise<MeResponse> {
   const res = await fetch(`${API_BASE}/api/auth/me`, {
     credentials: "same-origin",
   });
-  if (!res.ok) throw new Error(`Not authenticated (${res.status})`);
+  if (!res.ok) {
+    // In dev mode without backend, return a mock user so the UI is accessible
+    if (import.meta.env.DEV) {
+      return { user: { id: "dev", email: "dev@localhost", name: "Dev User", role: "owner" } };
+    }
+    throw new Error(`Not authenticated (${res.status})`);
+  }
   return res.json();
 }

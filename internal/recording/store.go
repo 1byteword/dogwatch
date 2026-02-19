@@ -16,7 +16,6 @@ type Store struct {
 	mu sync.RWMutex
 }
 
-// NewStore creates a new recording rules store
 func NewStore(dbPath string) (*Store, error) {
 	db, err := storage.OpenDB(dbPath)
 	if err != nil {
@@ -70,17 +69,14 @@ func (s *Store) init() error {
 	return err
 }
 
-// Close closes the database
 func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-// DB returns the underlying database for query execution
 func (s *Store) DB() *sql.DB {
 	return s.db
 }
 
-// CreateRule creates a new recording rule
 func (s *Store) CreateRule(rule *RecordingRule) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -201,7 +197,6 @@ func (s *Store) UpdateRule(rule *RecordingRule) error {
 	return err
 }
 
-// DeleteRule deletes a rule
 func (s *Store) DeleteRule(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -213,7 +208,6 @@ func (s *Store) DeleteRule(id string) error {
 	return err
 }
 
-// ListRules returns all recording rules
 func (s *Store) ListRules() ([]RecordingRule, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -282,7 +276,6 @@ func (s *Store) ListRules() ([]RecordingRule, error) {
 	return rules, nil
 }
 
-// ListEnabledRules returns only enabled rules
 func (s *Store) ListEnabledRules() ([]RecordingRule, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -394,7 +387,6 @@ func (s *Store) RecordEvaluation(history *EvaluationHistory) error {
 	return err
 }
 
-// GetEvaluationHistory returns evaluation history for a rule
 func (s *Store) GetEvaluationHistory(ruleID string, limit int) ([]EvaluationHistory, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -435,7 +427,6 @@ func (s *Store) GetEvaluationHistory(ruleID string, limit int) ([]EvaluationHist
 	return history, nil
 }
 
-// CleanupHistory removes old evaluation history
 func (s *Store) CleanupHistory(maxAge time.Duration) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

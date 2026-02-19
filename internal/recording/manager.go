@@ -54,7 +54,6 @@ func DefaultConfig() ManagerConfig {
 	}
 }
 
-// NewManager creates a new recording rule manager
 func NewManager(store *Store, evaluator *Evaluator, config ManagerConfig) *Manager {
 	m := &Manager{
 		store:          store,
@@ -119,7 +118,6 @@ func (m *Manager) Stop() {
 	log.Println("[recording] Manager stopped")
 }
 
-// runLoop is the main evaluation loop
 func (m *Manager) runLoop() {
 	defer m.wg.Done()
 
@@ -285,7 +283,6 @@ func (m *Manager) EvaluateNow(ruleID string) (*EvaluationResult, error) {
 	return result, nil
 }
 
-// GetStats returns manager statistics
 func (m *Manager) GetStats() ManagerStats {
 	rules, _ := m.store.ListRules()
 	enabledRules, _ := m.store.ListEnabledRules()
@@ -331,7 +328,6 @@ func (m *Manager) runCleanup() {
 	}
 }
 
-// IsRunning returns whether the manager is running
 func (m *Manager) IsRunning() bool {
 	m.runningMu.Lock()
 	defer m.runningMu.Unlock()

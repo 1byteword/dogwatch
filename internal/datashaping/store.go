@@ -16,7 +16,6 @@ type Store struct {
 	mu     sync.RWMutex
 }
 
-// NewStore creates a new data shaping store
 func NewStore(dbPath string) (*Store, error) {
 	db, err := storage.OpenDB(dbPath)
 	if err != nil {
@@ -269,7 +268,6 @@ func (s *Store) ResetStats() {
 	s.engine.ResetStats()
 }
 
-// Close closes the store
 func (s *Store) Close() error {
 	return s.db.Close()
 }

@@ -25,6 +25,11 @@ var (
 	ErrInvalidInvite      = errors.New("invalid or expired invitation")
 )
 
+const (
+	defaultSessionExpiry = 7 * 24 * time.Hour // sessions last 7 days
+	defaultBcryptCost    = 12                 // bcrypt work factor (OWASP minimum)
+)
+
 // Auth handles authentication operations
 type Auth struct {
 	store         *Store
@@ -32,12 +37,11 @@ type Auth struct {
 	bcryptCost    int
 }
 
-// NewAuth creates a new Auth instance
 func NewAuth(store *Store) *Auth {
 	return &Auth{
 		store:         store,
-		sessionExpiry: 24 * time.Hour * 7, // 7 days
-		bcryptCost:    12,
+		sessionExpiry: defaultSessionExpiry,
+		bcryptCost:    defaultBcryptCost,
 	}
 }
 
