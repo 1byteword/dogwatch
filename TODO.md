@@ -242,6 +242,77 @@ The silent killers of adoption. None of these are features, but each one changes
 
 ---
 
+## Operational Trust & Developer Experience
+
+The things that make platform teams say "this person has actually run software in production."
+
+### API Versioning
+
+- [ ] Version API paths now: `/api/v1/incidents` instead of `/api/incidents`
+- [ ] Trivial change today, painful migration later if you skip it
+- [ ] At v0.x you don't need full stability guarantees, but the path prefix buys room to evolve
+- [ ] PromQL endpoint is especially important — people point Grafana at it and forget about it
+- [ ] Once anyone integrates, breaking the API is painful for them
+
+### Dogfooding
+
+- [ ] Run dogwatch monitoring dogwatch's own infrastructure (landing page, CI, any server)
+- [ ] Reference it in docs: "here's how we use dogwatch to monitor our own build pipeline"
+- [ ] Nothing builds trust faster than the maintainer eating their own cooking
+- [ ] You'll find the rough edges before your users do
+
+### Migration Story (end-to-end)
+
+- [ ] `dogwatch migrate --from datadog` is a great hook — follow-through matters
+- [ ] Migration output must be verbose: "imported 12/15 monitors, skipped 3 (unsupported: anomaly detection, composite monitor, APM trace query)"
+- [ ] If it silently drops half their alerts, they'll never trust the tool again
+- [ ] 80% clean import + clear accounting of the 20% = trust. Silent data loss = uninstall.
+
+### Failure Modes Documentation
+
+- [ ] Create a "Failure Modes" doc page — platform teams think in failure modes
+- [ ] Disk full — what happens? Graceful degradation or crash?
+- [ ] SIGKILL mid-write — does SQLite corrupt? (WAL mode is robust, but say it explicitly)
+- [ ] Federated node goes down — do alerts re-fire on surviving nodes? Does the cluster know?
+- [ ] Two dogwatch instances on same host — do they fight over eBPF probes?
+- [ ] The fact that you've thought about it is as important as the actual answers
+
+### Default Alerts (zero-config value)
+
+- [ ] Ship a handful of default alerts enabled out of the box:
+  - [ ] Disk usage > 90%
+  - [ ] Any 5xx error rate > 5%
+  - [ ] Any endpoint p99 > 2 seconds
+- [ ] Easy to dismiss or customize, but first-open experience should feel like dogwatch already understands the system
+- [ ] The "zero config" pitch is only as good as the zero-config defaults
+
+### Observability Gaps (meta-observability)
+
+- [ ] Surface when dogwatch is missing data — don't silently not observe something
+- [ ] If eBPF probe attachment fails for a process: "3 processes detected, 2 instrumented, 1 failed (permission denied on PID 4521)"
+- [ ] If OTLP ingestion stops receiving from a previously-active service, flag it as a gap
+- [ ] Worst thing an observability tool can do: let you think everything is fine when it's not
+
+### Debug Escape Hatches
+
+- [ ] `dogwatch debug probes` — which eBPF programs are loaded, event counts per probe
+- [ ] `dogwatch debug storage` — SQLite stats (WAL size, table row counts, vacuum status)
+- [ ] `dogwatch debug cluster` — gossip state, peer health, CRDT sync status
+- [ ] Cheap to build (surfacing internal state), huge for trust
+- [ ] Difference between "something's wrong, let me check" and "something's wrong, let me uninstall"
+
+### "Why I'm Building This" (personal conviction)
+
+- [ ] Write one paragraph somewhere — About page, blog post, or landing page
+- [ ] Not a mission statement or manifesto. Just the honest version:
+  - What frustrated you about current observability tooling
+  - What you think is broken
+  - What you're trying to do about it
+- [ ] Platform engineers are skeptical of tools but they trust people with a clear point of view
+- [ ] Personal conviction is what turns a GitHub repo into a project people root for
+
+---
+
 ## V2 Frontend Rebuild (Datadog-Competitive)
 
 Tracks the V2 UI/Product rebuild decisions and execution plan.
