@@ -151,6 +151,97 @@ What platform teams actually evaluate before adopting a tool. Ranked by impact-p
 
 ---
 
+## Project Maturity & Adoption Infrastructure
+
+The silent killers of adoption. None of these are features, but each one changes how the project is perceived.
+
+### Top 3 (highest perception impact)
+
+#### Cut a Versioned Release
+
+- [ ] Tag `v0.1.0` — 149+ commits and zero releases reads as "hobby project"
+- [ ] Write `CHANGELOG.md` with dates and what changed
+- [ ] Semver signals intent about stability; release notes give upgrade confidence
+- [ ] Stable releases when meaningful (new feature, meaningful bugfix, breaking change) — not on a forced cadence
+- [ ] Don't automate stable releases on a schedule — "bumped a dependency" every week looks like churn
+
+#### Docs Site (not just the README)
+
+- [ ] Docusaurus or MkDocs on GitHub Pages
+- [ ] Structure: Getting Started (first 15 min, reading the dashboard, first alert), Architecture (data model, retention), Configuration Reference (every flag/env var), Troubleshooting
+- [ ] Troubleshooting page is critical — it's the first thing people Google when something breaks
+- [ ] If they can't find an answer, they uninstall and move on
+
+#### Demo Instance
+
+- [ ] Host a read-only demo with pre-loaded data — lets people explore the UI without installing
+- [ ] Public URL with banner: "this is demo data"
+- [ ] Alternatively: embedded screenshots or screen recording in docs
+- [ ] Removes friction for "does this UI actually show me what I need?"
+
+### Automated Build Pipeline
+
+#### Nightly Builds (fully automated, don't think about them)
+
+- [ ] Every commit to main → sha-tagged Docker image + binary artifact
+- [ ] Daily (or per-merge) GitHub Action publishes as `nightly` pre-release, overwrites previous
+- [ ] Tag as `nightly-YYYYMMDD`, clear warning: "no stability guarantees, don't run in production"
+- [ ] Signals activity even when heads-down on features for weeks
+- [ ] Gives adventurous users a way to test without building from source
+
+#### Stable Release Workflow
+
+- [ ] On `vX.Y.Z` tag → GitHub Action builds .deb, .rpm, Docker image, publishes as GitHub Release
+- [ ] Hand-written release notes (or semi-automate with git-cliff from conventional commits)
+- [ ] Release when meaningful, not on a calendar — every 3-6 weeks is fine
+- [ ] The habit of writing release notes compounds into a changelog that tells the project's story
+
+### Packaging (beyond curl-pipe-bash)
+
+- [ ] `.deb` and `.rpm` packages for production installs
+- [ ] Docker image (needs `--privileged` for eBPF, but teams want it for consistency)
+- [ ] Homebrew/Linuxbrew formula for developer machines
+- [ ] GitHub Actions workflow that builds all of these on every release — one-time investment
+
+### Error Messages That Help
+
+- [ ] Kernel too old → show current kernel version, minimum required, link to upgrade doc
+- [ ] eBPF probe attachment failed → which probe, why (missing BTF? kernel config? seccomp blocking BPF?)
+- [ ] Permission denied → specific guidance, not just "run as root"
+- [ ] Invest disproportionately in first-run error paths — that's where you lose people permanently
+
+### Public Roadmap with Status
+
+- [ ] Turn roadmap into GitHub Issues or a GitHub Project board
+- [ ] When someone's #1 need is K8s support, they want to see: planned? In progress? Discussion thread?
+- [ ] Thumbs-up reactions tell you what to build next
+- [ ] Turns passive readers into engaged community members
+
+### Community Infrastructure (minimal)
+
+- [ ] GitHub Discussions tab or single Discord server — somewhere for "how do I X" that isn't Issues
+- [ ] Issues should be bugs and feature requests, not support questions
+- [ ] Be responsive in the first few months — thoughtful answer within hours creates advocates
+- [ ] Unanswered questions for a week = they leave and never come back
+- [ ] At this scale, you are the community. Your responsiveness is the project's reputation
+
+### "Who Is This For" Positioning
+
+- [ ] Be specific: "teams running 1-50 services on Linux who don't want to pay for Datadog or operate a Prometheus stack"
+- [ ] Be honest about who it's NOT for: "Windows, multi-region sub-second replication, already happy with your Datadog bill"
+- [ ] Specificity builds trust — people believe you more when you tell them what you can't do
+- [ ] Add to README or docs site landing page
+
+### Contributor-Friendly Codebase
+
+- [ ] `CONTRIBUTING.md` — how to build, test, submit PRs
+- [ ] Code comments on non-obvious parts (especially eBPF C code — notoriously hard to read)
+- [ ] "Good first issue" label on a handful of issues
+- [ ] Clean separation between eBPF layer, storage layer, API layer so someone can contribute to one without understanding all three
+- [ ] Go/C split is already a natural boundary — make it explicit
+
+---
+
 ## V2 Frontend Rebuild (Datadog-Competitive)
 
 Tracks the V2 UI/Product rebuild decisions and execution plan.
