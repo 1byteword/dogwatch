@@ -66,6 +66,91 @@ Show HN → the ignition event. Each layer feeds the next.
 
 ---
 
+## Platform Engineering Adoption Roadmap
+
+What platform teams actually evaluate before adopting a tool. Ranked by impact-per-effort.
+
+### Tier 1 — Highest leverage (address the reasons teams say no)
+
+#### Dashboards-as-Code
+
+- [ ] `dogwatch apply -f monitoring.yaml` — declarative config that reconciles state
+- [ ] Define alerts, SLOs, and dashboards in YAML/JSON, check into git
+- [ ] Apply on startup or via API (like Prometheus alerting rules / Grafana provisioning)
+- [ ] This is a dealbreaker for platform teams — they manage everything through git
+- [ ] Without this, the tool doesn't fit their workflow no matter how good the UI is
+
+#### Production Safety Documentation
+
+- [ ] Create `SAFETY.md` or "Running in Production" docs page
+- [ ] Document: CPU ceiling for eBPF probes — can you set a hard limit?
+- [ ] Document: what happens when the ring buffer fills — graceful event drop or backpressure?
+- [ ] Document: what happens if dogwatch crashes — are eBPF programs cleaned up or do orphaned probes linger?
+- [ ] This is the #1 concern. "We hook into your kernel" makes senior engineers nervous
+- [ ] Answers must be prominent, not buried in code comments
+
+#### Log-Trace Correlation
+
+- [ ] Accept structured logs (JSON) via OTLP receiver
+- [ ] Correlate logs with traces — click from a trace span to logs emitted during that span
+- [ ] Support Fluentbit / OTel Collector filelog receiver → dogwatch pipeline
+- [ ] This is the "three pillars" story platform teams want
+- [ ] Trace-to-log and log-to-trace correlation is the feature that makes people switch from Datadog
+- [ ] Datadog charges insane per-GB log prices — this is the cost wedge
+
+### Tier 2 — High impact, more engineering effort
+
+#### SSO (OIDC)
+
+- [ ] OIDC support covering Okta, Google Workspace, Azure AD
+- [ ] Solid Go OIDC libraries exist — not a huge lift
+- [ ] Without SSO, separate credentials = friction + security concern
+- [ ] Difference between "cool tool I tried once" and "tool I can roll out to my org"
+- [ ] RBAC already exists (Owner > Admin > Editor > Viewer) — SSO plugs into it
+
+#### Kubernetes (deliberate, narrow scope)
+
+- [ ] Helm chart: dogwatch as DaemonSet
+- [ ] Auto-discover pods and services via Kubernetes API
+- [ ] Label traces and metrics with K8s metadata (pod name, namespace, deployment)
+- [ ] eBPF probes already work at host level — value-add is the K8s labeling
+- [ ] Do NOT try to replace full Prometheus + Grafana stack inside a cluster on day one
+- [ ] This is the minimum viable K8s story
+
+### Tier 3 — Important, follows naturally once adoption starts
+
+#### Upgrades and Backwards Compatibility
+
+- [ ] Document schema versioning — migrations run automatically on startup
+- [ ] Document rollback story — restore SQLite file from backup
+- [ ] `dogwatch backup` subcommand (backup/restore scheduler already exists in `internal/backup/`)
+- [ ] Platform teams think about month 6, month 12 — not just day 1
+- [ ] "Will my dashboards and alerts survive an upgrade?" needs a clear answer
+
+#### Retention and Resource Limits
+
+- [ ] Ship sane defaults: retention period, max disk usage, max memory for aggregator
+- [ ] Make all limits configurable
+- [ ] Log warnings when approaching limits
+- [ ] Auto-downsample older data: 1s resolution (last hour) → 1m (last day) → 5m (last week)
+- [ ] Platform teams hate tools that silently eat disk until the machine falls over
+
+#### Health and Self-Monitoring
+
+- [ ] `/healthz` and `/readyz` endpoints (basic versions already exist)
+- [ ] Expose internal metrics: events/sec, ring buffer utilization, SQLite WAL size, query latency
+- [ ] Prometheus exposition format (`/metrics`) so people can monitor dogwatch with existing monitoring
+- [ ] If dogwatch can't tell you it's healthy, they won't trust it to tell them their apps are healthy
+
+#### Terraform/Pulumi Provider
+
+- [ ] Don't build yet — signal intent in the roadmap
+- [ ] "Planned: Terraform provider for alerts, SLOs, and dashboards"
+- [ ] Tells platform teams you understand their world
+- [ ] Builds on dashboards-as-code foundation
+
+---
+
 ## V2 Frontend Rebuild (Datadog-Competitive)
 
 Tracks the V2 UI/Product rebuild decisions and execution plan.
