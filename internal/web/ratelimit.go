@@ -145,8 +145,16 @@ func RateLimitMiddleware(config *RateLimitConfig) func(http.Handler) http.Handle
 	if config == nil {
 		config = DefaultRateLimitConfig()
 	}
-
 	limiter := NewRateLimiter(config)
+	return RateLimitMiddlewareWith(limiter, config)
+}
+
+// RateLimitMiddlewareWith creates rate limiting middleware using an existing limiter,
+// allowing the caller to retain a reference for lifecycle management (e.g., Stop).
+func RateLimitMiddlewareWith(limiter *RateLimiter, config *RateLimitConfig) func(http.Handler) http.Handler {
+	if config == nil {
+		config = DefaultRateLimitConfig()
+	}
 
 	// Build skip paths map for O(1) lookup
 	skipPaths := make(map[string]bool)

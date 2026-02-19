@@ -104,6 +104,7 @@ type Server struct {
 	myServicesHandlers  *MyServicesHandlers
 	wsHub               *Hub
 	memoryManager       *runtime.MemoryManager
+	rateLimiter         *RateLimiter
 	server              *http.Server
 	mux                 *http.ServeMux
 	mu                  sync.RWMutex
@@ -472,17 +473,24 @@ func New(agg *aggregator.Aggregator, port int) *Server {
 
 	// Apply rate limiting middleware
 	rateLimitConfig := DefaultRateLimitConfig()
-	rateLimitedHandler := RateLimitMiddleware(rateLimitConfig)(securedHandler)
+	s.rateLimiter = NewRateLimiter(rateLimitConfig)
+	rateLimitedHandler := RateLimitMiddlewareWith(s.rateLimiter, rateLimitConfig)(securedHandler)
 
 	// Apply memory pressure middleware (load shedding under OOM pressure)
-	var finalHandler http.Handler = rateLimitedHandler
+	var appHandler http.Handler = rateLimitedHandler
 	if s.memoryManager != nil {
-		finalHandler = MemoryMiddleware(s.memoryManager)(rateLimitedHandler)
+		appHandler = MemoryMiddleware(s.memoryManager)(rateLimitedHandler)
 	}
 
+	// Apply panic recovery as the outermost middleware
+	finalHandler := RecoveryMiddleware(appHandler)
+
 	s.server = &http.Server{
-		Addr:    fmt.Sprintf(":%d", port),
-		Handler: finalHandler,
+		Addr:         fmt.Sprintf(":%d", port),
+		Handler:      finalHandler,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	// Start periodic WebSocket broadcasts for real-time updates
@@ -1200,8 +1208,17 @@ func (s *Server) StartTLS(certFile, keyFile string) error {
 	return s.server.ListenAndServeTLS(certFile, keyFile)
 }
 
-// Stop gracefully shuts down the server
+// Stop gracefully shuts down the server and background goroutines
 func (s *Server) Stop() error {
+	// Stop background goroutines
+	if s.rateLimiter != nil {
+		s.rateLimiter.Stop()
+	}
+	if s.wsHub != nil {
+		s.wsHub.Stop()
+	}
+
+	// Graceful HTTP shutdown with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return s.server.Shutdown(ctx)

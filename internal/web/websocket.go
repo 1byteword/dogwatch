@@ -46,7 +46,8 @@ type Hub struct {
 	// Unregister requests from clients
 	unregister chan *Client
 
-	mu sync.RWMutex
+	mu             sync.RWMutex
+	stopBroadcasts chan struct{}
 }
 
 // NewHub creates a new WebSocket hub
@@ -483,13 +484,20 @@ func (h *Hub) BroadcastAnomaly(anomaly interface{}) {
 
 // StartPeriodicBroadcasts starts periodic broadcasts for system stats
 func (h *Hub) StartPeriodicBroadcasts(getStats func() interface{}, getServiceMap func() interface{}) {
+	h.stopBroadcasts = make(chan struct{})
+
 	// System stats every 2 seconds
 	go func() {
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
-		for range ticker.C {
-			if h.TopicSubscriberCount(TopicSystem) > 0 && getStats != nil {
-				h.BroadcastSystemStats(getStats())
+		for {
+			select {
+			case <-ticker.C:
+				if h.TopicSubscriberCount(TopicSystem) > 0 && getStats != nil {
+					h.BroadcastSystemStats(getStats())
+				}
+			case <-h.stopBroadcasts:
+				return
 			}
 		}
 	}()
@@ -498,12 +506,24 @@ func (h *Hub) StartPeriodicBroadcasts(getStats func() interface{}, getServiceMap
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
-		for range ticker.C {
-			if h.TopicSubscriberCount(TopicServiceMap) > 0 && getServiceMap != nil {
-				h.BroadcastServiceMap(getServiceMap())
+		for {
+			select {
+			case <-ticker.C:
+				if h.TopicSubscriberCount(TopicServiceMap) > 0 && getServiceMap != nil {
+					h.BroadcastServiceMap(getServiceMap())
+				}
+			case <-h.stopBroadcasts:
+				return
 			}
 		}
 	}()
+}
+
+// Stop terminates periodic broadcasts
+func (h *Hub) Stop() {
+	if h.stopBroadcasts != nil {
+		close(h.stopBroadcasts)
+	}
 }
 
 // WatchBroadcaster interface for broadcasting watch events
